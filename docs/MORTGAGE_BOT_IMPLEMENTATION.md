@@ -101,29 +101,53 @@ mortgage_agent = get_mortgage_agent(tools=mortgage_tools, provider="claude")
 graph = mortgage_agent.build_graph()
 ```
 
-### 4. Add Dashboard Route
+### 4. Voice Assistant Integration (Already Done)
 
-Add to your Flask routes:
+**The mortgage bot uses the SAME voice assistant route as the todo bot!**
+
+**Route:** `/webrtc/voice-assistant` (same as todo bot)
+
+**How it works:**
+- The system automatically detects mortgage intent from user input
+- When mortgage keywords are detected (e.g., "mortgage", "apply for mortgage", "credit score", "down payment"), it switches to `MortgageAgent`
+- Otherwise, it uses `TodoAgent` for productivity tasks
+- Both agents share the same WebRTC voice interface
+
+**Intent Detection:**
+- Keywords like "mortgage", "apply for mortgage", "credit score", "DTI ratio", "down payment", "W-2", "pay stub", etc. trigger mortgage mode
+- File: `convonet/mortgage_intent_detection.py`
+
+**Example:**
+```
+User: "I want to apply for a mortgage"
+→ System detects mortgage intent
+→ Switches to MortgageAgent with mortgage tools
+→ Bot: "Great! Let's start by reviewing your financial situation..."
+```
+
+### 5. Dashboard Route (Already Added)
+
+**Location:** `convonet/routes.py` (line ~778)
+
 ```python
 @convonet_todo_bp.route('/mortgage/dashboard')
 def mortgage_dashboard():
+    """Mortgage application dashboard for monitoring applications"""
     return render_template('mortgage_dashboard.html')
 ```
 
-### 5. Add API Endpoints
+**URL:** `/convonet_todo/mortgage/dashboard`
 
-Create API endpoints for the dashboard:
-```python
-@convonet_todo_bp.route('/api/mortgage/applications', methods=['GET'])
-def get_mortgage_applications():
-    # Return list of applications
-    pass
+### 6. API Endpoints (Already Added)
 
-@convonet_todo_bp.route('/api/mortgage/applications/<application_id>', methods=['GET'])
-def get_mortgage_application(application_id):
-    # Return application details
-    pass
-```
+**Location:** `convonet/routes.py` (lines ~784-955)
+
+**GET `/api/mortgage/applications`** - List all applications
+**GET `/api/mortgage/applications/<application_id>`** - Get application details
+
+**URLs:**
+- `/convonet_todo/api/mortgage/applications`
+- `/convonet_todo/api/mortgage/applications/<application_id>`
 
 ## Usage Flow
 

@@ -19,7 +19,8 @@ except ImportError:
 
 from twilio.twiml.voice_response import VoiceResponse, Connect, Gather
 from .state import AgentState
-from .assistant_graph_todo import get_agent, TodoAgent
+from .assistant_graph_todo import get_agent, TodoAgent, MortgageAgent, get_mortgage_agent
+from .mortgage_intent_detection import detect_mortgage_intent
 from .voice_intent_utils import has_transfer_intent
 from .llm_provider_manager import get_llm_provider_manager, LLMProvider
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -1066,12 +1067,17 @@ def preload_mcp_tools_sync():
         print(f"⚠️ Tools will be loaded on first request instead")
 
 
-async def _get_agent_graph(provider: Optional[LLMProvider] = None, user_id: Optional[str] = None) -> StateGraph:
+async def _get_agent_graph(
+    provider: Optional[LLMProvider] = None, 
+    user_id: Optional[str] = None,
+    agent_type: str = "todo"  # "todo" or "mortgage"
+) -> StateGraph:
     """Helper to initialize the agent graph with tools (cached for performance).
     
     Args:
         provider: LLM provider to use (claude, gemini, openai). If None, gets from user preference or default.
         user_id: User ID to get provider preference from Redis
+        agent_type: Type of agent to create ("todo" or "mortgage")
     """
     global _agent_graph_cache, _agent_graph_model, _agent_graph_provider
     
@@ -1140,17 +1146,26 @@ async def _get_agent_graph(provider: Optional[LLMProvider] = None, user_id: Opti
     
     print(f"🔧 Selected provider: {provider}, model: {current_model}")
     
-    # Return cached graph if available AND provider/model hasn't changed
+    # Cache key includes agent_type to separate todo and mortgage agent caches
+    cache_key = f"{agent_type}:{provider}:{current_model}"
+    global_cache_key = f"{_agent_graph_provider}:{_agent_graph_model}" if _agent_graph_provider else None
+    
+    # Return cached graph if available AND provider/model/agent_type hasn't changed
     if (_agent_graph_cache is not None and 
         _agent_graph_provider == provider and 
-        _agent_graph_model == current_model):
-        print(f"♻️ Using cached agent graph (provider: {provider}, model: {current_model})")
+        _agent_graph_model == current_model and
+        hasattr(_agent_graph_cache, '_agent_type') and 
+        getattr(_agent_graph_cache, '_agent_type', None) == agent_type):
+        print(f"♻️ Using cached {agent_type} agent graph (provider: {provider}, model: {current_model})")
         return _agent_graph_cache
     
-    # Clear cache if provider or model changed
+    # Clear cache if provider, model, or agent_type changed
     if _agent_graph_cache is not None:
-        if _agent_graph_provider != provider or _agent_graph_model != current_model:
-            print(f"🔄 Provider/model changed (provider: {_agent_graph_provider}→{provider}, model: {_agent_graph_model}→{current_model}), clearing cache")
+        cached_agent_type = getattr(_agent_graph_cache, '_agent_type', None)
+        if (_agent_graph_provider != provider or 
+            _agent_graph_model != current_model or
+            cached_agent_type != agent_type):
+            print(f"🔄 Provider/model/agent_type changed (provider: {_agent_graph_provider}→{provider}, model: {_agent_graph_model}→{current_model}, agent_type: {cached_agent_type}→{agent_type}), clearing cache")
             _agent_graph_cache = None
             _agent_graph_model = None
             _agent_graph_provider = None
@@ -1158,7 +1173,10 @@ async def _get_agent_graph(provider: Optional[LLMProvider] = None, user_id: Opti
     # Use lock to prevent multiple simultaneous initializations
     async with _agent_graph_lock:
         # Check again after acquiring lock (another thread might have initialized)
-        if _agent_graph_cache is not None:
+        if (_agent_graph_cache is not None and 
+            _agent_graph_provider == provider and 
+            _agent_graph_model == current_model and
+            getattr(_agent_graph_cache, '_agent_type', None) == agent_type):
             return _agent_graph_cache
         
         print("🔧 Initializing agent graph (first time only)...")
@@ -1343,7 +1361,43 @@ async def _get_agent_graph(provider: Optional[LLMProvider] = None, user_id: Opti
                     sys.stdout.flush()
                     tools = limited_tools
             
-            print(f"🔧 Building agent graph with {len(tools)} tools...", flush=True)
+            # Filter tools based on agent type
+            if agent_type == "mortgage":
+                # Filter to only mortgage-related tools
+                mortgage_tool_names = [
+                    "create_mortgage_application",
+                    "get_mortgage_application_status",
+                    "update_mortgage_financial_info",
+                    "calculate_dti_ratio",
+                    "add_mortgage_debt",
+                    "get_mortgage_debts",
+                    "upload_mortgage_document",
+                    "get_mortgage_documents",
+                    "get_required_documents",
+                    "get_missing_documents"
+                ]
+                filtered_tools = [t for t in tools if hasattr(t, 'name') and t.name in mortgage_tool_names]
+                tools = filtered_tools
+                print(f"🏠 Filtered to {len(tools)} mortgage tools (from {len(_mcp_tools_cache) if _mcp_tools_cache else 0} total tools)", flush=True)
+            else:
+                # Filter to exclude mortgage tools (keep todo/team/calendar/transfer tools)
+                mortgage_tool_names = [
+                    "create_mortgage_application",
+                    "get_mortgage_application_status",
+                    "update_mortgage_financial_info",
+                    "calculate_dti_ratio",
+                    "add_mortgage_debt",
+                    "get_mortgage_debts",
+                    "upload_mortgage_document",
+                    "get_mortgage_documents",
+                    "get_required_documents",
+                    "get_missing_documents"
+                ]
+                filtered_tools = [t for t in tools if not (hasattr(t, 'name') and t.name in mortgage_tool_names)]
+                tools = filtered_tools
+                print(f"📝 Filtered to {len(tools)} todo/team tools (excluded mortgage tools)", flush=True)
+            
+            print(f"🔧 Building {agent_type} agent graph with {len(tools)} tools...", flush=True)
             sys.stdout.flush()
             print(f"🔧 Using provider: {provider}, model: {current_model}", flush=True)
             sys.stdout.flush()
@@ -1351,84 +1405,98 @@ async def _get_agent_graph(provider: Optional[LLMProvider] = None, user_id: Opti
                 # Show actual tools being used, not cached count (may be limited for Gemini)
                 print(f"✅ Using {len(tools)} tools for agent graph (cached: {len(_mcp_tools_cache)} tools)", flush=True)
                 sys.stdout.flush()
-            print(f"⏱️ Starting TodoAgent initialization (this may take a few seconds)...", flush=True)
+            
+            agent_class_name = "MortgageAgent" if agent_type == "mortgage" else "TodoAgent"
+            print(f"⏱️ Starting {agent_class_name} initialization (this may take a few seconds)...", flush=True)
             sys.stdout.flush()
             
-            # CRITICAL FIX: TodoAgent.__init__ is synchronous and blocks the event loop
+            # CRITICAL FIX: Agent.__init__ is synchronous and blocks the event loop
             # For Gemini, bind_tools() can hang indefinitely
-            # Run TodoAgent creation in a separate thread with timeout to prevent blocking
-            print(f"🚀 About to create TodoAgent instance in separate thread...", flush=True)
+            # Run agent creation in a separate thread with timeout to prevent blocking
+            print(f"🚀 About to create {agent_class_name} instance in separate thread...", flush=True)
             sys.stdout.flush()
             
             import threading
-            # Don't import time here - import it locally in create_todo_agent() to avoid scoping conflicts
+            # Don't import time here - import it locally in create_agent() to avoid scoping conflicts
             
-            todo_agent_result = {'agent': None, 'error': None, 'done': False}
+            agent_result = {'agent': None, 'error': None, 'done': False}
             
-            def create_todo_agent():
-                """Create TodoAgent in separate thread to prevent blocking"""
+            def create_agent():
+                """Create agent in separate thread to prevent blocking"""
                 import sys
                 import time as thread_time  # Import time locally to avoid scoping issues
                 try:
-                    print(f"🧵 Thread: Starting TodoAgent creation...", flush=True)
+                    print(f"🧵 Thread: Starting {agent_class_name} creation...", flush=True)
                     sys.stdout.flush()
                     start_time = thread_time.time()
-                    todo_agent_result['agent'] = TodoAgent(tools=tools, provider=provider, model=current_model)
+                    
+                    if agent_type == "mortgage":
+                        agent_result['agent'] = MortgageAgent(tools=tools, provider=provider, model=current_model)
+                    else:
+                        agent_result['agent'] = TodoAgent(tools=tools, provider=provider, model=current_model)
+                    
                     elapsed = thread_time.time() - start_time
-                    print(f"🧵 Thread: TodoAgent created successfully in {elapsed:.2f}s", flush=True)
+                    print(f"🧵 Thread: {agent_class_name} created successfully in {elapsed:.2f}s", flush=True)
                     sys.stdout.flush()
                 except Exception as e:
-                    print(f"🧵 Thread: TodoAgent creation failed: {e}", flush=True)
+                    print(f"🧵 Thread: {agent_class_name} creation failed: {e}", flush=True)
                     sys.stdout.flush()
                     import traceback
                     traceback.print_exc()
-                    todo_agent_result['error'] = e
+                    agent_result['error'] = e
                 finally:
-                    todo_agent_result['done'] = True
-                    print(f"🧵 Thread: TodoAgent creation thread finished", flush=True)
+                    agent_result['done'] = True
+                    print(f"🧵 Thread: {agent_class_name} creation thread finished", flush=True)
                     sys.stdout.flush()
             
             # Use aggressive timeout for Gemini (8s) vs others (12s)
             timeout_seconds = 8.0 if provider == "gemini" else 12.0
-            print(f"⏱️ Creating TodoAgent with {timeout_seconds}s timeout...", flush=True)
+            print(f"⏱️ Creating {agent_class_name} with {timeout_seconds}s timeout...", flush=True)
             sys.stdout.flush()
             
-            agent_thread = threading.Thread(target=create_todo_agent, daemon=True)
+            agent_thread = threading.Thread(target=create_agent, daemon=True)
             agent_thread.start()
             agent_thread.join(timeout=timeout_seconds)
             
-            if not todo_agent_result['done']:
-                print(f"⏱️ TodoAgent creation timed out after {timeout_seconds} seconds", flush=True)
+            if not agent_result['done']:
+                print(f"⏱️ {agent_class_name} creation timed out after {timeout_seconds} seconds", flush=True)
                 sys.stdout.flush()
-                raise TimeoutError(f"TodoAgent initialization timed out after {timeout_seconds}s - likely Gemini bind_tools() hang")
-            elif todo_agent_result['error']:
-                print(f"❌ TodoAgent creation failed: {todo_agent_result['error']}", flush=True)
+                raise TimeoutError(f"{agent_class_name} initialization timed out after {timeout_seconds}s - likely Gemini bind_tools() hang")
+            elif agent_result['error']:
+                print(f"❌ {agent_class_name} creation failed: {agent_result['error']}", flush=True)
                 sys.stdout.flush()
-                raise todo_agent_result['error']
-            elif todo_agent_result['agent']:
-                todo_agent = todo_agent_result['agent']
-                print(f"✅ TodoAgent created successfully, graph already built in __init__", flush=True)
+                raise agent_result['error']
+            elif agent_result['agent']:
+                agent = agent_result['agent']
+                print(f"✅ {agent_class_name} created successfully, graph already built in __init__", flush=True)
                 sys.stdout.flush()
             else:
-                raise Exception("TodoAgent creation returned no result")
+                raise Exception(f"{agent_class_name} creation returned no result")
             
-            # Graph is already built in TodoAgent.__init__, just get it
-            _agent_graph_cache = todo_agent.graph
+            # Graph is already built in Agent.__init__, just get it
+            _agent_graph_cache = agent.graph
+            # Store agent_type in graph for cache validation
+            _agent_graph_cache._agent_type = agent_type
             _agent_graph_model = current_model  # Store the model used for this cache
             _agent_graph_provider = provider  # Store the provider used for this cache
-            print(f"✅ Agent graph cached for future requests (provider: {provider}, model: {current_model})")
+            print(f"✅ {agent_type} agent graph cached for future requests (provider: {provider}, model: {current_model})")
             return _agent_graph_cache
         except Exception as e:
             print(f"❌ Error building agent graph: {e}")
             import traceback
             print(f"❌ Traceback: {traceback.format_exc()}")
             # Don't raise - try to build with empty tools as last resort
-            print("⚠️ Attempting to build graph with empty tools list as fallback...")
+            print(f"⚠️ Attempting to build {agent_type} graph with empty tools list as fallback...")
             try:
-                _agent_graph_cache = TodoAgent(tools=[], provider=provider).build_graph()
+                if agent_type == "mortgage":
+                    fallback_agent = MortgageAgent(tools=[], provider=provider)
+                else:
+                    fallback_agent = TodoAgent(tools=[], provider=provider)
+                _agent_graph_cache = fallback_agent.build_graph()
+                _agent_graph_cache._agent_type = agent_type
                 _agent_graph_model = current_model  # Store the model used for this cache
                 _agent_graph_provider = provider  # Store the provider used for this cache
-                print(f"✅ Agent graph built with empty tools list (fallback, provider: {provider}, model: {current_model})")
+                print(f"✅ {agent_type} agent graph built with empty tools list (fallback, provider: {provider}, model: {current_model})")
                 return _agent_graph_cache
             except Exception as fallback_error:
                 print(f"❌ Even fallback graph building failed: {fallback_error}")
@@ -1506,8 +1574,15 @@ async def _run_agent_async(
     start_time = time.time()
     monitor = get_agent_monitor()
     
+    # Detect mortgage intent from user prompt
+    agent_type = "mortgage" if detect_mortgage_intent(prompt) else "todo"
+    if agent_type == "mortgage":
+        print(f"🏠 Mortgage intent detected, using MortgageAgent", flush=True)
+    else:
+        print(f"📝 Using TodoAgent (default)", flush=True)
+    
     # Add early logging to track provider selection
-    print(f"🔧 Getting agent graph for user_id: {user_id}", flush=True)
+    print(f"🔧 Getting agent graph for user_id: {user_id}, agent_type: {agent_type}", flush=True)
     import sys
     sys.stdout.flush()
     
@@ -1539,7 +1614,7 @@ async def _run_agent_async(
             print(f"🚀 About to call _get_agent_graph() with timeout...", flush=True)
             sys.stdout.flush()
             agent_graph = await asyncio.wait_for(
-                _get_agent_graph(user_id=user_id),
+                _get_agent_graph(user_id=user_id, agent_type=agent_type),
                 timeout=timeout_seconds
             )
             print(f"✅ Agent graph obtained successfully", flush=True)
