@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 from .state import AgentState
 from .mcps.local_servers.db_todo import TodoPriority, ReminderImportance
 from .llm_provider_manager import get_llm_provider_manager, LLMProvider
+from .mortgage_prompts import MORTGAGE_SYSTEM_PROMPT
 # Optional Composio imports - app should work without them
 try:
     from .composio_tools import get_all_integration_tools, test_composio_connection
@@ -1145,6 +1146,41 @@ DO NOT respond with text like "I'll create..." - ACTUALLY CALL THE TOOL!
 
         return Image(self.graph.get_graph().draw_mermaid_png())
 
+
+class MortgageAgent(TodoAgent):
+    """
+    Mortgage Application Agent - Specialized agent for mortgage application process.
+    Inherits from TodoAgent but uses mortgage-specific prompts and tools.
+    """
+    
+    def __init__(
+        self,
+        name: str = "Mortgage Application Assistant",
+        model: str = None,
+        provider: Optional[LLMProvider] = None,
+        tools: List[BaseTool] = [],
+        system_prompt: str = MORTGAGE_SYSTEM_PROMPT,
+    ) -> None:
+        """
+        Initialize Mortgage Agent with mortgage-specific prompts.
+        
+        Args:
+            name: Agent name
+            model: LLM model name (optional)
+            provider: LLM provider (claude, gemini, openai)
+            tools: List of tools to bind (should include mortgage MCP tools)
+            system_prompt: System prompt (defaults to MORTGAGE_SYSTEM_PROMPT)
+        """
+        # Call parent __init__ with mortgage-specific prompt
+        super().__init__(
+            name=name,
+            model=model,
+            provider=provider,
+            tools=tools,
+            system_prompt=system_prompt
+        )
+
+
 # Lazy initialization to avoid circular imports and environment variable issues
 _agent_instance = None
 
@@ -1154,6 +1190,21 @@ def get_agent():
     if _agent_instance is None:
         _agent_instance = TodoAgent()
     return _agent_instance
+
+
+def get_mortgage_agent(tools: List[BaseTool] = [], provider: Optional[LLMProvider] = None, model: str = None) -> MortgageAgent:
+    """
+    Get or create a MortgageAgent instance.
+    
+    Args:
+        tools: List of tools to bind (should include mortgage MCP tools)
+        provider: LLM provider (claude, gemini, openai)
+        model: LLM model name (optional)
+        
+    Returns:
+        MortgageAgent instance
+    """
+    return MortgageAgent(tools=tools, provider=provider, model=model)
 
 # For backwards compatibility
 agent = None  # Will be initialized on first use

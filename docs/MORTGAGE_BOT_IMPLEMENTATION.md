@@ -81,21 +81,24 @@ Add to your MCP configuration file (e.g., `mcp_config.json`):
 }
 ```
 
-### 3. Create Mortgage Agent
+### 3. Mortgage Agent (Already Created)
 
-Create a new agent class similar to `TodoAgent` but using mortgage prompts:
+The `MortgageAgent` class has been added to `convonet/assistant_graph_todo.py`. It inherits from `TodoAgent` and uses mortgage-specific prompts.
 
+**Location:** `convonet/assistant_graph_todo.py` (after `TodoAgent` class)
+
+**Usage:**
 ```python
-from convonet.mortgage_prompts import MORTGAGE_SYSTEM_PROMPT
-from convonet.assistant_graph_todo import TodoAgent
+from convonet.assistant_graph_todo import MortgageAgent, get_mortgage_agent
 
-class MortgageAgent(TodoAgent):
-    def __init__(self, ...):
-        super().__init__(
-            name="Mortgage Application Assistant",
-            system_prompt=MORTGAGE_SYSTEM_PROMPT,
-            ...
-        )
+# Option 1: Create directly
+mortgage_agent = MortgageAgent(tools=mortgage_tools, provider="claude")
+
+# Option 2: Use helper function
+mortgage_agent = get_mortgage_agent(tools=mortgage_tools, provider="claude")
+
+# Get the graph
+graph = mortgage_agent.build_graph()
 ```
 
 ### 4. Add Dashboard Route

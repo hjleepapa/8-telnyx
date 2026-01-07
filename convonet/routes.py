@@ -775,6 +775,186 @@ def index():
     return "Convonet Todo: Convonet + MCP integration is ready. POST to /convonet_todo/run_agent with JSON {prompt: str}."
 
 
+@convonet_todo_bp.route('/mortgage/dashboard')
+def mortgage_dashboard():
+    """Mortgage application dashboard for monitoring applications"""
+    return render_template('mortgage_dashboard.html')
+
+
+@convonet_todo_bp.route('/api/mortgage/applications', methods=['GET'])
+def get_mortgage_applications():
+    """Get all mortgage applications for dashboard"""
+    try:
+        from convonet.models.mortgage_models import MortgageApplication, MortgageDocument, MortgageDebt
+        from sqlalchemy import create_engine, func
+        from sqlalchemy.orm import sessionmaker
+        from uuid import UUID
+        
+        # Create database session (same pattern as MCP tools)
+        db_uri = os.getenv("DB_URI")
+        if not db_uri:
+            return jsonify({
+                "success": False,
+                "error": "DB_URI not configured"
+            }), 500
+        
+        engine = create_engine(db_uri, pool_pre_ping=True)
+        SessionLocal = sessionmaker(bind=engine)
+        db = SessionLocal()
+        
+        try:
+            # Get all applications with document counts
+            applications = db.query(
+                MortgageApplication,
+                func.count(MortgageDocument.id).label('documents_count')
+            ).outerjoin(
+                MortgageDocument, MortgageDocument.application_id == MortgageApplication.id
+            ).group_by(MortgageApplication.id).order_by(
+                MortgageApplication.created_at.desc()
+            ).all()
+            
+            result = []
+            for app, doc_count in applications:
+                # Get debts count
+                debts_count = db.query(MortgageDebt).filter(
+                    MortgageDebt.application_id == app.id
+                ).count()
+                
+                result.append({
+                    "application_id": str(app.id),
+                    "user_id": str(app.user_id),
+                    "status": app.status.value if hasattr(app.status, 'value') else str(app.status),
+                    "credit_score": app.credit_score,
+                    "dti_ratio": float(app.dti_ratio) if app.dti_ratio else None,
+                    "monthly_income": float(app.monthly_income) if app.monthly_income else None,
+                    "monthly_debt": float(app.monthly_debt) if app.monthly_debt else None,
+                    "down_payment_amount": float(app.down_payment_amount) if app.down_payment_amount else None,
+                    "total_savings": float(app.total_savings) if app.total_savings else None,
+                    "completion_percentage": app.get_completion_percentage(),
+                    "documents_count": doc_count or 0,
+                    "debts_count": debts_count,
+                    "created_at": app.created_at.isoformat() if app.created_at else None
+                })
+            
+            return jsonify({
+                "success": True,
+                "applications": result
+            })
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"❌ Error getting mortgage applications: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@convonet_todo_bp.route('/api/mortgage/applications/<application_id>', methods=['GET'])
+def get_mortgage_application(application_id):
+    """Get detailed information about a specific mortgage application"""
+    try:
+        from convonet.models.mortgage_models import MortgageApplication, MortgageDocument, MortgageDebt
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from uuid import UUID
+        
+        # Create database session (same pattern as MCP tools)
+        db_uri = os.getenv("DB_URI")
+        if not db_uri:
+            return jsonify({
+                "success": False,
+                "error": "DB_URI not configured"
+            }), 500
+        
+        engine = create_engine(db_uri, pool_pre_ping=True)
+        SessionLocal = sessionmaker(bind=engine)
+        db = SessionLocal()
+        
+        try:
+            # Get application
+            application = db.query(MortgageApplication).filter(
+                MortgageApplication.id == UUID(application_id)
+            ).first()
+            
+            if not application:
+                return jsonify({
+                    "success": False,
+                    "error": "Application not found"
+                }), 404
+            
+            # Get documents
+            documents = db.query(MortgageDocument).filter(
+                MortgageDocument.application_id == application.id
+            ).all()
+            
+            # Get debts
+            debts = db.query(MortgageDebt).filter(
+                MortgageDebt.application_id == application.id
+            ).all()
+            
+            return jsonify({
+                "success": True,
+                "application": {
+                    "application_id": str(application.id),
+                    "user_id": str(application.user_id),
+                    "status": application.status.value if hasattr(application.status, 'value') else str(application.status),
+                    "credit_score": application.credit_score,
+                    "dti_ratio": float(application.dti_ratio) if application.dti_ratio else None,
+                    "monthly_income": float(application.monthly_income) if application.monthly_income else None,
+                    "monthly_debt": float(application.monthly_debt) if application.monthly_debt else None,
+                    "down_payment_amount": float(application.down_payment_amount) if application.down_payment_amount else None,
+                    "closing_costs_estimate": float(application.closing_costs_estimate) if application.closing_costs_estimate else None,
+                    "total_savings": float(application.total_savings) if application.total_savings else None,
+                    "loan_type": application.loan_type,
+                    "loan_amount": float(application.loan_amount) if application.loan_amount else None,
+                    "property_value": float(application.property_value) if application.property_value else None,
+                    "completion_percentage": application.get_completion_percentage(),
+                    "financial_review_completed": application.financial_review_completed,
+                    "document_collection_completed": application.document_collection_completed,
+                    "document_verification_completed": application.document_verification_completed,
+                    "documents_count": len(documents),
+                    "debts_count": len(debts),
+                    "documents": [
+                        {
+                            "document_id": str(doc.id),
+                            "document_type": doc.document_type.value if hasattr(doc.document_type, 'value') else str(doc.document_type),
+                            "document_name": doc.document_name,
+                            "status": doc.status.value if hasattr(doc.status, 'value') else str(doc.status),
+                            "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None,
+                            "verified_at": doc.verified_at.isoformat() if doc.verified_at else None
+                        }
+                        for doc in documents
+                    ],
+                    "debts": [
+                        {
+                            "debt_id": str(debt.id),
+                            "debt_type": debt.debt_type,
+                            "creditor_name": debt.creditor_name,
+                            "monthly_payment": float(debt.monthly_payment),
+                            "outstanding_balance": float(debt.outstanding_balance) if debt.outstanding_balance else None,
+                            "interest_rate": float(debt.interest_rate) if debt.interest_rate else None
+                        }
+                        for debt in debts
+                    ],
+                    "created_at": application.created_at.isoformat() if application.created_at else None,
+                    "updated_at": application.updated_at.isoformat() if application.updated_at else None
+                }
+            })
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"❌ Error getting mortgage application: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
 async def _preload_mcp_tools():
     """Pre-load MCP tools at startup to cache them for all providers (including Gemini).
     
