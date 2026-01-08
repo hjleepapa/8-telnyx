@@ -1742,17 +1742,19 @@ def init_socketio(socketio_instance: SocketIO, app):
                                 'audio': audio_base64
                             }, namespace='/voice', room=session_id, callback=emit_callback)
                             print(f"✅ agent_response event emitted to session {session_id} (Socket.IO will handle delivery)", flush=True)
-                        except Exception as emit_error:
-                            print(f"❌ Error during emit: {emit_error}", flush=True)
-                            import traceback
-                            traceback.print_exc()
-                            # Try to send error notification
-                            try:
+                    except Exception as emit_error:
+                        print(f"❌ Error during emit: {emit_error}", flush=True)
+                        import traceback
+                        traceback.print_exc()
+                        # Try to send error notification
+                        try:
+                            emit_socketio = socketio if socketio else (socketio_instance_global if 'socketio_instance_global' in globals() else None)
+                            if emit_socketio:
                                 emit_socketio.emit('error', {
                                     'message': f"Error sending response: {str(emit_error)}"
                                 }, namespace='/voice', room=session_id)
-                            except:
-                                pass
+                        except:
+                            pass
                             raise
                     except Exception as emit_error:
                         print(f"❌ Error emitting agent_response: {emit_error}", flush=True)
