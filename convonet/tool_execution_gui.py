@@ -114,34 +114,39 @@ def get_tracker_details(request_id: str):
     # Convert tool executions to JSON-serializable format
     tools_data = []
     for tool_id, execution in tracker.tools.items():
-        # Truncate large results/errors for UI display
-        result_str = str(execution.result) if execution.result is not None else None
-        if result_str and len(result_str) > 5000:
-            result_str = result_str[:5000] + "... (truncated)"
-        
-        error_str = execution.error
-        if error_str and len(error_str) > 5000:
-            error_str = error_str[:5000] + "... (truncated)"
-        
-        # Try to preserve result as object if it's JSON-serializable, otherwise use string
+        # Preserve result type if it's JSON-serializable (dict/list), otherwise convert to string
         result_data = execution.result
         if result_data is not None:
-            # Try to keep as dict/list if it's already structured data
+            # If it's already a dict or list, keep it as-is for proper JSON formatting
             if isinstance(result_data, (dict, list)):
-                result_data = result_data  # Keep as-is for JSON serialization
+                # Check size and truncate if needed (convert to JSON string to check length)
+                result_json_str = json.dumps(result_data)
+                if len(result_json_str) > 5000:
+                    # For large results, we'll truncate in the frontend
+                    # Keep as dict/list but mark as large
+                    pass  # Frontend will handle truncation
+                # Keep as dict/list for proper formatting
             else:
-                # It's a string or other type, try to parse if it looks like JSON
+                # For other types (strings, numbers, etc.), convert to string
                 result_str = str(result_data)
+                # If it looks like JSON, try to parse it
                 if result_str.strip().startswith(('{', '[')):
                     try:
-                        import json
                         result_data = json.loads(result_str)  # Parse to dict/list
                     except:
                         result_data = result_str  # Keep as string if not valid JSON
                 else:
                     result_data = result_str
+                
+                # Truncate if too long
+                if isinstance(result_data, str) and len(result_data) > 5000:
+                    result_data = result_data[:5000] + "... (truncated)"
         else:
             result_data = None
+        
+        error_str = execution.error
+        if error_str and len(error_str) > 5000:
+            error_str = error_str[:5000] + "... (truncated)"
         
         tool_data = {
             "tool_id": tool_id,
