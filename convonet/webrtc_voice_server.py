@@ -1501,11 +1501,18 @@ def init_socketio(socketio_instance: SocketIO, app):
                         # In Socket.IO, each client is automatically in a room with their session_id
                         print(f"📤 Emitting agent_response to session {session_id} in /voice namespace...", flush=True)
                         try:
+                            # Define callback to track delivery status
+                            def emit_callback(success):
+                                if success:
+                                    print(f"✅ agent_response delivered successfully to session {session_id}", flush=True)
+                                else:
+                                    print(f"⚠️ agent_response delivery failed to session {session_id} (client may have disconnected)", flush=True)
+                            
                             emit_socketio.emit('agent_response', {
                                 'success': True,
                                 'text': agent_response,
                                 'audio': audio_base64
-                            }, namespace='/voice', room=session_id, callback=lambda success: print(f"📤 Emit callback: success={success}") if success else None)
+                            }, namespace='/voice', room=session_id, callback=emit_callback)
                             print(f"✅ agent_response event emitted to session {session_id} (Socket.IO will handle delivery)", flush=True)
                         except Exception as emit_error:
                             print(f"❌ Error during emit: {emit_error}", flush=True)

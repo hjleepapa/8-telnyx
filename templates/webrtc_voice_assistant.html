@@ -343,7 +343,15 @@
             });
             
             socket.on('status', (data) => {
+                console.log('📊 Status update:', data.message);
                 showStatus(data.message, 'info');
+                // Keep processing state active during status updates
+                if (data.message && (data.message.includes('Processing') || data.message.includes('Generating'))) {
+                    if (!isProcessing) {
+                        isProcessing = true;
+                        console.log('🔄 Setting isProcessing=true due to status update');
+                    }
+                }
             });
             
             socket.on('agent_response', (data) => {
