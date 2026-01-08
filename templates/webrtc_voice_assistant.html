@@ -327,13 +327,71 @@
                 showStatus('Failed to initialize. Please refresh the page.', 'error');
             }
             
+            // Shared handler for agent_response (used by both Socket.IO and HTTP polling)
+            window.handleAgentResponse = function(data) {
+                console.log('📨 ===== agent_response received (shared handler) =====');
+                console.log('📨 Event received at:', new Date().toISOString());
+                console.log('📨 Socket ID:', socket ? socket.id : 'N/A');
+                console.log('📨 Socket connected:', socket ? socket.connected : false);
+                console.log('📨 Data received:', data);
+                
+                if (data && data.success) {
+                    console.log('✅ Response success, text length:', data.text ? data.text.length : 0);
+                    console.log('✅ Audio length:', data.audio ? data.audio.length : 0);
+                    
+                    if (data.pending) {
+                        console.log('📬 This is a pending response (client reconnected during TTS generation)');
+                        showStatus('Received response (reconnected)', 'success');
+                    }
+                    
+                    if (data.text) {
+                        console.log('📝 Adding text to transcript:', data.text.substring(0, 100) + '...');
+                        addTranscript('agent', data.text);
+                    } else {
+                        console.warn('⚠️ No text in agent_response');
+                    }
+                    
+                    // Play audio response
+                    if (data.audio) {
+                        console.log('🔊 Received audio response:', data.audio.length, 'chars');
+                        console.log('🔊 Audio preview:', data.audio.substring(0, 100) + '...');
+                        console.log('🔊 Calling playAudioResponse()...');
+                        try {
+                            playAudioResponse(data.audio);
+                            console.log('✅ playAudioResponse() called successfully');
+                        } catch (audioError) {
+                            console.error('❌ Error in playAudioResponse():', audioError);
+                        }
+                    } else {
+                        console.log('❌ No audio data in response');
+                        // Even without audio, reset the button if we have text
+                        if (data.text) {
+                            resetMicButton();
+                        }
+                    }
+                    
+                    resetMicButton();
+                    console.log('✅ agent_response event processed successfully');
+                } else {
+                    console.log('❌ Response failed or invalid:', data);
+                    showStatus('Error getting response', 'error');
+                    resetMicButton();
+                }
+            };
+            
             socket.on('authenticated', (data) => {
-                // Store PIN for auto-re-authentication on reconnect
+                // Store PIN and user info for auto-re-authentication on reconnect
                 if (data.success) {
                     const pinInput = document.getElementById('pinInput');
                     if (pinInput && pinInput.value) {
                         localStorage.setItem('voice_assistant_pin', pinInput.value);
                         console.log('💾 Stored PIN for auto-re-authentication');
+                    }
+                    
+                    // Store user_id if provided (for pending response polling)
+                    if (data.user_id) {
+                        localStorage.setItem('voice_assistant_user_id', data.user_id);
+                        console.log('💾 Stored user_id for pending response polling:', data.user_id);
                     }
                 }
                 if (data.success) {
@@ -346,6 +404,41 @@
                     console.log('🔍 Verifying agent_response event listener is registered...');
                     const hasListener = socket._callbacks && socket._callbacks['$agent_response'];
                     console.log('🔍 Event listener check:', hasListener ? '✅ Registered' : '❌ NOT REGISTERED');
+                    
+                    // Poll for pending responses via HTTP (avoids WebSocket large payload issues)
+                    const pollForPendingResponse = () => {
+                        const storedUser = localStorage.getItem('voice_assistant_user_id');
+                        if (storedUser) {
+                            console.log('🔍 Polling for pending response (user_id:', storedUser + ')');
+                            fetch(`/convonet_todo/webrtc/pending-response?user_id=${encodeURIComponent(storedUser)}`)
+                                .then(response => response.json())
+                                .then(data => {
+                                    if (data.success && data.pending && data.text) {
+                                        console.log('📬 Pending response fetched via HTTP!', {
+                                            text_length: data.text ? data.text.length : 0,
+                                            audio_length: data.audio ? data.audio.length : 0
+                                        });
+                                        // Use shared handler
+                                        window.handleAgentResponse(data);
+                                    } else if (data.success && !data.pending) {
+                                        console.log('✅ No pending response (already delivered or none exists)');
+                                    }
+                                })
+                                .catch(error => {
+                                    console.warn('⚠️ Error polling for pending response:', error);
+                                });
+                        } else {
+                            console.log('⚠️ No user_id stored, cannot poll for pending response');
+                        }
+                    };
+                    
+                    // Poll immediately and then every 1 second for 15 seconds
+                    pollForPendingResponse();
+                    const pollInterval = setInterval(pollForPendingResponse, 1000);
+                    setTimeout(() => {
+                        clearInterval(pollInterval);
+                        console.log('⏹️ Stopped polling for pending responses');
+                    }, 15000);
                     
                     // Emit ready signal after a longer delay to ensure all event listeners are fully set up
                     // Increased to 1.5 seconds to give more time for event listener registration
@@ -402,13 +495,32 @@
                 }
             });
             
+            socket.on('pending_response_available', (data) => {
+                console.log('📬 Pending response notification received via Socket.IO:', data);
+                // Trigger immediate HTTP poll
+                const storedUser = localStorage.getItem('voice_assistant_user_id') || data.user_id;
+                if (storedUser) {
+                    console.log('🔍 Triggering immediate HTTP poll for pending response');
+                    fetch(`/convonet_todo/webrtc/pending-response?user_id=${encodeURIComponent(storedUser)}`)
+                        .then(response => response.json())
+                        .then(responseData => {
+                            if (responseData.success && responseData.pending && responseData.text) {
+                                console.log('📬 Pending response fetched via HTTP (triggered by notification)!');
+                                window.handleAgentResponse(responseData);
+                            }
+                        })
+                        .catch(error => {
+                            console.warn('⚠️ Error fetching pending response:', error);
+                        });
+                }
+            });
+            
             socket.on('agent_response', (data, callback) => {
-                console.log('📨 ===== agent_response event received =====');
+                console.log('📨 ===== agent_response event received via Socket.IO =====');
                 console.log('📨 Event received at:', new Date().toISOString());
                 console.log('📨 Socket ID:', socket.id);
                 console.log('📨 Socket connected:', socket.connected);
                 console.log('📨 Data received:', data);
-                console.log('📨 Full data object:', JSON.stringify(data, null, 2));
                 
                 // Acknowledge receipt immediately
                 if (callback && typeof callback === 'function') {
@@ -416,48 +528,8 @@
                     callback({ received: true, session_id: socket.id });
                 }
                 
-                if (data && data.success) {
-                    console.log('✅ Response success, text length:', data.text ? data.text.length : 0);
-                    console.log('✅ Audio length:', data.audio ? data.audio.length : 0);
-                    
-                    if (data.pending) {
-                        console.log('📬 This is a pending response (client reconnected during TTS generation)');
-                        showStatus('Received response (reconnected)', 'success');
-                    }
-                    
-                    if (data.text) {
-                        console.log('📝 Adding text to transcript:', data.text.substring(0, 100) + '...');
-                        addTranscript('agent', data.text);
-                    } else {
-                        console.warn('⚠️ No text in agent_response');
-                    }
-                    
-                    // Play audio response
-                    if (data.audio) {
-                        console.log('🔊 Received audio response:', data.audio.length, 'chars');
-                        console.log('🔊 Audio preview:', data.audio.substring(0, 100) + '...');
-                        console.log('🔊 Calling playAudioResponse()...');
-                        try {
-                            playAudioResponse(data.audio);
-                            console.log('✅ playAudioResponse() called successfully');
-                        } catch (audioError) {
-                            console.error('❌ Error in playAudioResponse():', audioError);
-                        }
-                    } else {
-                        console.log('❌ No audio data in response');
-                        // Even without audio, reset the button if we have text
-                        if (data.text) {
-                            resetMicButton();
-                        }
-                    }
-                    
-                    resetMicButton();
-                    console.log('✅ agent_response event processed successfully');
-                } else {
-                    console.log('❌ Response failed or invalid:', data);
-                    showStatus('Error getting response', 'error');
-                    resetMicButton();
-                }
+                // Use shared handler
+                window.handleAgentResponse(data);
             });
             
             // Log when event listener is registered

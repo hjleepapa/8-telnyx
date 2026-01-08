@@ -731,6 +731,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                 emit('authenticated', {
                     'success': True,
                     'user_name': 'Test User',
+                    'user_id': 'test_user',  # Include user_id for pending response polling
                     'message': "Welcome! You're in test mode." if not was_already_authenticated else "Reconnected! You're in test mode."
                 })
                 
@@ -881,29 +882,17 @@ def init_socketio(socketio_instance: SocketIO, app):
                                                 print(f"⚠️ Error checking room for immediate send: {room_error}", flush=True)
                                                 return
                                             
-                                            print(f"📤 Sending pending response IMMEDIATELY on authentication (session {session_id})", flush=True)
+                                            print(f"📤 Sending pending response notification via Socket.IO (client will fetch via HTTP)", flush=True)
                                             
-                                            def immediate_delivery_callback(ack_data):
-                                                if ack_data and ack_data.get('received'):
-                                                    print(f"✅ Immediate pending response delivery confirmed for session {session_id}", flush=True)
-                                                    try:
-                                                        if redis_manager.is_available():
-                                                            redis_manager.redis_client.delete(redis_key)
-                                                        if hasattr(socketio, '_pending_responses') and session_id in socketio._pending_responses:
-                                                            del socketio._pending_responses[session_id]
-                                                        print(f"✅ Pending response cleared (immediate send) for user {user.id}", flush=True)
-                                                        sentry_capture_voice_event("pending_response_delivered", session_id, str(user.id), details={"original_session": pending_response.get('original_session_id'), "method": "immediate_auth"})
-                                                    except Exception as cleanup_error:
-                                                        print(f"⚠️ Error cleaning up: {cleanup_error}", flush=True)
-                                                else:
-                                                    print(f"⚠️ Immediate send delivery NOT confirmed (ack_data: {ack_data})", flush=True)
-                                            
-                                            socketio.emit('agent_response', {
+                                            # DON'T send large audio payload via Socket.IO - it causes WebSocket errors
+                                            # Instead, send a small notification and let HTTP polling handle the actual delivery
+                                            socketio.emit('pending_response_available', {
                                                 'success': True,
-                                                'text': pending_response['text'],
-                                                'audio': pending_response['audio'],
-                                                'pending': True
-                                            }, namespace='/voice', room=session_id, callback=immediate_delivery_callback)
+                                                'message': 'Pending response available - fetching via HTTP...',
+                                                'user_id': str(user.id)
+                                            }, namespace='/voice', room=session_id)
+                                            
+                                            print(f"✅ Pending response notification sent - client will fetch via HTTP polling", flush=True)
                                         
                                         socketio.start_background_task(send_pending_response_immediate)
                                         print(f"💾 Also waiting for client_ready signal as backup", flush=True)
@@ -940,36 +929,17 @@ def init_socketio(socketio_instance: SocketIO, app):
                                                 except Exception as room_check_error:
                                                     print(f"⚠️ Error checking Socket.IO room in fallback: {room_check_error}", flush=True)
                                                 
-                                                print(f"📤 Sending pending response via fallback (3s delay) to session {session_id}", flush=True)
+                                                print(f"📤 Sending pending response notification via fallback (client will fetch via HTTP)", flush=True)
                                                 
-                                                # Use callback to verify delivery before clearing
-                                                def fallback_delivery_callback(ack_data):
-                                                    if ack_data:
-                                                        print(f"✅ Fallback pending response delivery confirmed for session {session_id}", flush=True)
-                                                        # Only clear if delivery confirmed
-                                                        try:
-                                                            redis_manager.redis_client.delete(redis_key)
-                                                            if session_id in getattr(socketio, '_pending_responses', {}):
-                                                                del socketio._pending_responses[session_id]
-                                                            print(f"✅ Pending response cleared (fallback, delivery confirmed) for user {user.id}", flush=True)
-                                                            sentry_capture_voice_event("pending_response_delivered", session_id, str(user.id), details={"original_session": pending_response.get('original_session_id'), "method": "fallback"})
-                                                        except Exception as cleanup_error:
-                                                            print(f"⚠️ Error cleaning up pending response: {cleanup_error}", flush=True)
-                                                    else:
-                                                        print(f"⚠️ Fallback pending response delivery NOT confirmed, keeping in Redis", flush=True)
-                                                        # Clean up pending response info but keep in Redis
-                                                        try:
-                                                            if session_id in getattr(socketio, '_pending_responses', {}):
-                                                                del socketio._pending_responses[session_id]
-                                                        except:
-                                                            pass
-                                                
-                                                socketio.emit('agent_response', {
+                                                # DON'T send large audio payload via Socket.IO - it causes WebSocket errors
+                                                # Instead, send a small notification and let HTTP polling handle the actual delivery
+                                                socketio.emit('pending_response_available', {
                                                     'success': True,
-                                                    'text': pending_response['text'],
-                                                    'audio': pending_response['audio'],
-                                                    'pending': True
-                                                }, namespace='/voice', room=session_id, callback=fallback_delivery_callback)
+                                                    'message': 'Pending response available - fetching via HTTP...',
+                                                    'user_id': str(user.id)
+                                                }, namespace='/voice', room=session_id)
+                                                
+                                                print(f"✅ Fallback notification sent - client will fetch via HTTP polling", flush=True)
                                         
                                         socketio.start_background_task(send_pending_response_fallback)
                                 except Exception as pending_error:
@@ -1005,6 +975,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                     emit('authenticated', {
                         'success': True,
                         'user_name': user.first_name,
+                        'user_id': str(user.id),  # Include user_id for pending response polling
                         'message': f"Welcome back, {user.first_name}!" if not was_already_authenticated else f"Reconnected, {user.first_name}!"
                     })
                     
@@ -1116,15 +1087,16 @@ def init_socketio(socketio_instance: SocketIO, app):
                         pass
                     sentry_capture_voice_event("pending_response_delivery_failed", session_id, user_id, details={"original_session": original_session_id, "method": "client_ready", "ack_data": ack_data})
             
-            # Use emit with callback for acknowledgment
-            socketio.emit('agent_response', {
+            # DON'T send large audio payload via Socket.IO - it causes WebSocket encoding errors
+            # Instead, send a small notification and let HTTP polling handle the actual delivery
+            print(f"📤 Sending pending response notification (client will fetch via HTTP)", flush=True)
+            socketio.emit('pending_response_available', {
                 'success': True,
-                'text': pending_response['text'],
-                'audio': pending_response['audio'],
-                'pending': True  # Flag to indicate this is a pending response
-            }, namespace='/voice', room=session_id, callback=delivery_callback)
+                'message': 'Pending response available - fetching via HTTP...',
+                'user_id': user_id
+            }, namespace='/voice', room=session_id)
             
-            print(f"📤 Pending response event emitted to session {session_id} (waiting for client acknowledgment)", flush=True)
+            print(f"✅ Pending response notification sent - client will fetch via HTTP polling", flush=True)
     
     
     @socketio.on('start_recording', namespace='/voice')
@@ -2084,12 +2056,57 @@ def init_socketio(socketio_instance: SocketIO, app):
                                     print(f"⚠️ agent_response callback: delivery failed to session {session_id}", flush=True)
                                     # Pending response already stored before emit, so we're covered
                             
-                            emit_socketio.emit('agent_response', {
-                                'success': True,
-                                'text': agent_response,
-                                'audio': audio_base64
-                            }, namespace='/voice', room=session_id, callback=emit_callback)
-                            print(f"✅ agent_response event emitted to session {session_id} (Socket.IO will handle delivery)", flush=True)
+                            # Check audio size - if too large, use HTTP instead of Socket.IO to avoid WebSocket corruption
+                            AUDIO_SIZE_THRESHOLD = 500000  # 500KB base64 (~375KB binary)
+                            audio_size = len(audio_base64) if audio_base64 else 0
+                            
+                            if audio_size > AUDIO_SIZE_THRESHOLD:
+                                print(f"⚠️ Audio payload too large ({audio_size} chars), using HTTP delivery instead of Socket.IO", flush=True)
+                                # Store in Redis and send notification
+                                if user_id:
+                                    try:
+                                        import json
+                                        pending_response = {
+                                            'text': agent_response,
+                                            'audio': audio_base64,
+                                            'created_at': time.time(),
+                                            'original_session_id': session_id
+                                        }
+                                        redis_key = f"pending_response:{user_id}"
+                                        if redis_manager.is_available():
+                                            redis_manager.redis_client.setex(redis_key, 300, json.dumps(pending_response))
+                                            print(f"💾 Stored large response in Redis for HTTP delivery", flush=True)
+                                            
+                                            # Send small notification via Socket.IO
+                                            emit_socketio.emit('pending_response_available', {
+                                                'success': True,
+                                                'message': 'Response ready - fetching via HTTP...',
+                                                'user_id': user_id
+                                            }, namespace='/voice', room=session_id)
+                                            print(f"✅ Large response notification sent - client will fetch via HTTP", flush=True)
+                                    except Exception as store_error:
+                                        print(f"⚠️ Error storing large response: {store_error}", flush=True)
+                                        # Fallback: try sending anyway (might work, might fail)
+                                        emit_socketio.emit('agent_response', {
+                                            'success': True,
+                                            'text': agent_response,
+                                            'audio': audio_base64
+                                        }, namespace='/voice', room=session_id, callback=emit_callback)
+                                else:
+                                    # No user_id, try sending anyway
+                                    emit_socketio.emit('agent_response', {
+                                        'success': True,
+                                        'text': agent_response,
+                                        'audio': audio_base64
+                                    }, namespace='/voice', room=session_id, callback=emit_callback)
+                            else:
+                                # Small enough to send via Socket.IO
+                                emit_socketio.emit('agent_response', {
+                                    'success': True,
+                                    'text': agent_response,
+                                    'audio': audio_base64
+                                }, namespace='/voice', room=session_id, callback=emit_callback)
+                                print(f"✅ agent_response event emitted to session {session_id} (Socket.IO will handle delivery)", flush=True)
                     except Exception as emit_error:
                         print(f"❌ Error during emit: {emit_error}", flush=True)
                         import traceback

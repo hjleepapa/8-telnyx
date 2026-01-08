@@ -2679,6 +2679,47 @@ def set_user_llm_provider():
 
 
 # Route to check Deepgram status
+@convonet_todo_bp.route('/webrtc/pending-response', methods=['GET'])
+def get_pending_response():
+    """HTTP endpoint for client to fetch pending responses (avoids WebSocket large payload issues)"""
+    try:
+        user_id = request.args.get('user_id')
+        if not user_id:
+            return jsonify({'success': False, 'error': 'user_id required'}), 400
+        
+        from .redis_manager import redis_manager
+        import json
+        
+        if not redis_manager.is_available():
+            return jsonify({'success': False, 'error': 'Redis unavailable'}), 503
+        
+        redis_key = f"pending_response:{user_id}"
+        pending_data = redis_manager.redis_client.get(redis_key)
+        
+        if not pending_data:
+            return jsonify({'success': False, 'pending': False}), 200
+        
+        pending_response = json.loads(pending_data)
+        
+        # Delete from Redis after fetching (one-time delivery)
+        redis_manager.redis_client.delete(redis_key)
+        
+        logger.info(f"✅ Pending response fetched via HTTP for user {user_id}")
+        
+        return jsonify({
+            'success': True,
+            'pending': True,
+            'text': pending_response.get('text'),
+            'audio': pending_response.get('audio'),
+            'created_at': pending_response.get('created_at')
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error fetching pending response: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @convonet_todo_bp.route('/webrtc/whisper-status')
 def whisper_status():
     """Check Deepgram status"""
