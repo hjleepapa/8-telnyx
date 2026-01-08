@@ -1575,11 +1575,14 @@ async def _run_agent_async(
     monitor = get_agent_monitor()
     
     # Detect mortgage intent from user prompt
-    agent_type = "mortgage" if detect_mortgage_intent(prompt) else "todo"
+    has_mortgage_intent = detect_mortgage_intent(prompt)
+    agent_type = "mortgage" if has_mortgage_intent else "todo"
     if agent_type == "mortgage":
         print(f"🏠 Mortgage intent detected, using MortgageAgent", flush=True)
+        print(f"🏠 Prompt was: '{prompt}'", flush=True)
     else:
         print(f"📝 Using TodoAgent (default)", flush=True)
+        print(f"📝 Prompt was: '{prompt}'", flush=True)
     
     # Add early logging to track provider selection
     print(f"🔧 Getting agent graph for user_id: {user_id}, agent_type: {agent_type}", flush=True)
