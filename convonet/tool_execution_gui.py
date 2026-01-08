@@ -4,7 +4,7 @@ Provides web-based GUI for viewing tool execution results
 """
 
 from flask import Blueprint, render_template, jsonify, request
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 import json
 from datetime import datetime
 
@@ -123,6 +123,26 @@ def get_tracker_details(request_id: str):
         if error_str and len(error_str) > 5000:
             error_str = error_str[:5000] + "... (truncated)"
         
+        # Try to preserve result as object if it's JSON-serializable, otherwise use string
+        result_data = execution.result
+        if result_data is not None:
+            # Try to keep as dict/list if it's already structured data
+            if isinstance(result_data, (dict, list)):
+                result_data = result_data  # Keep as-is for JSON serialization
+            else:
+                # It's a string or other type, try to parse if it looks like JSON
+                result_str = str(result_data)
+                if result_str.strip().startswith(('{', '[')):
+                    try:
+                        import json
+                        result_data = json.loads(result_str)  # Parse to dict/list
+                    except:
+                        result_data = result_str  # Keep as string if not valid JSON
+                else:
+                    result_data = result_str
+        else:
+            result_data = None
+        
         tool_data = {
             "tool_id": tool_id,
             "tool_name": execution.tool_name,
@@ -131,7 +151,7 @@ def get_tracker_details(request_id: str):
             "end_time": execution.end_time,
             "duration_ms": execution.duration_ms,
             "arguments": execution.arguments,
-            "result": result_str,
+            "result": result_data,  # Can be dict, list, or string
             "error": error_str,
             "error_type": execution.error_type,
             "stack_trace": execution.stack_trace

@@ -598,7 +598,7 @@
                             ${tool.result ? `
                             <div class="tool-result">
                                 <h4>Result</h4>
-                                <pre>${typeof tool.result === 'string' ? tool.result : JSON.stringify(tool.result, null, 2)}</pre>
+                                <pre>${formatToolResult(tool.result)}</pre>
                             </div>
                             ` : ''}
                             ${tool.error ? `
@@ -633,6 +633,34 @@
                 'pending': '⏳'
             };
             return icons[status] || '❓';
+        }
+        
+        function formatToolResult(result) {
+            // If result is already an object, stringify it
+            if (typeof result === 'object' && result !== null) {
+                return JSON.stringify(result, null, 2);
+            }
+            
+            // If result is a string, try to parse it as JSON for pretty formatting
+            if (typeof result === 'string') {
+                // Check if it looks like JSON (starts with { or [)
+                const trimmed = result.trim();
+                if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || 
+                    (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+                    try {
+                        const parsed = JSON.parse(result);
+                        return JSON.stringify(parsed, null, 2);
+                    } catch (e) {
+                        // Not valid JSON, return as-is
+                        return result;
+                    }
+                }
+                // Not JSON-like, return as-is
+                return result;
+            }
+            
+            // Fallback: convert to string
+            return String(result);
         }
         
         function updateChart(stats) {
