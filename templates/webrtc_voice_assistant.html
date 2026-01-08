@@ -270,6 +270,17 @@
                 socket.on('connect', () => {
                     console.log('✅ Connected to voice server');
                     showStatus('Connected! Ready to authenticate.', 'success');
+                    
+                    // Auto-authenticate if we have a stored PIN (for reconnection scenarios)
+                    const storedPin = localStorage.getItem('voice_assistant_pin');
+                    if (storedPin) {
+                        console.log('🔐 Auto-authenticating with stored PIN on connect');
+                        setTimeout(() => {
+                            if (socket.connected) {
+                                socket.emit('authenticate', { pin: storedPin });
+                            }
+                        }, 500); // Small delay to ensure socket is fully ready
+                    }
                 });
                 
                 socket.on('connect_error', (error) => {
@@ -295,6 +306,13 @@
                         console.log('🔄 Clearing processing state due to reconnect');
                         resetMicButton();
                     }
+                    
+                    // Auto-re-authenticate if we have a stored PIN
+                    const storedPin = localStorage.getItem('voice_assistant_pin');
+                    if (storedPin && socket.connected) {
+                        console.log('🔐 Auto-re-authenticating with stored PIN after reconnect');
+                        socket.emit('authenticate', { pin: storedPin });
+                    }
                 });
             } catch (error) {
                 console.error('❌ Socket.IO initialization error:', error);
@@ -302,6 +320,14 @@
             }
             
             socket.on('authenticated', (data) => {
+                // Store PIN for auto-re-authentication on reconnect
+                if (data.success) {
+                    const pinInput = document.getElementById('pinInput');
+                    if (pinInput && pinInput.value) {
+                        localStorage.setItem('voice_assistant_pin', pinInput.value);
+                        console.log('💾 Stored PIN for auto-re-authentication');
+                    }
+                }
                 if (data.success) {
                     document.getElementById('authSection').style.display = 'none';
                     document.getElementById('voiceSection').style.display = 'block';
