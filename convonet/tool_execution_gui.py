@@ -57,7 +57,9 @@ def get_all_trackers():
             # Get all tracker keys from Redis
             tracker_keys = _redis_manager.redis_client.keys("tool_tracker:*")
             for key in tracker_keys:
-                request_id = key.decode('utf-8').replace("tool_tracker:", "")
+                # Handle both bytes and string keys
+                key_str = key.decode('utf-8') if isinstance(key, bytes) else key
+                request_id = key_str.replace("tool_tracker:", "")
                 # Skip if already in memory
                 if request_id in _trackers:
                     continue
@@ -179,7 +181,9 @@ def get_overall_stats():
             import json
             tracker_keys = _redis_manager.redis_client.keys("tool_tracker:*")
             for key in tracker_keys:
-                request_id = key.decode('utf-8').replace("tool_tracker:", "")
+                # Handle both bytes and string keys
+                key_str = key.decode('utf-8') if isinstance(key, bytes) else key
+                request_id = key_str.replace("tool_tracker:", "")
                 if request_id not in _trackers:
                     tracker = get_tracker(request_id)
                     if tracker:

@@ -354,7 +354,8 @@ def _save_tracker_to_redis(tracker: ToolExecutionTracker):
         
         # Store in Redis with 24 hour TTL
         redis_key = f"tool_tracker:{tracker.request_id}"
-        _redis_manager.redis_client.setex(redis_key, 86400, json.dumps(tracker_data))
+        tracker_json = json.dumps(tracker_data)
+        _redis_manager.redis_client.setex(redis_key, 86400, tracker_json)
     except Exception as e:
         print(f"⚠️ Failed to save tracker to Redis: {e}")
 
@@ -370,6 +371,10 @@ def _load_tracker_from_redis(request_id: str) -> Optional[ToolExecutionTracker]:
         data = _redis_manager.redis_client.get(redis_key)
         if not data:
             return None
+        
+        # Handle both bytes and string data from Redis
+        if isinstance(data, bytes):
+            data = data.decode('utf-8')
         
         tracker_data = json.loads(data)
         tracker = ToolExecutionTracker(tracker_data['request_id'], tracker_data.get('user_id'))
