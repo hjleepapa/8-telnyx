@@ -13,8 +13,8 @@ import uuid
 from convonet.models.base import Base
 
 
-class ApplicationStatus(PyEnum):
-    """Mortgage application status"""
+class ApplicationStatus(str, PyEnum):
+    """Mortgage application status - inherits from str for SQLAlchemy compatibility"""
     DRAFT = "draft"
     FINANCIAL_REVIEW = "financial_review"
     DOCUMENT_COLLECTION = "document_collection"
@@ -26,8 +26,8 @@ class ApplicationStatus(PyEnum):
     CANCELLED = "cancelled"
 
 
-class DocumentType(PyEnum):
-    """Document types for mortgage application"""
+class DocumentType(str, PyEnum):
+    """Document types for mortgage application - inherits from str for SQLAlchemy compatibility"""
     IDENTIFICATION = "identification"
     INCOME_PAYSTUB = "income_paystub"
     INCOME_W2 = "income_w2"
@@ -44,8 +44,8 @@ class DocumentType(PyEnum):
     DOWN_PAYMENT_GIFT_LETTER = "down_payment_gift_letter"
 
 
-class DocumentStatus(PyEnum):
-    """Document upload status"""
+class DocumentStatus(str, PyEnum):
+    """Document upload status - inherits from str for SQLAlchemy compatibility"""
     PENDING = "pending"
     UPLOADED = "uploaded"
     VERIFIED = "verified"
@@ -59,8 +59,8 @@ class MortgageApplication(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey('users_anthropic.id'), nullable=False, index=True)
     
-    # Application status
-    status = Column(Enum(ApplicationStatus), default=ApplicationStatus.DRAFT, nullable=False, index=True)
+    # Application status - use native_enum=True to use PostgreSQL enum type
+    status = Column(Enum(ApplicationStatus, native_enum=True, create_constraint=True), default=ApplicationStatus.DRAFT, nullable=False, index=True)
     
     # Financial Information (Step 1: Review Finances)
     credit_score = Column(Integer, nullable=True)
@@ -116,7 +116,7 @@ class MortgageDocument(Base):
     application_id = Column(UUID(as_uuid=True), ForeignKey('mortgage_applications.id'), nullable=False, index=True)
     
     # Document information
-    document_type = Column(Enum(DocumentType), nullable=False, index=True)
+    document_type = Column(Enum(DocumentType, native_enum=True, create_constraint=True), nullable=False, index=True)
     document_name = Column(String(255), nullable=False)
     file_path = Column(String(500), nullable=True)  # Path to stored file
     file_url = Column(String(500), nullable=True)  # URL if stored externally
@@ -124,7 +124,7 @@ class MortgageDocument(Base):
     mime_type = Column(String(100), nullable=True)
     
     # Document status
-    status = Column(Enum(DocumentStatus), default=DocumentStatus.PENDING, nullable=False, index=True)
+    status = Column(Enum(DocumentStatus, native_enum=True, create_constraint=True), default=DocumentStatus.PENDING, nullable=False, index=True)
     
     # Verification details
     verified_at = Column(DateTime(timezone=True), nullable=True)

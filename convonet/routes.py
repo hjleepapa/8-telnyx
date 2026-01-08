@@ -1376,7 +1376,32 @@ async def _get_agent_graph(
                     "get_required_documents",
                     "get_missing_documents"
                 ]
-                filtered_tools = [t for t in tools if hasattr(t, 'name') and t.name in mortgage_tool_names]
+                # Debug: Check tool attributes
+                if tools and len(tools) > 0:
+                    sample_tool = tools[0]
+                    print(f"🔍 Sample tool type: {type(sample_tool)}", flush=True)
+                    print(f"🔍 Sample tool attributes: {[attr for attr in dir(sample_tool) if not attr.startswith('_')][:10]}", flush=True)
+                    if hasattr(sample_tool, 'name'):
+                        print(f"🔍 Sample tool name: {sample_tool.name}", flush=True)
+                    # Try alternative attribute names
+                    if hasattr(sample_tool, 'func') and hasattr(sample_tool.func, '__name__'):
+                        print(f"🔍 Sample tool func name: {sample_tool.func.__name__}", flush=True)
+                
+                # Try multiple ways to get tool name
+                filtered_tools = []
+                for t in tools:
+                    tool_name = None
+                    if hasattr(t, 'name'):
+                        tool_name = t.name
+                    elif hasattr(t, 'func') and hasattr(t.func, '__name__'):
+                        tool_name = t.func.__name__
+                    elif hasattr(t, '__name__'):
+                        tool_name = t.__name__
+                    
+                    if tool_name and tool_name in mortgage_tool_names:
+                        filtered_tools.append(t)
+                        print(f"✅ Found mortgage tool: {tool_name}", flush=True)
+                
                 tools = filtered_tools
                 print(f"🏠 Filtered to {len(tools)} mortgage tools (from {len(_mcp_tools_cache) if _mcp_tools_cache else 0} total tools)", flush=True)
             else:
