@@ -432,8 +432,9 @@ def init_socketio(socketio_instance: SocketIO, app):
     """Initialize Socket.IO event handlers"""
     
     # Store socketio instance and Flask app for background tasks
-    global socketio, flask_app
+    global socketio, flask_app, socketio_instance_global
     socketio = socketio_instance
+    socketio_instance_global = socketio_instance  # Store for use in nested functions
     flask_app = app  # Store Flask app directly (passed as parameter)
     
     @socketio.on('connect', namespace='/voice')
@@ -1476,8 +1477,15 @@ def init_socketio(socketio_instance: SocketIO, app):
                 # Send response to client
                 print(f"📤 Sending agent_response event to session {session_id}...", flush=True)
                 print(f"📤 Response text length: {len(agent_response)}, audio base64 length: {len(audio_base64)}", flush=True)
+                print(f"📤 socketio instance: {socketio}, type: {type(socketio)}", flush=True)
+                print(f"📤 socketio_instance_global: {socketio_instance_global if 'socketio_instance_global' in globals() else 'NOT SET'}, type: {type(socketio_instance_global) if 'socketio_instance_global' in globals() else 'N/A'}", flush=True)
                 try:
-                    socketio.emit('agent_response', {
+                    # Use the global socketio instance
+                    emit_socketio = socketio if socketio else (socketio_instance_global if 'socketio_instance_global' in globals() else None)
+                    if not emit_socketio:
+                        raise Exception("socketio instance not available")
+                    
+                    emit_socketio.emit('agent_response', {
                         'success': True,
                         'text': agent_response,
                         'audio': audio_base64
@@ -1489,9 +1497,11 @@ def init_socketio(socketio_instance: SocketIO, app):
                     traceback.print_exc()
                     # Try sending error to client
                     try:
-                        socketio.emit('error', {
-                            'message': f"Error sending response: {str(emit_error)}"
-                        }, namespace='/voice', room=session_id)
+                        emit_socketio = socketio if socketio else (socketio_instance_global if 'socketio_instance_global' in globals() else None)
+                        if emit_socketio:
+                            emit_socketio.emit('error', {
+                                'message': f"Error sending response: {str(emit_error)}"
+                            }, namespace='/voice', room=session_id)
                     except:
                         pass
                 
