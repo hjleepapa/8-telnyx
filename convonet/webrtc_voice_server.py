@@ -867,23 +867,59 @@ def init_socketio(socketio_instance: SocketIO, app):
                                             # Check if still pending (not sent via client_ready)
                                             if session_id in getattr(socketio, '_pending_responses', {}):
                                                 current_session = get_session(session_id)
-                                                if current_session:
-                                                    print(f"📤 Sending pending response via fallback (3s delay) to session {session_id}", flush=True)
-                                                    socketio.emit('agent_response', {
-                                                        'success': True,
-                                                        'text': pending_response['text'],
-                                                        'audio': pending_response['audio'],
-                                                        'pending': True
-                                                    }, namespace='/voice', room=session_id)
-                                                    
-                                                    # Clean up
+                                                if not current_session:
+                                                    print(f"⚠️ Session {session_id} no longer exists in fallback, keeping pending response in Redis", flush=True)
+                                                    # Clean up pending response info but keep in Redis
                                                     try:
-                                                        redis_manager.redis_client.delete(redis_key)
                                                         del socketio._pending_responses[session_id]
-                                                        print(f"✅ Pending response sent and cleared (fallback) for user {user.id}", flush=True)
-                                                        sentry_capture_voice_event("pending_response_delivered", session_id, str(user.id), details={"original_session": pending_response.get('original_session_id'), "method": "fallback"})
-                                                    except Exception as cleanup_error:
-                                                        print(f"⚠️ Error cleaning up pending response: {cleanup_error}", flush=True)
+                                                    except:
+                                                        pass
+                                                    return
+                                                
+                                                # Check if client is actually connected
+                                                try:
+                                                    participants = list(socketio.server.manager.get_participants('/voice', session_id))
+                                                    if not participants or len(participants) == 0:
+                                                        print(f"⚠️ Client not in Socket.IO room in fallback, keeping pending response in Redis", flush=True)
+                                                        # Clean up pending response info but keep in Redis
+                                                        try:
+                                                            del socketio._pending_responses[session_id]
+                                                        except:
+                                                            pass
+                                                        return
+                                                except Exception as room_check_error:
+                                                    print(f"⚠️ Error checking Socket.IO room in fallback: {room_check_error}", flush=True)
+                                                
+                                                print(f"📤 Sending pending response via fallback (3s delay) to session {session_id}", flush=True)
+                                                
+                                                # Use callback to verify delivery before clearing
+                                                def fallback_delivery_callback(ack_data):
+                                                    if ack_data:
+                                                        print(f"✅ Fallback pending response delivery confirmed for session {session_id}", flush=True)
+                                                        # Only clear if delivery confirmed
+                                                        try:
+                                                            redis_manager.redis_client.delete(redis_key)
+                                                            if session_id in getattr(socketio, '_pending_responses', {}):
+                                                                del socketio._pending_responses[session_id]
+                                                            print(f"✅ Pending response cleared (fallback, delivery confirmed) for user {user.id}", flush=True)
+                                                            sentry_capture_voice_event("pending_response_delivered", session_id, str(user.id), details={"original_session": pending_response.get('original_session_id'), "method": "fallback"})
+                                                        except Exception as cleanup_error:
+                                                            print(f"⚠️ Error cleaning up pending response: {cleanup_error}", flush=True)
+                                                    else:
+                                                        print(f"⚠️ Fallback pending response delivery NOT confirmed, keeping in Redis", flush=True)
+                                                        # Clean up pending response info but keep in Redis
+                                                        try:
+                                                            if session_id in getattr(socketio, '_pending_responses', {}):
+                                                                del socketio._pending_responses[session_id]
+                                                        except:
+                                                            pass
+                                                
+                                                socketio.emit('agent_response', {
+                                                    'success': True,
+                                                    'text': pending_response['text'],
+                                                    'audio': pending_response['audio'],
+                                                    'pending': True
+                                                }, namespace='/voice', room=session_id, callback=fallback_delivery_callback)
                                         
                                         socketio.start_background_task(send_pending_response_fallback)
                                 except Exception as pending_error:
@@ -978,16 +1014,32 @@ def init_socketio(socketio_instance: SocketIO, app):
             print(f"📤 Response text length: {len(pending_response.get('text', ''))}", flush=True)
             print(f"📤 Response audio length: {len(pending_response.get('audio', ''))}", flush=True)
             
-            # Verify session exists before sending
+            # Verify session exists and client is actually connected before sending
             current_session = get_session(session_id)
             if not current_session:
                 print(f"⚠️ Session {session_id} no longer exists, cannot send pending response", flush=True)
-                # Clean up pending response info
+                # Clean up pending response info, but keep in Redis for next reconnect
                 try:
                     del socketio._pending_responses[session_id]
                 except:
                     pass
                 return
+            
+            # Check if client is actually in the Socket.IO room (actually connected)
+            try:
+                participants = list(socketio.server.manager.get_participants('/voice', session_id))
+                if not participants or len(participants) == 0:
+                    print(f"⚠️ Client not in Socket.IO room for session {session_id}, cannot send pending response", flush=True)
+                    # Clean up pending response info, but keep in Redis for next reconnect
+                    try:
+                        del socketio._pending_responses[session_id]
+                    except:
+                        pass
+                    return
+                print(f"✅ Client is in Socket.IO room for session {session_id} ({len(participants)} participant(s))", flush=True)
+            except Exception as room_check_error:
+                print(f"⚠️ Error checking Socket.IO room: {room_check_error}", flush=True)
+                # Continue anyway, but log the error
             
             # Send the pending response with callback to verify delivery
             def delivery_callback(ack_data):
