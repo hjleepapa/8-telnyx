@@ -1669,12 +1669,15 @@ def init_socketio(socketio_instance: SocketIO, app):
                             
                             import eventlet
                             def delayed_delivery_check():
+                                print(f"⏰ Delayed delivery check started for session {delayed_session_id}, waiting 2 seconds...", flush=True)
                                 eventlet.sleep(2.0)  # Wait 2 seconds for callback
+                                print(f"⏰ Delayed delivery check: callback_fired={callback_fired['fired']}, user_id={delayed_user_id}", flush=True)
                                 if not callback_fired['fired']:
                                     print(f"⚠️ Emit callback did NOT fire for session {delayed_session_id} (client likely disconnected immediately)", flush=True)
                                     # Store as pending since we can't confirm delivery
                                     # We store it regardless of session state because callback not firing means we can't confirm delivery
                                     if delayed_user_id:
+                                        print(f"💾 Attempting to store pending response for user_id {delayed_user_id}...", flush=True)
                                         try:
                                             import json
                                             pending_response = {
