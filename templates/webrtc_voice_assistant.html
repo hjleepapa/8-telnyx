@@ -347,7 +347,9 @@
             });
             
             socket.on('agent_response', (data) => {
+                console.log('📨 agent_response event received:', data);
                 if (data.success) {
+                    console.log('✅ Response success, text length:', data.text ? data.text.length : 0);
                     addTranscript('agent', data.text);
                     
                     // Play audio response
@@ -361,6 +363,7 @@
                     
                     resetMicButton();
                 } else {
+                    console.log('❌ Response failed:', data);
                     showStatus('Error getting response', 'error');
                     resetMicButton();
                 }
