@@ -1755,9 +1755,6 @@ def init_socketio(socketio_instance: SocketIO, app):
                                 }, namespace='/voice', room=session_id)
                         except:
                             pass
-                            raise
-                    except Exception as emit_error:
-                        print(f"❌ Error emitting agent_response: {emit_error}", flush=True)
                         import traceback
                         traceback.print_exc()
                         # Try sending error to client
