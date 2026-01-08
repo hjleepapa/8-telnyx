@@ -1469,16 +1469,31 @@ def init_socketio(socketio_instance: SocketIO, app):
                 
                 # Convert speech to base64 for transmission
                 audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
-                print(f"🔊 TTS generated: {len(audio_bytes)} bytes, base64: {len(audio_base64)} chars")
-                print(f"🔊 TTS audio preview: {audio_base64[:100]}...")
+                print(f"🔊 TTS generated: {len(audio_bytes)} bytes, base64: {len(audio_base64)} chars", flush=True)
+                print(f"🔊 TTS audio preview: {audio_base64[:100]}...", flush=True)
                 sentry_capture_voice_event("tts_generation_completed", session_id, session.get('user_id'), details={"audio_size": len(audio_base64)})
                 
                 # Send response to client
-                socketio.emit('agent_response', {
-                    'success': True,
-                    'text': agent_response,
-                    'audio': audio_base64
-                }, namespace='/voice', room=session_id)
+                print(f"📤 Sending agent_response event to session {session_id}...", flush=True)
+                print(f"📤 Response text length: {len(agent_response)}, audio base64 length: {len(audio_base64)}", flush=True)
+                try:
+                    socketio.emit('agent_response', {
+                        'success': True,
+                        'text': agent_response,
+                        'audio': audio_base64
+                    }, namespace='/voice', room=session_id)
+                    print(f"✅ agent_response event emitted successfully to session {session_id}", flush=True)
+                except Exception as emit_error:
+                    print(f"❌ Error emitting agent_response: {emit_error}", flush=True)
+                    import traceback
+                    traceback.print_exc()
+                    # Try sending error to client
+                    try:
+                        socketio.emit('error', {
+                            'message': f"Error sending response: {str(emit_error)}"
+                        }, namespace='/voice', room=session_id)
+                    except:
+                        pass
                 
                 sentry_capture_voice_event("audio_processing_completed", session_id, session.get('user_id'), details={"success": True})
             
