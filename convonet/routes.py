@@ -1666,8 +1666,18 @@ async def _run_agent_async(
             return f"TRANSFER_INITIATED:{fallback_extension}|{fallback_department}|{reason}"
         return "I'm sorry, there's a temporary system issue. Please try again in a moment."
 
+    # For mortgage agent, inject authenticated_user_id into the prompt context
+    # so the LLM knows the actual UUID value to use
+    if agent_type == "mortgage" and user_id:
+        # Add context about authenticated_user_id to the prompt
+        enhanced_prompt = f"""[SYSTEM CONTEXT: Your authenticated_user_id is {user_id}. Use this exact value for all mortgage tool calls that require user_id parameter. DO NOT ask the user for their user_id.]
+
+{prompt}"""
+    else:
+        enhanced_prompt = prompt
+    
     input_state = AgentState(
-        messages=[HumanMessage(content=prompt)],
+        messages=[HumanMessage(content=enhanced_prompt)],
         customer_id="",
         authenticated_user_id=user_id,
         authenticated_user_name=user_name,
