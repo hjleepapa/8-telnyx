@@ -15,7 +15,7 @@ autogen==0.8.7
 autogen-agentchat==0.5.3
 autogen-azure==0.0.0
 autogen-core==0.5.3
-av==14.3.0
+av==14.4.0
 azure-core==1.33.0
 azure-identity==1.21.0
 blinker==1.8.2
