@@ -1070,7 +1070,8 @@ def preload_mcp_tools_sync():
 async def _get_agent_graph(
     provider: Optional[LLMProvider] = None, 
     user_id: Optional[str] = None,
-    agent_type: str = "todo"  # "todo" or "mortgage"
+    agent_type: str = "todo",  # "todo" or "mortgage"
+    model: Optional[str] = None  # Optional model override (e.g., "claude-3-5-haiku-20241022" for voice)
 ) -> StateGraph:
     """Helper to initialize the agent graph with tools (cached for performance).
     
@@ -1127,8 +1128,11 @@ async def _get_agent_graph(
                 provider = "claude"
             print(f"📋 Using environment/default LLM provider: {provider}")
     
-    # Get current model name based on provider
-    if provider == "gemini":
+    # Get current model name based on provider (use override if provided)
+    if model:
+        current_model = model  # Use model override (e.g., for voice responses)
+        print(f"🔧 Using model override: {current_model}")
+    elif provider == "gemini":
         current_model = os.getenv("GOOGLE_MODEL", "gemini-2.5-flash")
         # Force clear cache if old default model (gemini-3-pro-preview) is cached
         if (_agent_graph_cache is not None and 
@@ -1580,6 +1584,8 @@ async def _run_agent_async(
     include_metadata: bool = False,
     socketio=None,
     session_id: Optional[str] = None,
+    model: Optional[str] = None,  # Optional model override (e.g., "claude-3-5-haiku-20241022" for voice)
+    text_chunk_callback: Optional[callable] = None,  # Optional callback for text chunks (for early TTS)
 ) -> str | dict:
     """Runs the agent for a given prompt and returns the final response.
     
@@ -1642,7 +1648,7 @@ async def _run_agent_async(
             print(f"🚀 About to call _get_agent_graph() with timeout...", flush=True)
             sys.stdout.flush()
             agent_graph = await asyncio.wait_for(
-                _get_agent_graph(user_id=user_id, agent_type=agent_type),
+                _get_agent_graph(user_id=user_id, agent_type=agent_type, model=model),
                 timeout=timeout_seconds
             )
             print(f"✅ Agent graph obtained successfully", flush=True)
@@ -1975,12 +1981,19 @@ Your messages are read aloud, so be brief and conversational."""
                                             if isinstance(msg, type) and hasattr(msg, '__class__'):
                                                 from langchain_core.messages import AIMessage
                                                 if isinstance(msg, AIMessage):
+                                                    # Emit to client via Socket.IO
                                                     socketio.emit(
                                                         'agent_stream_chunk',
                                                         {'text': msg.content, 'type': 'text'},
                                                         namespace='/voice',
                                                         room=session_id
                                                     )
+                                                    # Call text_chunk_callback for early TTS (server-side)
+                                                    if text_chunk_callback:
+                                                        try:
+                                                            text_chunk_callback(msg.content)
+                                                        except Exception as callback_error:
+                                                            print(f"⚠️ Error in text_chunk_callback: {callback_error}", flush=True)
                                 
                                 if "messages" in state:
                                     for msg in state["messages"]:
