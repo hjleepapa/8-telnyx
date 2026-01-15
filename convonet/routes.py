@@ -1606,7 +1606,37 @@ async def _run_agent_async(
     monitor = get_agent_monitor()
     
     # Detect mortgage intent from user prompt
+    prompt_text = prompt.strip().lower() if prompt else ""
     has_mortgage_intent = detect_mortgage_intent(prompt)
+    
+    # Sticky mortgage context (keeps user in mortgage flow after initial intent)
+    # Allow explicit todo intent to override sticky mortgage context.
+    todo_keywords = [
+        "todo", "reminder", "calendar", "meeting", "schedule",
+        "task", "create a todo", "create a reminder", "create a meeting"
+    ]
+    has_todo_intent = any(keyword in prompt_text for keyword in todo_keywords)
+    stored_agent_type = None
+    if user_id and redis_manager.is_available():
+        try:
+            stored_agent_type = redis_manager.redis_client.get(f"agent_type:{user_id}")
+            if isinstance(stored_agent_type, bytes):
+                stored_agent_type = stored_agent_type.decode("utf-8")
+        except Exception as e:
+            print(f"⚠️ Error reading agent context from Redis: {e}", flush=True)
+    
+    if stored_agent_type == "mortgage" and not has_todo_intent:
+        if not has_mortgage_intent:
+            print(f"🏠 Using sticky mortgage context for user_id {user_id}", flush=True)
+        has_mortgage_intent = True
+    elif has_todo_intent and stored_agent_type == "mortgage":
+        print(f"📝 Todo intent detected; clearing sticky mortgage context for user_id {user_id}", flush=True)
+        if user_id and redis_manager.is_available():
+            try:
+                redis_manager.redis_client.delete(f"agent_type:{user_id}")
+            except Exception as e:
+                print(f"⚠️ Error clearing agent context from Redis: {e}", flush=True)
+    
     agent_type = "mortgage" if has_mortgage_intent else "todo"
     if agent_type == "mortgage":
         print(f"🏠 Mortgage intent detected, using MortgageAgent", flush=True)
@@ -1614,6 +1644,13 @@ async def _run_agent_async(
     else:
         print(f"📝 Using TodoAgent (default)", flush=True)
         print(f"📝 Prompt was: '{prompt}'", flush=True)
+
+    # Persist agent context so short replies (e.g., "Monthly income is 5,000") stay in mortgage flow
+    if agent_type == "mortgage" and user_id and redis_manager.is_available():
+        try:
+            redis_manager.redis_client.setex(f"agent_type:{user_id}", 1800, "mortgage")  # 30 min TTL
+        except Exception as e:
+            print(f"⚠️ Error storing agent context in Redis: {e}", flush=True)
     
     # Add early logging to track provider selection
     print(f"🔧 Getting agent graph for user_id: {user_id}, agent_type: {agent_type}", flush=True)
