@@ -1586,6 +1586,7 @@ async def _run_agent_async(
     session_id: Optional[str] = None,
     model: Optional[str] = None,  # Optional model override (e.g., "claude-3-5-haiku-20241022" for voice)
     text_chunk_callback: Optional[callable] = None,  # Optional callback for text chunks (for early TTS)
+    tool_call_callback: Optional[callable] = None,   # Optional callback when tool calls are detected
 ) -> str | dict:
     """Runs the agent for a given prompt and returns the final response.
     
@@ -2051,6 +2052,12 @@ Your messages are read aloud, so be brief and conversational."""
                                                 
                                                 print(f"  → Tool: {tool_name} (id: {tool_id[:20]}...)", flush=True)
                                                 sys.stdout.flush()
+                                                
+                                                if tool_call_callback:
+                                                    try:
+                                                        tool_call_callback(tool_name)
+                                                    except Exception as callback_error:
+                                                        print(f"⚠️ Error in tool_call_callback: {callback_error}", flush=True)
                                                 
                                                 tool_calls_info.append(ToolCallInfo(
                                                     tool_name=tool_name,

@@ -259,6 +259,12 @@
         let audioChunkQueue = [];
         let isPlayingAudioChunks = false;
         let currentAudioPlayback = null;
+
+        // Low-latency playback via Web Audio API
+        let audioContext = null;
+        let audioBufferQueue = [];
+        let isPlayingAudioBuffers = false;
+        let currentAudioSource = null;
         
         // Enable streaming STT (send audio chunks while recording)
         const STREAMING_STT_ENABLED = true;
@@ -572,7 +578,9 @@
             socket.on('stop_audio', (data) => {
                 console.log('🛑 stop_audio received:', data);
                 audioChunkQueue = [];
+                audioBufferQueue = [];
                 isPlayingAudioChunks = false;
+                isPlayingAudioBuffers = false;
                 if (currentAudioPlayback) {
                     try {
                         currentAudioPlayback.pause();
@@ -582,6 +590,17 @@
                     }
                 }
                 currentAudioPlayback = null;
+                if (currentAudioSource) {
+                    try {
+                        currentAudioSource.stop(0);
+                    } catch (e) {
+                        console.warn('⚠️ Error stopping Web Audio source:', e);
+                    }
+                }
+                currentAudioSource = null;
+                if (audioContext) {
+                    audioContext.suspend().then(() => audioContext.resume()).catch(() => {});
+                }
             });
             
             socket.on('audio_stream_complete', (data) => {
@@ -683,6 +702,7 @@
         // Start recording
         async function startRecording() {
             try {
+                await ensureAudioContext();
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     audio: {
                         echoCancellation: true,
@@ -853,8 +873,72 @@
             transcriptBox.scrollTop = transcriptBox.scrollHeight;
         }
         
+        function ensureAudioContext() {
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioContext.state === 'suspended') {
+                return audioContext.resume().catch(() => {});
+            }
+            return Promise.resolve();
+        }
+
+        function base64ToArrayBuffer(base64) {
+            const binaryString = atob(base64);
+            const len = binaryString.length;
+            const bytes = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+                bytes[i] = binaryString.charCodeAt(i);
+            }
+            return bytes.buffer;
+        }
+
+        async function queueAudioBuffer(base64Audio) {
+            await ensureAudioContext();
+            try {
+                const arrayBuffer = base64ToArrayBuffer(base64Audio);
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                audioBufferQueue.push(audioBuffer);
+                if (!isPlayingAudioBuffers) {
+                    playNextAudioBuffer();
+                }
+                return true;
+            } catch (error) {
+                console.warn('⚠️ Web Audio decode failed, falling back to <audio>:', error);
+                return false;
+            }
+        }
+
+        function playNextAudioBuffer() {
+            if (!audioBufferQueue.length) {
+                isPlayingAudioBuffers = false;
+                currentAudioSource = null;
+                return;
+            }
+            isPlayingAudioBuffers = true;
+            const buffer = audioBufferQueue.shift();
+            const source = audioContext.createBufferSource();
+            source.buffer = buffer;
+            source.connect(audioContext.destination);
+            source.onended = () => {
+                currentAudioSource = null;
+                playNextAudioBuffer();
+            };
+            currentAudioSource = source;
+            source.start(0);
+        }
+
         // Play audio response (non-streaming, single audio blob)
         function playAudioResponse(base64Audio) {
+            // Prefer Web Audio API for low-latency playback
+            queueAudioBuffer(base64Audio).then((usedWebAudio) => {
+                if (!usedWebAudio) {
+                    playAudioResponseFallback(base64Audio);
+                }
+            });
+        }
+
+        function playAudioResponseFallback(base64Audio) {
             // Try different audio formats (MP3 first since TTS generates MP3)
             const formats = [
                 'data:audio/mp3;base64,',
@@ -910,7 +994,7 @@
             
             function playNextChunk() {
                 if (audioChunkQueue.length === 0) {
-                    console.log('✅ All audio chunks played');
+                    console.log('✅ All audio chunks queued');
                     isPlayingAudioChunks = false;
                     currentAudioPlayback = null;
                     return;
@@ -919,65 +1003,15 @@
                 const chunk = audioChunkQueue.shift();
                 console.log('🎵 Playing chunk', chunk.index, '. Remaining:', audioChunkQueue.length);
                 
-                // Try different audio formats
-                const formats = [
-                    'data:audio/mp3;base64,',
-                    'data:audio/mpeg;base64,',
-                    'data:audio/wav;base64,',
-                    'data:audio/ogg;base64,',
-                    'data:audio/webm;base64,'
-                ];
-                
-                let audioPlayed = false;
-                let audioElement = null;
-                
-                for (const format of formats) {
-                    try {
-                        audioElement = new Audio(format + chunk.audio);
-                        
-                        audioElement.oncanplaythrough = () => {
-                            if (!audioPlayed) {
-                                audioPlayed = true;
-                                audioElement.play().catch(error => {
-                                    console.error('Error playing chunk audio:', error);
-                                    // Continue to next chunk even if this one fails
-                                    playNextChunk();
-                                });
-                            }
-                        };
-                        
-                        audioElement.onended = () => {
-                            console.log('✅ Chunk', chunk.index, 'finished playing');
-                            currentAudioPlayback = null;
-                            // Play next chunk
-                            playNextChunk();
-                        };
-                        
-                        audioElement.onerror = (error) => {
-                            console.log('Failed to play chunk audio with format', format, error);
-                            if (!audioPlayed) {
-                                // Try next format or skip this chunk
-                                if (format === formats[formats.length - 1]) {
-                                    console.warn('⚠️ All formats failed for chunk', chunk.index, ', skipping');
-                                    playNextChunk();
-                                }
-                            }
-                        };
-                        
-                        audioElement.load();
-                        currentAudioPlayback = audioElement;
-                        break; // Use first format that works
-                    } catch (error) {
-                        console.log('Error creating audio element:', error);
+                queueAudioBuffer(chunk.audio).then((usedWebAudio) => {
+                    if (usedWebAudio) {
+                        playNextChunk();
+                        return;
                     }
-                }
-                
-                // Fallback: try without specifying format
-                if (!audioPlayed && !audioElement) {
+                    // Fallback: HTMLAudio for this chunk
                     try {
-                        audioElement = new Audio('data:audio/octet-stream;base64,' + chunk.audio);
+                        const audioElement = new Audio('data:audio/octet-stream;base64,' + chunk.audio);
                         audioElement.onended = () => {
-                            console.log('✅ Chunk', chunk.index, 'finished playing (fallback)');
                             currentAudioPlayback = null;
                             playNextChunk();
                         };
@@ -994,10 +1028,9 @@
                         console.error('All audio playback attempts failed for chunk:', error);
                         playNextChunk();
                     }
-                }
+                });
             }
             
-            // Start playing
             playNextChunk();
         }
         

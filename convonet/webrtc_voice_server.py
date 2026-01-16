@@ -125,6 +125,7 @@ streaming_sessions = {}
 
 # Track active response streams for barge-in cancellation
 active_response_controls = {}
+BARge_IN_MIN_INTERVAL_SEC = 0.25
 
 # One-time model warm-up flag
 MODEL_WARMED = False
@@ -370,7 +371,8 @@ def warmup_llm_model():
 def register_active_response(session_id: str, cancel_event: threading.Event, tts_stream: Optional[StreamingTTSStream]):
     active_response_controls[session_id] = {
         "cancel_event": cancel_event,
-        "tts_stream": tts_stream
+        "tts_stream": tts_stream,
+        "last_barge_in": 0.0
     }
 
 
@@ -1597,6 +1599,15 @@ def init_socketio(socketio_instance: SocketIO, app):
         audio_chunk = base64.b64decode(data['audio'])
         print(f"🔍 Debug: received audio chunk: {len(audio_chunk)} bytes")
 
+        # Barge-in: cancel current response as soon as user speaks again
+        control = active_response_controls.get(session_id)
+        if control:
+            now = time.time()
+            last_barge_in = control.get("last_barge_in", 0.0)
+            if now - last_barge_in >= BARge_IN_MIN_INTERVAL_SEC:
+                control["last_barge_in"] = now
+                cancel_active_response(session_id, reason="barge_in_audio_chunk")
+
         # Stream chunk to Deepgram STT for low-latency transcription
         streaming_session = streaming_sessions.get(session_id)
         if streaming_session:
@@ -2206,6 +2217,41 @@ def init_socketio(socketio_instance: SocketIO, app):
                                     text_accumulator['first_sentence_ready'].set()
                                     print(f"🚀 FIRST SENTENCE DETECTED: {first_sentence[:80]}...", flush=True)
                 
+                filler_sent = {"sent": False}
+                filler_texts = [
+                    "One moment while I check that.",
+                    "Let me look that up for you.",
+                    "Sure, checking that now."
+                ]
+
+                def tool_call_callback(tool_name: str):
+                    """Send a filler phrase immediately when a tool call is detected."""
+                    if response_cancel_event.is_set() or filler_sent["sent"]:
+                        return
+                    filler_sent["sent"] = True
+                    filler_text = filler_texts[int(time.time()) % len(filler_texts)]
+                    try:
+                        if streaming_tts:
+                            streaming_tts.send_text(filler_text + " ")
+                            return
+                        deepgram_tts = get_deepgram_tts_service()
+                        if deepgram_tts:
+                            filler_audio = deepgram_tts.synthesize_speech(filler_text, voice="aura-asteria-en")
+                            if filler_audio:
+                                filler_base64 = base64.b64encode(filler_audio).decode('utf-8')
+                                emit_socketio = socketio if socketio else (socketio_instance_global if 'socketio_instance_global' in globals() else None)
+                                if emit_socketio:
+                                    emit_socketio.emit('audio_chunk', {
+                                        'success': True,
+                                        'chunk_index': 0,
+                                        'total_chunks': 1,
+                                        'audio': filler_base64,
+                                        'is_final': True,
+                                        'is_filler': True
+                                    }, namespace='/voice', room=session_id)
+                    except Exception as filler_error:
+                        print(f"⚠️ Filler TTS failed: {filler_error}", flush=True)
+                
                 try:
                     print(f"🔧 Setting up ThreadPoolExecutor...", flush=True)
                     sys.stdout.flush()
@@ -2248,7 +2294,8 @@ def init_socketio(socketio_instance: SocketIO, app):
                                         session['user_name'],
                                         socketio=socketio_instance,
                                         session_id=session_id,
-                                        text_chunk_callback=text_chunk_callback  # Pass callback for early TTS (from outer scope)
+                                        text_chunk_callback=text_chunk_callback,  # Pass callback for early TTS (from outer scope)
+                                        tool_call_callback=tool_call_callback     # Pass callback for filler on tool calls
                                     ),
                                     timeout=timeout_seconds
                                 )
@@ -2922,6 +2969,7 @@ async def process_with_agent(
     socketio=None,
     session_id: str | None = None,
     text_chunk_callback: Optional[callable] = None,  # Optional callback for text chunks (for early TTS)
+    tool_call_callback: Optional[callable] = None,   # Optional callback when tool calls are detected
 ) -> str:
     """Process user input with the agent"""
     try:
@@ -2960,6 +3008,7 @@ async def process_with_agent(
             session_id=session_id,
             model=voice_model,  # Use faster model for voice responses
             text_chunk_callback=text_chunk_callback,  # Pass callback for early TTS
+            tool_call_callback=tool_call_callback,    # Pass callback for filler on tool calls
         )
         
         if isinstance(result, dict):
