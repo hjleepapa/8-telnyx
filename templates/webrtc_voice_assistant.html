@@ -196,7 +196,7 @@
                 <label for="pinInput" class="form-label">Enter Your PIN</label>
                 <input type="password" class="form-control" id="pinInput" placeholder="Enter 4-6 digit PIN" maxlength="6">
             </div>
-            <button class="btn btn-primary w-100" onclick="authenticate()">
+            <button id="authButton" class="btn btn-primary w-100" type="button">
                 <i class="fas fa-lock"></i> Authenticate
             </button>
         </div>
@@ -261,7 +261,6 @@
         let currentAudioPlayback = null;
 
         // Low-latency playback via Web Audio API
-        let audioContext = null;
         let audioBufferQueue = [];
         let isPlayingAudioBuffers = false;
         let currentAudioSource = null;
@@ -1060,6 +1059,11 @@
         // Initialize on page load
         window.addEventListener('DOMContentLoaded', () => {
             initSocket();
+
+            const authButton = document.getElementById('authButton');
+            if (authButton) {
+                authButton.addEventListener('click', authenticate);
+            }
             
             // Allow Enter key for PIN
             document.getElementById('pinInput').addEventListener('keypress', (e) => {
