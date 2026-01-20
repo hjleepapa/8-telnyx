@@ -574,9 +574,7 @@
                 }
             });
             
-            // Stop audio playback immediately (barge-in / interruption)
-            socket.on('stop_audio', (data) => {
-                console.log('🛑 stop_audio received:', data);
+            function stopAllPlayback() {
                 audioChunkQueue = [];
                 audioBufferQueue = [];
                 isPlayingAudioChunks = false;
@@ -601,6 +599,12 @@
                 if (audioContext) {
                     audioContext.suspend().then(() => audioContext.resume()).catch(() => {});
                 }
+            }
+            
+            // Stop audio playback immediately (barge-in / interruption)
+            socket.on('stop_audio', (data) => {
+                console.log('🛑 stop_audio received:', data);
+                stopAllPlayback();
             });
             
             socket.on('audio_stream_complete', (data) => {
@@ -702,6 +706,8 @@
         // Start recording
         async function startRecording() {
             try {
+                // Immediate local barge-in: stop any current playback before recording
+                stopAllPlayback();
                 await ensureAudioContext();
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     audio: {

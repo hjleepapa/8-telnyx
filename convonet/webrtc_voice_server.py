@@ -1568,6 +1568,10 @@ def init_socketio(socketio_instance: SocketIO, app):
             emit('error', {'message': 'Please authenticate first'})
             return
         
+        # Barge-in: stop any active response immediately when user starts speaking
+        if session_id in active_response_controls:
+            cancel_active_response(session_id, reason="barge_in_start_recording")
+        
         print(f"🎤 Recording started: {session_id}")
         
         # Update recording state and clear audio buffer
@@ -2239,6 +2243,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                 # Streaming TTS (Deepgram) for full-duplex low latency
                 streaming_tts = None
                 response_cancel_event = threading.Event()
+                register_active_response(session_id, response_cancel_event, None)
                 if use_streaming_tts and STREAMING_TTS_ENABLED and DEEPGRAM_STREAMING_AVAILABLE:
                     try:
                         streaming_tts = StreamingTTSStream(session_id, socketio, STREAMING_TTS_MODEL)
@@ -2528,6 +2533,11 @@ def init_socketio(socketio_instance: SocketIO, app):
                     agent_response = "I'm sorry, I encountered an error. Please try again."
                     transfer_marker = None
                 sentry_capture_voice_event("agent_processing_completed", session_id, session.get('user_id'), details={"response_length": len(agent_response)})
+                if response_cancel_event.is_set():
+                    print("🛑 Response cancelled before TTS generation (barge-in)", flush=True)
+                    if session_id in active_response_controls:
+                        active_response_controls.pop(session_id, None)
+                    return
                 
                 effective_marker = transfer_marker or (agent_response if isinstance(agent_response, str) and agent_response.startswith("TRANSFER_INITIATED:") else None)
                 if effective_marker:
@@ -2595,6 +2605,11 @@ def init_socketio(socketio_instance: SocketIO, app):
                         # Short response - use original approach
                         print(f"🔊 Short response ({len(agent_response)} chars), using non-streaming TTS", flush=True)
                         audio_bytes = None
+                        if response_cancel_event.is_set():
+                            print("🛑 Response cancelled before short TTS generation (barge-in)", flush=True)
+                            if session_id in active_response_controls:
+                                active_response_controls.pop(session_id, None)
+                            return
                     
                         if use_elevenlabs:
                             try:
@@ -2662,6 +2677,9 @@ def init_socketio(socketio_instance: SocketIO, app):
                         chunk_offset = 1 if skip_first_chunk else 0  # Offset for chunk_index in emit
                     
                         for chunk_idx, text_chunk in enumerate(text_chunks[start_idx:], start=start_idx):
+                            if response_cancel_event.is_set():
+                                print("🛑 Response cancelled during streaming TTS (barge-in)", flush=True)
+                                break
                             try:
                                 chunk_audio = None
                     
@@ -2801,6 +2819,12 @@ def init_socketio(socketio_instance: SocketIO, app):
                 else:
                     print(f"⚠️ No user_id available for pending response storage (session_id: {session_id})", flush=True)
                     print(f"⚠️ Session dict: {session if 'session' in locals() else 'not in scope'}", flush=True)
+                
+                if response_cancel_event.is_set():
+                    print("🛑 Response cancelled before emit (barge-in)", flush=True)
+                    if session_id in active_response_controls:
+                        active_response_controls.pop(session_id, None)
+                    return
                 
                 if not session_still_exists:
                     print(f"⚠️ Session {session_id} no longer exists (client may have disconnected)", flush=True)
