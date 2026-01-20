@@ -1982,6 +1982,7 @@ Your messages are read aloud, so be brief and conversational."""
                     stream_iter = stream.__aiter__()
                     states_processed = 0
                     max_states = 50  # Prevent infinite loops
+                    seen_tool_calls = set()
                     
                     # Add watchdog timer - if we don't get a state update within this time, force exit
                     import time as watchdog_time
@@ -2054,6 +2055,7 @@ Your messages are read aloud, so be brief and conversational."""
                                         last_streamed_text = msg.content
                                 
                                 if "messages" in state:
+                                    new_tool_calls_in_update = 0
                                     for msg in state["messages"]:
                                         # Check for TRANSFER_INITIATED in tool message content
                                         if hasattr(msg, 'content') and isinstance(msg.content, str):
@@ -2063,12 +2065,22 @@ Your messages are read aloud, so be brief and conversational."""
                                         
                                         # Track tool calls
                                         if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                                            print(f"🔧 Detected {len(msg.tool_calls)} tool call(s) in state update #{states_processed}", flush=True)
-                                            sys.stdout.flush()
                                             for tc in msg.tool_calls:
-                                                tool_id = getattr(tc, 'id', getattr(tc, 'tool_call_id', str(uuid.uuid4())))
-                                                tool_name = getattr(tc, 'name', getattr(tc, 'functionName', 'unknown'))
-                                                args = getattr(tc, 'args', getattr(tc, 'arguments', {}))
+                                                if isinstance(tc, dict):
+                                                    tool_id = tc.get('id') or tc.get('tool_call_id')
+                                                    tool_name = tc.get('name') or tc.get('functionName') or tc.get('function') or 'unknown'
+                                                    args = tc.get('args') or tc.get('arguments') or {}
+                                                else:
+                                                    tool_id = getattr(tc, 'id', getattr(tc, 'tool_call_id', None))
+                                                    tool_name = getattr(tc, 'name', getattr(tc, 'functionName', 'unknown'))
+                                                    args = getattr(tc, 'args', getattr(tc, 'arguments', {}))
+                                                if not tool_id:
+                                                    tool_id = str(uuid.uuid4())
+                                                dedupe_key = f"{tool_id}:{tool_name}"
+                                                if dedupe_key in seen_tool_calls:
+                                                    continue
+                                                seen_tool_calls.add(dedupe_key)
+                                                new_tool_calls_in_update += 1
                                                 
                                                 print(f"  → Tool: {tool_name} (id: {tool_id[:20]}...)", flush=True)
                                                 sys.stdout.flush()
@@ -2084,6 +2096,9 @@ Your messages are read aloud, so be brief and conversational."""
                                                     tool_id=tool_id,
                                                     arguments=args if isinstance(args, dict) else {}
                                                 ))
+                                    if new_tool_calls_in_update:
+                                        print(f"🔧 Detected {new_tool_calls_in_update} new tool call(s) in state update #{states_processed}", flush=True)
+                                        sys.stdout.flush()
                                         
                                         # Track tool results
                                         if hasattr(msg, 'tool_call_id') and hasattr(msg, 'content'):
