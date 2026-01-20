@@ -767,7 +767,13 @@ def sentry_capture_voice_event(event: str, session_id: str, user_id: str = None,
 @webrtc_bp.route('/voice-assistant')
 def voice_assistant():
     """Render the WebRTC voice assistant interface"""
-    return render_template('webrtc_voice_assistant.html')
+    streaming_stt_available = STREAMING_STT_ENABLED and DEEPGRAM_STREAMING_AVAILABLE
+    streaming_tts_available = STREAMING_TTS_ENABLED and DEEPGRAM_STREAMING_AVAILABLE
+    return render_template(
+        'webrtc_voice_assistant.html',
+        streaming_stt_enabled=streaming_stt_available,
+        streaming_tts_enabled=streaming_tts_available,
+    )
 
 
 def chunk_text_by_sentences(text: str, min_chunk_size: int = 100, max_chunk_size: int = 500) -> list[str]:

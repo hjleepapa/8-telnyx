@@ -266,7 +266,8 @@
         let currentAudioSource = null;
         
         // Enable streaming STT (send audio chunks while recording)
-        const STREAMING_STT_ENABLED = true;
+        const STREAMING_STT_ENABLED = {{ 'true' if streaming_stt_enabled else 'false' }};
+        const STREAMING_TTS_ENABLED = {{ 'true' if streaming_tts_enabled else 'false' }};
         
         // Initialize Socket.IO connection
         function initSocket() {
