@@ -269,6 +269,33 @@
         const STREAMING_STT_ENABLED = {{ 'true' if streaming_stt_enabled else 'false' }};
         const STREAMING_TTS_ENABLED = {{ 'true' if streaming_tts_enabled else 'false' }};
         
+        function stopAllPlayback() {
+            audioChunkQueue = [];
+            audioBufferQueue = [];
+            isPlayingAudioChunks = false;
+            isPlayingAudioBuffers = false;
+            if (currentAudioPlayback) {
+                try {
+                    currentAudioPlayback.pause();
+                    currentAudioPlayback.currentTime = 0;
+                } catch (e) {
+                    console.warn('⚠️ Error stopping current audio:', e);
+                }
+            }
+            currentAudioPlayback = null;
+            if (currentAudioSource) {
+                try {
+                    currentAudioSource.stop(0);
+                } catch (e) {
+                    console.warn('⚠️ Error stopping Web Audio source:', e);
+                }
+            }
+            currentAudioSource = null;
+            if (audioContext) {
+                audioContext.suspend().then(() => audioContext.resume()).catch(() => {});
+            }
+        }
+        
         // Initialize Socket.IO connection
         function initSocket() {
             console.log('🔌 Initializing Socket.IO connection...');
@@ -573,33 +600,6 @@
                     }
                 }
             });
-            
-            function stopAllPlayback() {
-                audioChunkQueue = [];
-                audioBufferQueue = [];
-                isPlayingAudioChunks = false;
-                isPlayingAudioBuffers = false;
-                if (currentAudioPlayback) {
-                    try {
-                        currentAudioPlayback.pause();
-                        currentAudioPlayback.currentTime = 0;
-                    } catch (e) {
-                        console.warn('⚠️ Error stopping current audio:', e);
-                    }
-                }
-                currentAudioPlayback = null;
-                if (currentAudioSource) {
-                    try {
-                        currentAudioSource.stop(0);
-                    } catch (e) {
-                        console.warn('⚠️ Error stopping Web Audio source:', e);
-                    }
-                }
-                currentAudioSource = null;
-                if (audioContext) {
-                    audioContext.suspend().then(() => audioContext.resume()).catch(() => {});
-                }
-            }
             
             // Stop audio playback immediately (barge-in / interruption)
             socket.on('stop_audio', (data) => {
