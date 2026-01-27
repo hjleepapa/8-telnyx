@@ -3,10 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voice Assistant - SambaNova AI</title>
+    <title>Voice Assistant - LiveKit</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://unpkg.com/livekit-client/dist/livekit-client.umd.min.js"></script>
     <style>
         body {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -16,7 +17,6 @@
             justify-content: center;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
-        
         .voice-container {
             background: white;
             border-radius: 20px;
@@ -25,32 +25,26 @@
             max-width: 600px;
             width: 100%;
         }
-        
         .voice-header {
             text-align: center;
             margin-bottom: 30px;
         }
-        
         .voice-header h1 {
             color: #667eea;
             font-weight: bold;
             margin-bottom: 10px;
         }
-        
         .voice-header p {
             color: #6c757d;
             font-size: 0.95rem;
         }
-        
         .auth-section {
             margin-bottom: 30px;
         }
-        
         .voice-controls {
             text-align: center;
             margin: 30px 0;
         }
-        
         .mic-button {
             width: 150px;
             height: 150px;
@@ -65,46 +59,37 @@
             position: relative;
             overflow: hidden;
         }
-        
         .mic-button:hover:not(:disabled) {
             transform: scale(1.05);
             box-shadow: 0 15px 40px rgba(102, 126, 234, 0.6);
         }
-        
         .mic-button:active:not(:disabled) {
             transform: scale(0.95);
         }
-        
         .mic-button.recording {
             background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
             animation: pulse 1.5s infinite;
         }
-        
         .mic-button.processing {
             background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
         }
-        
         .mic-button:disabled {
             opacity: 0.6;
             cursor: not-allowed;
         }
-        
         @keyframes pulse {
             0%, 100% { transform: scale(1); }
             50% { transform: scale(1.1); }
         }
-        
         .status-message {
             text-align: center;
             margin: 20px 0;
             min-height: 30px;
             font-weight: 500;
         }
-        
         .status-message.info { color: #0dcaf0; }
         .status-message.success { color: #198754; }
         .status-message.error { color: #dc3545; }
-        
         .transcript-box {
             background: #f8f9fa;
             border-radius: 10px;
@@ -114,70 +99,60 @@
             max-height: 300px;
             overflow-y: auto;
         }
-        
         .transcript-item {
             margin-bottom: 15px;
             padding: 10px;
             border-radius: 8px;
         }
-        
         .transcript-item.user {
             background: #e3f2fd;
             text-align: right;
         }
-        
         .transcript-item.agent {
             background: #f3e5f5;
             text-align: left;
         }
-        
         .transcript-label {
             font-weight: bold;
             font-size: 0.85rem;
             margin-bottom: 5px;
         }
-        
         .user .transcript-label { color: #1976d2; }
         .agent .transcript-label { color: #7b1fa2; }
-        
-        .audio-visualizer {
-            display: flex;
-            justify-content: center;
+        .livekit-status {
+            display: inline-flex;
             align-items: center;
-            height: 60px;
-            margin: 20px 0;
-            gap: 4px;
+            gap: 6px;
+            font-size: 0.85rem;
+            padding: 4px 10px;
+            border-radius: 999px;
+            background: #f1f3f5;
+            color: #6c757d;
         }
-        
-        .audio-bar {
-            width: 4px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            border-radius: 2px;
-            transition: height 0.1s ease;
+        .livekit-status.online {
+            background: #e6f4ea;
+            color: #198754;
         }
-        
-        .instructions {
-            background: #e7f3ff;
-            border-left: 4px solid #667eea;
-            padding: 15px;
-            border-radius: 5px;
-            margin: 20px 0;
+        .livekit-status.connecting {
+            background: #fff3cd;
+            color: #b58100;
         }
-        
-        .instructions h6 {
-            color: #667eea;
-            font-weight: bold;
-            margin-bottom: 10px;
+        .livekit-status.offline {
+            background: #f8d7da;
+            color: #dc3545;
         }
-        
-        .instructions ul {
+        .debug-panel {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 10px;
+            padding: 12px;
+            margin-top: 12px;
+            font-size: 0.8rem;
+        }
+        .debug-panel pre {
             margin: 0;
-            padding-left: 20px;
-        }
-        
-        .instructions li {
-            margin: 5px 0;
-            font-size: 0.9rem;
+            white-space: pre-wrap;
+            word-break: break-all;
         }
     </style>
 </head>
@@ -185,13 +160,15 @@
     <div class="voice-container">
         <div class="voice-header">
             <h1><i class="fas fa-robot"></i> Voice Assistant</h1>
-            <p>High-quality voice interaction with AI</p>
+            <p>Low-latency LiveKit audio transport</p>
+            <div class="livekit-status offline" id="livekitStatus">
+                <i class="fas fa-circle"></i>
+                <span>LiveKit: disconnected</span>
+            </div>
         </div>
-        
-        <!-- Authentication Section -->
+
         <div id="authSection" class="auth-section">
             <div class="status-message" id="authStatusMessage"></div>
-            
             <div class="mb-3">
                 <label for="pinInput" class="form-label">Enter Your PIN</label>
                 <input type="password" class="form-control" id="pinInput" placeholder="Enter 4-6 digit PIN" maxlength="6">
@@ -200,11 +177,13 @@
                 <i class="fas fa-lock"></i> Authenticate
             </button>
         </div>
-        
-        <!-- Voice Controls Section (Hidden until authenticated) -->
+
         <div id="voiceSection" style="display: none;">
             <div class="status-message" id="statusMessage"></div>
-            
+            <div class="debug-panel" id="livekitDebugPanel" style="display: none;">
+                <div><strong>LiveKit Debug</strong></div>
+                <pre id="livekitDebugText">Awaiting LiveKit token...</pre>
+            </div>
             <div class="voice-controls">
                 <button class="mic-button" id="micButton" onclick="toggleRecording()" disabled>
                     <i class="fas fa-microphone" id="micIcon"></i>
@@ -213,873 +192,377 @@
                     <small id="micLabel" class="text-muted">Click to speak</small>
                 </div>
             </div>
-            
-            <!-- Audio Visualizer -->
-            <div class="audio-visualizer" id="audioVisualizer" style="display: none;">
-                <div class="audio-bar" style="height: 20px;"></div>
-                <div class="audio-bar" style="height: 35px;"></div>
-                <div class="audio-bar" style="height: 25px;"></div>
-                <div class="audio-bar" style="height: 45px;"></div>
-                <div class="audio-bar" style="height: 30px;"></div>
-                <div class="audio-bar" style="height: 40px;"></div>
-                <div class="audio-bar" style="height: 25px;"></div>
-                <div class="audio-bar" style="height: 35px;"></div>
-                <div class="audio-bar" style="height: 20px;"></div>
-            </div>
-            
-            <!-- Transcript -->
             <div class="transcript-box" id="transcriptBox">
                 <p class="text-muted text-center">Your conversation will appear here...</p>
             </div>
-            
-            <!-- Instructions -->
-            <div class="instructions">
-                <h6><i class="fas fa-info-circle"></i> Instructions</h6>
-                <ul>
-                    <li>Click the microphone to start speaking</li>
-                    <li>Click again to stop and process your request</li>
-                    <li>Wait for the AI response (both text and audio)</li>
-                    <li>Use quality headphones for best audio experience</li>
-                </ul>
-            </div>
         </div>
     </div>
-    
+
     <script>
         let socket = null;
-        let mediaRecorder = null;
-        let audioChunks = [];
         let isRecording = false;
         let isProcessing = false;
-        let audioContext = null;
-        let analyser = null;
-        let visualizerInterval = null;
-        
-        // Streaming audio queue (global scope)
-        let audioChunkQueue = [];
-        let isPlayingAudioChunks = false;
-        let currentAudioPlayback = null;
 
-        // Low-latency playback via Web Audio API
-        let audioBufferQueue = [];
-        let isPlayingAudioBuffers = false;
-        let currentAudioSource = null;
-        
-        // Enable streaming STT (send audio chunks while recording)
+        let livekitRoom = null;
+        let livekitConnected = false;
+        let livekitConnecting = false;
+        let localAudioTrack = null;
+        const livekitAudioElements = new Map();
+        let fallbackAudio = null;
+
         const STREAMING_STT_ENABLED = {{ 'true' if streaming_stt_enabled else 'false' }};
         const STREAMING_TTS_ENABLED = {{ 'true' if streaming_tts_enabled else 'false' }};
-        
-        function stopAllPlayback() {
-            audioChunkQueue = [];
-            audioBufferQueue = [];
-            isPlayingAudioChunks = false;
-            isPlayingAudioBuffers = false;
-            if (currentAudioPlayback) {
-                try {
-                    currentAudioPlayback.pause();
-                    currentAudioPlayback.currentTime = 0;
-                } catch (e) {
-                    console.warn('⚠️ Error stopping current audio:', e);
-                }
-            }
-            currentAudioPlayback = null;
-            if (currentAudioSource) {
-                try {
-                    currentAudioSource.stop(0);
-                } catch (e) {
-                    console.warn('⚠️ Error stopping Web Audio source:', e);
-                }
-            }
-            currentAudioSource = null;
-            if (audioContext) {
-                audioContext.suspend().then(() => audioContext.resume()).catch(() => {});
+        const LIVEKIT_ENABLED = {{ 'true' if livekit_enabled else 'false' }};
+        const LIVEKIT_URL = "{{ livekit_url }}";
+
+        function setLivekitStatus(state, message) {
+            const status = document.getElementById('livekitStatus');
+            if (!status) return;
+            status.classList.remove('online', 'connecting', 'offline');
+            status.classList.add(state);
+            const label = status.querySelector('span');
+            if (label) {
+                label.textContent = message;
             }
         }
-        
-        // Initialize Socket.IO connection
-        function initSocket() {
-            console.log('🔌 Initializing Socket.IO connection...');
-            
+
+        function updateLivekitDebug(info) {
+            const panel = document.getElementById('livekitDebugPanel');
+            const text = document.getElementById('livekitDebugText');
+            if (!panel || !text) return;
+            panel.style.display = 'block';
+            text.textContent = JSON.stringify(info, null, 2);
+        }
+
+        function showStatus(message, type = 'info') {
+            const statusMessage = document.getElementById('statusMessage');
+            if (!statusMessage) return;
+            statusMessage.textContent = message;
+            statusMessage.className = `status-message ${type}`;
+        }
+
+        function showAuthStatus(message, type = 'info') {
+            const authMessage = document.getElementById('authStatusMessage');
+            if (!authMessage) return;
+            authMessage.textContent = message;
+            authMessage.className = `status-message ${type}`;
+        }
+
+        function addTranscript(role, text) {
+            const box = document.getElementById('transcriptBox');
+            if (!box) return;
+            if (box.querySelector('.text-muted')) {
+                box.innerHTML = '';
+            }
+            const item = document.createElement('div');
+            item.className = `transcript-item ${role}`;
+            item.innerHTML = `
+                <div class="transcript-label">${role === 'user' ? 'You' : 'Assistant'}</div>
+                <div>${text}</div>
+            `;
+            box.appendChild(item);
+            box.scrollTop = box.scrollHeight;
+        }
+
+        function stopAllPlayback() {
+            livekitAudioElements.forEach((element) => {
+                try {
+                    element.pause();
+                    element.currentTime = 0;
+                } catch (e) {
+                    console.warn('⚠️ Error stopping LiveKit audio element:', e);
+                }
+            });
+            if (fallbackAudio) {
+                try {
+                    fallbackAudio.pause();
+                    fallbackAudio.currentTime = 0;
+                } catch (e) {
+                    console.warn('⚠️ Error stopping fallback audio:', e);
+                }
+            }
+        }
+
+        function playAudioResponse(base64Audio) {
             try {
-                socket = io('/voice', {
-                    transports: ['websocket', 'polling'],
-                    reconnection: true,
-                    reconnectionDelay: 1000,
-                    reconnectionAttempts: 5
-                });
-                
-                // Track if this is the first connection (not a reconnect)
-                let isFirstConnection = true;
-                
-                socket.on('connect', () => {
-                    console.log('✅ Connected to voice server');
-                    showStatus('Connected! Ready to authenticate.', 'success');
-                    
-                    // Only auto-authenticate on reconnect, not on initial page load
-                    // This prevents auto-login when user refreshes the page
-                    if (!isFirstConnection) {
-                        const storedPin = localStorage.getItem('voice_assistant_pin');
-                        if (storedPin) {
-                            console.log('🔐 Auto-authenticating with stored PIN on reconnect');
-                            setTimeout(() => {
-                                if (socket.connected) {
-                                    socket.emit('authenticate', { pin: storedPin });
-                                }
-                            }, 500); // Small delay to ensure socket is fully ready
-                        }
-                    } else {
-                        isFirstConnection = false; // Mark that we've had our first connection
-                    }
-                });
-                
-                socket.on('connect_error', (error) => {
-                    console.error('❌ Connection error:', error);
-                    showStatus('Connection error. Please refresh the page.', 'error');
-                });
-                
-                socket.on('disconnect', (reason) => {
-                    console.log('⚠️ Disconnected:', reason);
-                    showStatus('Disconnected. Reconnecting...', 'error');
-                    // Clear processing state on disconnect
-                    if (isProcessing) {
-                        console.log('🔄 Clearing processing state due to disconnect');
-                        resetMicButton();
-                    }
-                });
-                
-                socket.on('reconnect', (attemptNumber) => {
-                    console.log('✅ Reconnected after', attemptNumber, 'attempts');
-                    showStatus('Reconnected! Ready to use.', 'success');
-                    // Clear processing state on reconnect
-                    if (isProcessing) {
-                        console.log('🔄 Clearing processing state due to reconnect');
-                        resetMicButton();
-                    }
-                    
-                    // Auto-re-authenticate if we have a stored PIN
-                    const storedPin = localStorage.getItem('voice_assistant_pin');
-                    if (storedPin && socket.connected) {
-                        console.log('🔐 Auto-re-authenticating with stored PIN after reconnect');
-                        socket.emit('authenticate', { pin: storedPin });
-                    }
+                const audio = new Audio(`data:audio/wav;base64,${base64Audio}`);
+                fallbackAudio = audio;
+                audio.play().catch((err) => {
+                    console.warn('⚠️ Audio playback failed:', err);
                 });
             } catch (error) {
-                console.error('❌ Socket.IO initialization error:', error);
-                showStatus('Failed to initialize. Please refresh the page.', 'error');
+                console.warn('⚠️ Failed to play audio response:', error);
             }
-            
-            // Shared handler for agent_response (used by both Socket.IO and HTTP polling)
-            window.handleAgentResponse = function(data) {
-                console.log('📨 ===== agent_response received (shared handler) =====');
-                console.log('📨 Event received at:', new Date().toISOString());
-                console.log('📨 Socket ID:', socket ? socket.id : 'N/A');
-                console.log('📨 Socket connected:', socket ? socket.connected : false);
-                console.log('📨 Data received:', data);
-                
-                if (data && data.success) {
-                    console.log('✅ Response success, text length:', data.text ? data.text.length : 0);
-                    console.log('✅ Audio length:', data.audio ? data.audio.length : 0);
-                    
-                    if (data.pending) {
-                        console.log('📬 This is a pending response (client reconnected during TTS generation)');
-                        showStatus('Received response (reconnected)', 'success');
+        }
+
+        async function connectLivekit(info) {
+            if (livekitConnected || livekitConnecting) return;
+            livekitConnecting = true;
+            setLivekitStatus('connecting', 'LiveKit: connecting');
+
+            try {
+                livekitRoom = new LiveKit.Room({
+                    adaptiveStream: true,
+                    dynacast: true,
+                });
+
+                livekitRoom.on(LiveKit.RoomEvent.TrackSubscribed, (track) => {
+                    if (track.kind === LiveKit.Track.Kind.Audio) {
+                        const element = track.attach();
+                        element.autoplay = true;
+                        element.style.display = 'none';
+                        document.body.appendChild(element);
+                        livekitAudioElements.set(track.sid, element);
                     }
-                    
-                    if (data.text) {
-                        console.log('📝 Adding text to transcript:', data.text.substring(0, 100) + '...');
-                        addTranscript('agent', data.text);
-                    } else {
-                        console.warn('⚠️ No text in agent_response');
+                });
+
+                livekitRoom.on(LiveKit.RoomEvent.TrackUnsubscribed, (track) => {
+                    const element = livekitAudioElements.get(track.sid);
+                    if (element) {
+                        track.detach(element);
+                        element.remove();
+                        livekitAudioElements.delete(track.sid);
                     }
-                    
-                    // Play audio response
-                    // Check if this is a streaming response (audio comes via chunks)
-                    // But if audio is provided in the response (e.g., from HTTP delivery), play it
-                    if (data.is_streaming && !data.audio) {
-                        console.log('🔊 Streaming response - audio will come via audio_chunk events');
-                        // Don't play audio here, wait for chunks
-                    } else if (data.audio) {
-                        console.log('🔊 Received audio response:', data.audio.length, 'chars');
-                        console.log('🔊 Audio preview:', data.audio.substring(0, 100) + '...');
-                        console.log('🔊 Calling playAudioResponse()...');
-                        try {
-                            playAudioResponse(data.audio);
-                            console.log('✅ playAudioResponse() called successfully');
-                        } catch (audioError) {
-                            console.error('❌ Error in playAudioResponse():', audioError);
-                        }
-                    } else {
-                        console.log('❌ No audio data in response');
-                        // Even without audio, reset the button if we have text
-                        if (data.text) {
-                            resetMicButton();
-                        }
-                    }
-                    
-                    resetMicButton();
-                    console.log('✅ agent_response event processed successfully');
-                } else {
-                    console.log('❌ Response failed or invalid:', data);
-                    showStatus('Error getting response', 'error');
-                    resetMicButton();
-                }
-            };
-            
+                });
+
+                await livekitRoom.connect(info.url || LIVEKIT_URL, info.token, { autoSubscribe: true });
+                livekitConnected = true;
+                setLivekitStatus('online', 'LiveKit: connected');
+                showStatus('LiveKit connected. Ready to speak.', 'success');
+            } catch (error) {
+                console.error('❌ LiveKit connection error:', error);
+                setLivekitStatus('offline', 'LiveKit: failed');
+                showStatus('LiveKit connection failed.', 'error');
+            } finally {
+                livekitConnecting = false;
+            }
+        }
+
+        async function ensureLocalTrack() {
+            if (!livekitRoom) return false;
+            if (!localAudioTrack) {
+                localAudioTrack = await LiveKit.createLocalAudioTrack({
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                });
+                await livekitRoom.localParticipant.publishTrack(localAudioTrack);
+                await localAudioTrack.mute();
+            }
+            return true;
+        }
+
+        function initSocket() {
+            socket = io('/voice', {
+                transports: ['websocket', 'polling'],
+                reconnection: true,
+                reconnectionDelay: 1000,
+                reconnectionAttempts: 5
+            });
+
+            socket.on('connect', () => {
+                showAuthStatus('Connected. Please authenticate.', 'success');
+            });
+
+            socket.on('connect_error', (error) => {
+                console.error('❌ Socket connection error:', error);
+                showAuthStatus('Connection error. Please refresh the page.', 'error');
+            });
+
             socket.on('authenticated', (data) => {
-                // Store PIN and user info for auto-re-authentication on reconnect
-                if (data.success) {
-                    const pinInput = document.getElementById('pinInput');
-                    if (pinInput && pinInput.value) {
-                        localStorage.setItem('voice_assistant_pin', pinInput.value);
-                        console.log('💾 Stored PIN for auto-re-authentication');
-                    }
-                    
-                    // Store user_id if provided (for pending response polling)
-                    if (data.user_id) {
-                        localStorage.setItem('voice_assistant_user_id', data.user_id);
-                        console.log('💾 Stored user_id for pending response polling:', data.user_id);
-                    }
+                if (!data.success) {
+                    showAuthStatus(data.message, 'error');
+                    return;
                 }
-                if (data.success) {
-                    document.getElementById('authSection').style.display = 'none';
-                    document.getElementById('voiceSection').style.display = 'block';
-                    document.getElementById('micButton').disabled = false;
-                    showStatus(data.message, 'success');
-                    
-                    // Verify event listener is registered before sending client_ready
-                    console.log('🔍 Verifying agent_response event listener is registered...');
-                    const hasListener = socket._callbacks && socket._callbacks['$agent_response'];
-                    console.log('🔍 Event listener check:', hasListener ? '✅ Registered' : '❌ NOT REGISTERED');
-                    
-                    // Poll for pending responses via HTTP (avoids WebSocket large payload issues)
-                    const pollForPendingResponse = () => {
-                        const storedUser = localStorage.getItem('voice_assistant_user_id');
-                        if (storedUser) {
-                            console.log('🔍 Polling for pending response (user_id:', storedUser + ')');
-                            fetch(`/convonet_todo/webrtc/pending-response?user_id=${encodeURIComponent(storedUser)}`)
-                                .then(response => response.json())
-                                .then(data => {
-                                    if (data.success && data.pending && data.text) {
-                                        console.log('📬 Pending response fetched via HTTP!', {
-                                            text_length: data.text ? data.text.length : 0,
-                                            audio_length: data.audio ? data.audio.length : 0
-                                        });
-                                        // Use shared handler
-                                        window.handleAgentResponse(data);
-                                    } else if (data.success && !data.pending) {
-                                        console.log('✅ No pending response (already delivered or none exists)');
-                                    }
-                                })
-                                .catch(error => {
-                                    console.warn('⚠️ Error polling for pending response:', error);
-                                });
-                        } else {
-                            console.log('⚠️ No user_id stored, cannot poll for pending response');
-                        }
-                    };
-                    
-                    // Poll immediately and then every 1 second for 15 seconds
-                    pollForPendingResponse();
-                    const pollInterval = setInterval(pollForPendingResponse, 1000);
-                    setTimeout(() => {
-                        clearInterval(pollInterval);
-                        console.log('⏹️ Stopped polling for pending responses');
-                    }, 15000);
-                    
-                    // Emit ready signal after a longer delay to ensure all event listeners are fully set up
-                    // Increased to 1.5 seconds to give more time for event listener registration
-                    setTimeout(() => {
-                        console.log('✅ Client ready - emitting ready signal (session_id:', socket.id + ')');
-                        console.log('🔍 Socket connected:', socket.connected);
-                        console.log('🔍 Socket ID:', socket.id);
-                        socket.emit('client_ready', { session_id: socket.id });
-                    }, 1500); // Increased from 500ms to 1500ms
+
+                const pinInput = document.getElementById('pinInput');
+                if (pinInput && pinInput.value) {
+                    localStorage.setItem('voice_assistant_pin', pinInput.value);
+                }
+                if (data.user_id) {
+                    localStorage.setItem('voice_assistant_user_id', data.user_id);
+                }
+
+                document.getElementById('authSection').style.display = 'none';
+                document.getElementById('voiceSection').style.display = 'block';
+                document.getElementById('micButton').disabled = false;
+                showStatus(data.message, 'success');
+
+                if (LIVEKIT_ENABLED) {
+                    setLivekitStatus('connecting', 'LiveKit: requesting token');
+                    socket.emit('get_livekit_info');
                 } else {
-                    showStatus(data.message, 'error');
+                    setLivekitStatus('offline', 'LiveKit: disabled');
+                    showStatus('LiveKit is disabled. Audio playback may be unavailable.', 'error');
                 }
-            });
-            
-            socket.on('welcome_greeting', (data) => {
-                console.log('👋 Welcome greeting received:', data.text);
-                
-                // Add to transcript
-                addTranscript('agent', data.text);
-                
-                // Play welcome audio
-                if (data.audio) {
-                    playAudioResponse(data.audio);
-                }
-                
-                // Show ready status after greeting
+
                 setTimeout(() => {
-                    showStatus('Ready to help! Click the microphone to speak.', 'success');
-                }, 2000);
+                    socket.emit('client_ready', { session_id: socket.id });
+                }, 1000);
             });
-            
-            socket.on('recording_started', () => {
-                console.log('🎤 Recording started');
+
+            socket.on('livekit_info', async (data) => {
+                if (!data.success) {
+                    showStatus(data.message || 'LiveKit token failed.', 'error');
+                    setLivekitStatus('offline', 'LiveKit: token failed');
+                    updateLivekitDebug({ error: data.message || 'LiveKit token failed.' });
+                    return;
+                }
+                updateLivekitDebug({
+                    url: data.url,
+                    room: data.room,
+                    identity: data.identity,
+                    token: data.token
+                });
+                await connectLivekit(data);
             });
-            
+
             socket.on('transcription', (data) => {
                 if (data.success) {
                     addTranscript('user', data.text);
                 } else {
-                    showStatus(data.message, 'error');
+                    showStatus(data.message || 'Transcription failed.', 'error');
                     resetMicButton();
                 }
             });
-            
-            socket.on('status', (data) => {
-                console.log('📊 Status update:', data.message);
-                showStatus(data.message, 'info');
-                // Keep processing state active during status updates
-                if (data.message && (data.message.includes('Processing') || data.message.includes('Generating'))) {
-                    if (!isProcessing) {
-                        isProcessing = true;
-                        console.log('🔄 Setting isProcessing=true due to status update');
-                    }
+
+            socket.on('agent_response', (data) => {
+                if (data.success && data.text) {
+                    addTranscript('agent', data.text);
                 }
-            });
-            
-            socket.on('pending_response_available', (data) => {
-                console.log('📬 Pending response notification received via Socket.IO:', data);
-                // Trigger immediate HTTP poll
-                const storedUser = localStorage.getItem('voice_assistant_user_id') || data.user_id;
-                if (storedUser) {
-                    console.log('🔍 Triggering immediate HTTP poll for pending response');
-                    fetch(`/convonet_todo/webrtc/pending-response?user_id=${encodeURIComponent(storedUser)}`)
-                        .then(response => response.json())
-                        .then(responseData => {
-                            if (responseData.success && responseData.pending && responseData.text) {
-                                console.log('📬 Pending response fetched via HTTP (triggered by notification)!');
-                                window.handleAgentResponse(responseData);
-                            }
-                        })
-                        .catch(error => {
-                            console.warn('⚠️ Error fetching pending response:', error);
-                        });
+                if (data.audio && !LIVEKIT_ENABLED) {
+                    playAudioResponse(data.audio);
                 }
-            });
-            
-            socket.on('agent_response', (data, callback) => {
-                console.log('📨 ===== agent_response event received via Socket.IO =====');
-                console.log('📨 Event received at:', new Date().toISOString());
-                console.log('📨 Socket ID:', socket.id);
-                console.log('📨 Socket connected:', socket.connected);
-                console.log('📨 Data received:', data);
-                
-                // Acknowledge receipt immediately
-                if (callback && typeof callback === 'function') {
-                    console.log('✅ Sending acknowledgment to server');
-                    callback({ received: true, session_id: socket.id });
-                }
-                
-                // Use shared handler (but skip audio if streaming - audio will come via chunks)
-                window.handleAgentResponse(data);
-            });
-            
-            // Streaming audio chunk handler
-            socket.on('audio_chunk', (data) => {
-                console.log('🔊 ===== audio_chunk received =====');
-                console.log('🔊 Chunk index:', data.chunk_index, '/', data.total_chunks);
-                console.log('🔊 Is final:', data.is_final);
-                console.log('🔊 Audio length:', data.audio ? data.audio.length : 0);
-                
-                if (data.success && data.audio) {
-                    // Add chunk to queue
-                    audioChunkQueue.push({
-                        audio: data.audio,
-                        index: data.chunk_index,
-                        isFinal: data.is_final
-                    });
-                    console.log('✅ Audio chunk queued. Queue length:', audioChunkQueue.length);
-                    
-                    // Start playing if not already playing
-                    if (!isPlayingAudioChunks) {
-                        playAudioChunksSequentially();
-                    }
-                }
-            });
-            
-            // Stop audio playback immediately (barge-in / interruption)
-            socket.on('stop_audio', (data) => {
-                console.log('🛑 stop_audio received:', data);
-                stopAllPlayback();
-            });
-            
-            socket.on('audio_stream_complete', (data) => {
-                console.log('✅ ===== audio_stream_complete =====');
-                console.log('✅ Total chunks:', data.total_chunks);
-                console.log('✅ Successful chunks:', data.successful_chunks);
-                console.log('✅ Failed chunks:', data.failed_chunks);
-                
-                // All chunks have been sent, but playback may still be in progress
-                // The queue will handle playing all remaining chunks
-            });
-            
-            // Log when event listener is registered
-            console.log('✅ agent_response event listener registered');
-            
-            socket.on('error', (data) => {
-                showStatus(data.message, 'error');
                 resetMicButton();
             });
-            
-            socket.on('transfer_initiated', (data) => {
-                console.log('🔄 Transfer initiated:', data);
-                
-                if (data.success) {
-                    // Show transfer instructions
-                    const transferHtml = `
-                        <div class="transfer-instructions" style="background: #fff3cd; border: 2px solid #ffc107; border-radius: 10px; padding: 20px; margin: 20px 0;">
-                            <h5 style="color: #856404; margin-bottom: 15px;">
-                                <i class="fas fa-phone-alt"></i> Transfer to ${data.department} (Extension ${data.extension})
-                            </h5>
-                            <p style="color: #856404; margin-bottom: 15px;">${data.message}</p>
-                        </div>
-                    `;
-                    
-                    // Add to transcript
-                    addTranscript('agent', transferHtml, true);
-                    
-                    // Show status
-                    if (data.call_started) {
-                        showStatus(`Connecting you to ${data.department}. Extension ${data.extension} is being dialed now.`, 'success');
-                    } else if (data.call_details && data.call_details.error) {
-                        showStatus(`Transfer requested but call could not be started: ${data.call_details.error}`, 'error');
-                    } else {
-                        showStatus(`Transfer initiated to ${data.department} (Extension ${data.extension}).`, 'info');
-                    }
+
+            socket.on('welcome_greeting', (data) => {
+                if (data.text) {
+                    addTranscript('agent', data.text);
                 }
             });
 
-            socket.on('transfer_status', (data) => {
-                console.log('🔄 Transfer status update:', data);
-                if (!data) return;
-                if (data.success) {
-                    const details = data.details || {};
-                    if (details.user_call_sid) {
-                        showStatus('An agent and your phone are being connected. Please answer when it rings.', 'success');
-                    } else if (details.agent_call_sid) {
-                        showStatus('Agent leg is ringing. Please use one of the call options to join.', 'info');
-                    } else {
-                        showStatus('Transfer bridge created.', 'info');
-                    }
-                } else if (data.details && data.details.error) {
-                    showStatus(`Transfer failed: ${data.details.error}`, 'error');
+            socket.on('stop_audio', () => {
+                stopAllPlayback();
+            });
+
+            socket.on('status', (data) => {
+                if (data && data.message) {
+                    showStatus(data.message, 'info');
                 }
             });
+
+            socket.on('error', (data) => {
+                if (data && data.message) {
+                    showStatus(data.message, 'error');
+                }
+                resetMicButton();
+            });
         }
-        
-        // Authenticate user
-        function authenticate() {
-            console.log('🔐 Authenticate button clicked');
-            
-            const pin = document.getElementById('pinInput').value.trim();
-            
-            if (!pin || pin.length < 4) {
-                showStatus('Please enter a valid PIN (4-6 digits)', 'error');
-                console.log('❌ Invalid PIN length:', pin.length);
-                return;
-            }
-            
-            if (!socket || !socket.connected) {
-                showStatus('Not connected to server. Please refresh the page.', 'error');
-                console.error('❌ Socket not connected:', socket);
-                return;
-            }
-            
-            console.log('📤 Sending authentication request with PIN');
-            showStatus('Authenticating...', 'info');
-            socket.emit('authenticate', { pin: pin });
-        }
-        
-        // Toggle recording
-        async function toggleRecording() {
-            if (isRecording) {
-                stopRecording();
-            } else {
-                await startRecording();
-            }
-        }
-        
-        // Start recording
-        async function startRecording() {
-            try {
-                // Immediate local barge-in: stop any current playback before recording
-                stopAllPlayback();
-                await ensureAudioContext();
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    audio: {
-                        echoCancellation: true,
-                        noiseSuppression: true,
-                        autoGainControl: true,
-                        sampleRate: 48000
-                    } 
-                });
-                
-                // Setup audio visualizer
-                audioContext = new AudioContext();
-                analyser = audioContext.createAnalyser();
-                const source = audioContext.createMediaStreamSource(stream);
-                source.connect(analyser);
-                analyser.fftSize = 256;
-                startVisualizer();
-                
-                // Setup media recorder
-                mediaRecorder = new MediaRecorder(stream, {
-                    mimeType: 'audio/webm;codecs=opus'
-                });
-                
-                audioChunks = [];
-                
-                mediaRecorder.ondataavailable = (event) => {
-                    if (event.data.size > 0) {
-                        audioChunks.push(event.data);
-                        console.log(`📦 Audio chunk received: ${event.data.size} bytes`);
-                        
-                        // Stream chunks to server for low-latency STT
-                        if (STREAMING_STT_ENABLED) {
-                            const reader = new FileReader();
-                            reader.onload = () => {
-                                const base64 = reader.result.split(',')[1];
-                                socket.emit('audio_data', { audio: base64 });
-                            };
-                            reader.readAsDataURL(event.data);
-                        }
-                    }
-                };
-                
-                mediaRecorder.onstop = () => {
-                    stream.getTracks().forEach(track => track.stop());
-                    stopVisualizer();
-                    
-                    // Create complete WebM blob from all chunks
-                    const audioBlob = new Blob(audioChunks, { type: 'audio/webm;codecs=opus' });
-                    console.log(`🎵 Complete audio blob: ${audioBlob.size} bytes`);
-                    
-                    if (STREAMING_STT_ENABLED) {
-                        // For streaming STT, just signal stop
-                        socket.emit('stop_recording');
-                    } else {
-                        // Send complete blob to server (batch mode)
-                        const reader = new FileReader();
-                        reader.onload = () => {
-                            const base64 = reader.result.split(',')[1];
-                            console.log(`📤 Sending complete audio: ${base64.length} chars`);
-                            socket.emit('stop_recording', { audio: base64 });
-                        };
-                        reader.readAsDataURL(audioBlob);
-                    }
-                };
-                
-                // Start recording
-                mediaRecorder.start(100); // Collect data every 100ms
-                socket.emit('start_recording');
-                
-                isRecording = true;
-                updateMicButton('recording');
-                showStatus('Listening...', 'info');
-                
-            } catch (error) {
-                console.error('Error starting recording:', error);
-                showStatus('Microphone access denied', 'error');
-            }
-        }
-        
-        // Stop recording
-        function stopRecording() {
-            if (mediaRecorder && mediaRecorder.state === 'recording') {
-                mediaRecorder.stop();
-                isRecording = false;
-                isProcessing = true;
-                updateMicButton('processing');
-                showStatus('Processing...', 'info');
-            }
-        }
-        
-        // Update mic button appearance
-        function updateMicButton(state) {
+
+        function resetMicButton() {
+            isRecording = false;
+            isProcessing = false;
             const button = document.getElementById('micButton');
             const icon = document.getElementById('micIcon');
             const label = document.getElementById('micLabel');
-            
-            button.className = 'mic-button';
-            
-            if (state === 'recording') {
-                button.classList.add('recording');
-                icon.className = 'fas fa-stop';
-                label.textContent = 'Click to stop';
-                document.getElementById('audioVisualizer').style.display = 'flex';
-            } else if (state === 'processing') {
-                button.classList.add('processing');
-                button.disabled = true;
-                icon.className = 'fas fa-spinner fa-spin';
-                label.textContent = 'Processing...';
-                document.getElementById('audioVisualizer').style.display = 'none';
-            } else {
-                icon.className = 'fas fa-microphone';
-                label.textContent = 'Click to speak';
+            if (button) {
+                button.classList.remove('recording', 'processing');
                 button.disabled = false;
-                document.getElementById('audioVisualizer').style.display = 'none';
             }
-        }
-        
-        // Reset mic button
-        function resetMicButton() {
-            isProcessing = false;
-            updateMicButton('idle');
-            showStatus('Ready', 'success');
-        }
-        
-        // Show status message
-        function showStatus(message, type) {
-            // Show in auth section if visible, otherwise in voice section
-            const authSection = document.getElementById('authSection');
-            const statusEl = authSection.style.display !== 'none' 
-                ? document.getElementById('authStatusMessage')
-                : document.getElementById('statusMessage');
-            
-            if (statusEl) {
-                statusEl.textContent = message;
-                statusEl.className = `status-message ${type}`;
-            }
-            
-            console.log(`📢 Status [${type}]: ${message}`);
-        }
-        
-        // Add transcript item
-        function addTranscript(type, text, isHtml = false) {
-            const transcriptBox = document.getElementById('transcriptBox');
-            
-            // Clear placeholder
-            if (transcriptBox.querySelector('.text-muted')) {
-                transcriptBox.innerHTML = '';
-            }
-            
-            const item = document.createElement('div');
-            item.className = `transcript-item ${type}`;
-            
-            const label = document.createElement('div');
-            label.className = 'transcript-label';
-            label.textContent = type === 'user' ? '👤 You' : '🤖 Assistant';
-            
-            const content = document.createElement('div');
-            if (isHtml) {
-                content.innerHTML = text;
-            } else {
-                content.textContent = text;
-            }
-            
-            item.appendChild(label);
-            item.appendChild(content);
-            transcriptBox.appendChild(item);
-            
-            // Scroll to bottom
-            transcriptBox.scrollTop = transcriptBox.scrollHeight;
-        }
-        
-        function ensureAudioContext() {
-            if (!audioContext) {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            if (audioContext.state === 'suspended') {
-                return audioContext.resume().catch(() => {});
-            }
-            return Promise.resolve();
+            if (icon) icon.className = 'fas fa-microphone';
+            if (label) label.textContent = 'Click to speak';
         }
 
-        function base64ToArrayBuffer(base64) {
-            const binaryString = atob(base64);
-            const len = binaryString.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
+        async function startRecording() {
+            if (!socket || !socket.connected) {
+                showStatus('Not connected.', 'error');
+                return;
             }
-            return bytes.buffer;
-        }
+            if (!LIVEKIT_ENABLED) {
+                showStatus('LiveKit is not enabled.', 'error');
+                return;
+            }
 
-        async function queueAudioBuffer(base64Audio) {
-            await ensureAudioContext();
+            stopAllPlayback();
+            isRecording = true;
+            const button = document.getElementById('micButton');
+            const icon = document.getElementById('micIcon');
+            const label = document.getElementById('micLabel');
+            if (button) button.classList.add('recording');
+            if (icon) icon.className = 'fas fa-stop';
+            if (label) label.textContent = 'Recording... Click to stop';
+
+            if (!livekitConnected) {
+                socket.emit('get_livekit_info');
+                showStatus('Connecting LiveKit...', 'info');
+            }
+
             try {
-                const arrayBuffer = base64ToArrayBuffer(base64Audio);
-                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-                audioBufferQueue.push(audioBuffer);
-                if (!isPlayingAudioBuffers) {
-                    playNextAudioBuffer();
-                }
-                return true;
-            } catch (error) {
-                console.warn('⚠️ Web Audio decode failed, falling back to <audio>:', error);
-                return false;
-            }
-        }
-
-        function playNextAudioBuffer() {
-            if (!audioBufferQueue.length) {
-                isPlayingAudioBuffers = false;
-                currentAudioSource = null;
-                return;
-            }
-            isPlayingAudioBuffers = true;
-            const buffer = audioBufferQueue.shift();
-            const source = audioContext.createBufferSource();
-            source.buffer = buffer;
-            source.connect(audioContext.destination);
-            source.onended = () => {
-                currentAudioSource = null;
-                playNextAudioBuffer();
-            };
-            currentAudioSource = source;
-            source.start(0);
-        }
-
-        // Play audio response (non-streaming, single audio blob)
-        function playAudioResponse(base64Audio) {
-            // Prefer Web Audio API for low-latency playback
-            queueAudioBuffer(base64Audio).then((usedWebAudio) => {
-                if (!usedWebAudio) {
-                    playAudioResponseFallback(base64Audio);
-                }
-            });
-        }
-
-        function playAudioResponseFallback(base64Audio) {
-            // Try different audio formats (MP3 first since TTS generates MP3)
-            const formats = [
-                'data:audio/mp3;base64,',
-                'data:audio/mpeg;base64,',
-                'data:audio/wav;base64,',
-                'data:audio/ogg;base64,',
-                'data:audio/webm;base64,'
-            ];
-            
-            let audioPlayed = false;
-            
-            for (const format of formats) {
-                try {
-                    const audio = new Audio(format + base64Audio);
-                    audio.oncanplaythrough = () => {
-                        if (!audioPlayed) {
-                            audioPlayed = true;
-                            audio.play().catch(error => {
-                                console.error('Error playing audio with format', format, error);
-                            });
-                        }
-                    };
-                    audio.onerror = () => {
-                        console.log('Failed to play audio with format', format);
-                    };
-                    audio.load();
-                } catch (error) {
-                    console.log('Error creating audio with format', format, error);
-                }
-            }
-            
-            // Fallback: try without specifying format
-            if (!audioPlayed) {
-                try {
-                    const audio = new Audio('data:audio/octet-stream;base64,' + base64Audio);
-                    audio.play().catch(error => {
-                        console.error('Error playing audio (fallback):', error);
-                    });
-                } catch (error) {
-                    console.error('All audio playback attempts failed:', error);
-                }
-            }
-        }
-        
-        // Play audio chunks sequentially (streaming mode)
-        function playAudioChunksSequentially() {
-            if (isPlayingAudioChunks || audioChunkQueue.length === 0) {
-                return;
-            }
-            
-            isPlayingAudioChunks = true;
-            console.log('🎵 Starting sequential audio playback. Queue length:', audioChunkQueue.length);
-            
-            function playNextChunk() {
-                if (audioChunkQueue.length === 0) {
-                    console.log('✅ All audio chunks queued');
-                    isPlayingAudioChunks = false;
-                    currentAudioPlayback = null;
+                const ok = await ensureLocalTrack();
+                if (!ok) {
+                    showStatus('Unable to start microphone.', 'error');
+                    resetMicButton();
                     return;
                 }
-                
-                const chunk = audioChunkQueue.shift();
-                console.log('🎵 Playing chunk', chunk.index, '. Remaining:', audioChunkQueue.length);
-                
-                queueAudioBuffer(chunk.audio).then((usedWebAudio) => {
-                    if (usedWebAudio) {
-                        playNextChunk();
-                        return;
-                    }
-                    // Fallback: HTMLAudio for this chunk
-                    try {
-                        const audioElement = new Audio('data:audio/octet-stream;base64,' + chunk.audio);
-                        audioElement.onended = () => {
-                            currentAudioPlayback = null;
-                            playNextChunk();
-                        };
-                        audioElement.onerror = () => {
-                            console.error('Error playing chunk audio (fallback)');
-                            playNextChunk();
-                        };
-                        audioElement.play().catch(error => {
-                            console.error('Error playing audio (fallback):', error);
-                            playNextChunk();
-                        });
-                        currentAudioPlayback = audioElement;
-                    } catch (error) {
-                        console.error('All audio playback attempts failed for chunk:', error);
-                        playNextChunk();
-                    }
-                });
-            }
-            
-            playNextChunk();
-        }
-        
-        // Audio visualizer
-        function startVisualizer() {
-            const bars = document.querySelectorAll('.audio-bar');
-            const dataArray = new Uint8Array(analyser.frequencyBinCount);
-            
-            visualizerInterval = setInterval(() => {
-                analyser.getByteFrequencyData(dataArray);
-                
-                bars.forEach((bar, index) => {
-                    const value = dataArray[index * 8] || 0;
-                    const height = Math.max(20, (value / 255) * 50);
-                    bar.style.height = height + 'px';
-                });
-            }, 50);
-        }
-        
-        function stopVisualizer() {
-            if (visualizerInterval) {
-                clearInterval(visualizerInterval);
-                visualizerInterval = null;
+                await localAudioTrack.unmute();
+                socket.emit('start_recording');
+            } catch (error) {
+                console.error('❌ Start recording error:', error);
+                showStatus('Microphone permission denied.', 'error');
+                resetMicButton();
             }
         }
-        
-        // Initialize on page load
-        window.addEventListener('DOMContentLoaded', () => {
-            initSocket();
 
+        async function stopRecording() {
+            isRecording = false;
+            isProcessing = true;
+            const button = document.getElementById('micButton');
+            const icon = document.getElementById('micIcon');
+            const label = document.getElementById('micLabel');
+            if (button) button.classList.add('processing');
+            if (icon) icon.className = 'fas fa-spinner fa-spin';
+            if (label) label.textContent = 'Processing...';
+
+            try {
+                if (localAudioTrack) {
+                    await localAudioTrack.mute();
+                }
+                socket.emit('stop_recording');
+            } catch (error) {
+                console.error('❌ Stop recording error:', error);
+                showStatus('Failed to stop recording.', 'error');
+                resetMicButton();
+            }
+        }
+
+        function toggleRecording() {
+            if (isProcessing) return;
+            if (!isRecording) {
+                startRecording();
+            } else {
+                stopRecording();
+            }
+        }
+
+        function authenticate() {
+            const pinInput = document.getElementById('pinInput');
+            const pin = pinInput ? pinInput.value.trim() : '';
+            if (!pin) {
+                showAuthStatus('Please enter your PIN.', 'error');
+                return;
+            }
+            showAuthStatus('Authenticating...', 'info');
+            socket.emit('authenticate', { pin });
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            initSocket();
             const authButton = document.getElementById('authButton');
             if (authButton) {
                 authButton.addEventListener('click', authenticate);
             }
-            
-            // Allow Enter key for PIN
-            document.getElementById('pinInput').addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    authenticate();
-                }
-            });
         });
     </script>
 </body>
 </html>
-

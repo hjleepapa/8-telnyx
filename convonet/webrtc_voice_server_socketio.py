@@ -1,102 +1,97 @@
 """
-LiveKit Voice Assistant Server (wrapper).
-Reuses Socket.IO control plane while switching audio to LiveKit.
+WebRTC Voice Assistant Server
+Provides high-quality audio streaming and real-time speech recognition
 """
 
-from flask import render_template
+import asyncio
+import json
+import os
+import base64
+import time
+import re
+import threading
+import struct
+from typing import Optional
+from uuid import UUID
+from urllib.parse import quote
+from flask import Blueprint, render_template, request, jsonify
+from flask_socketio import SocketIO, emit, join_room, leave_room
+import jwt
 
-from convonet.webrtc_voice_server_socketio import (
-    webrtc_bp,
-    init_socketio,
-    STREAMING_STT_ENABLED,
-    STREAMING_TTS_ENABLED,
-    DEEPGRAM_STREAMING_AVAILABLE,
-    LIVEKIT_URL,
-    _livekit_active,
-)
+# Apply nest_asyncio to allow nested event loops (needed for eventlet compatibility)
+try:
+    import nest_asyncio
+    nest_asyncio.apply()
+except ImportError:
+    pass  # nest_asyncio not available, may cause issues with eventlet
+# Note: OpenAI import removed - using Claude LLM and Deepgram TTS
+from convonet.assistant_graph_todo import get_agent
+from convonet.state import AgentState
+from convonet.voice_intent_utils import has_transfer_intent
+from langchain_core.messages import HumanMessage
+from twilio.rest import Client
 
+# Deepgram WebRTC integration
+from deepgram_webrtc_integration import transcribe_audio_with_deepgram_webrtc, get_deepgram_webrtc_info
+from deepgram_service import get_deepgram_service
 
-def voice_assistant():
-    """Render the LiveKit voice assistant interface."""
-    streaming_stt_available = STREAMING_STT_ENABLED and DEEPGRAM_STREAMING_AVAILABLE
-    streaming_tts_available = STREAMING_TTS_ENABLED and DEEPGRAM_STREAMING_AVAILABLE
-    return render_template(
-        "webrtc_voice_assistant.html",
-        streaming_stt_enabled=streaming_stt_available,
-        streaming_tts_enabled=streaming_tts_available,
-        livekit_enabled=_livekit_active(),
-        livekit_url=LIVEKIT_URL,
+# Deepgram streaming SDK (async)
+try:
+    from deepgram import AsyncDeepgramClient
+    from deepgram.core.events import EventType
+    from deepgram.extensions.types.sockets import (
+        ListenV2MediaMessage,
+        ListenV2ControlMessage,
+        SpeakV1TextMessage,
+        SpeakV1ControlMessage,
+        SpeakV1SocketClientResponse,
     )
+    DEEPGRAM_STREAMING_AVAILABLE = True
+except Exception as e:
+    print(f"⚠️ Deepgram streaming SDK not available: {e}")
+    DEEPGRAM_STREAMING_AVAILABLE = False
 
+# ElevenLabs integration
+try:
+    from convonet.elevenlabs_service import get_elevenlabs_service, EmotionType
+    from convonet.voice_preferences import get_voice_preferences
+    from convonet.emotion_detection import get_emotion_detector
+    ELEVENLABS_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ ElevenLabs not available: {e}")
+    ELEVENLABS_AVAILABLE = False
 
-# Override the Socket.IO template route with LiveKit UI.
-webrtc_bp.view_functions["voice_assistant"] = voice_assistant
-"""
-LiveKit Voice Assistant Server (wrapper)
-Reuses Socket.IO control plane while switching audio to LiveKit.
-"""
+# Import the blueprint (optional - not used in this module)
+# from convonet.routes import convonet_todo_bp
 
-from flask import render_template
-
-from convonet.webrtc_voice_server_socketio import (
-    webrtc_bp,
-    init_socketio,
-    STREAMING_STT_ENABLED,
-    STREAMING_TTS_ENABLED,
-    DEEPGRAM_STREAMING_AVAILABLE,
-    LIVEKIT_URL,
-    _livekit_active,
-)
-
-
-def voice_assistant():
-    """Render the LiveKit voice assistant interface."""
-    streaming_stt_available = STREAMING_STT_ENABLED and DEEPGRAM_STREAMING_AVAILABLE
-    streaming_tts_available = STREAMING_TTS_ENABLED and DEEPGRAM_STREAMING_AVAILABLE
-    return render_template(
-        "webrtc_voice_assistant.html",
-        streaming_stt_enabled=streaming_stt_available,
-        streaming_tts_enabled=streaming_tts_available,
-        livekit_enabled=_livekit_active(),
-        livekit_url=LIVEKIT_URL,
-    )
-
-
-# Override the Socket.IO template route with LiveKit UI.
-webrtc_bp.view_functions["voice_assistant"] = voice_assistant
-"""
-LiveKit Voice Assistant Server (wrapper)
-Reuses Socket.IO control plane while switching audio to LiveKit.
-"""
-
-from flask import render_template
-
-from convonet.webrtc_voice_server_socketio import (
-    webrtc_bp,
-    init_socketio,
-    STREAMING_STT_ENABLED,
-    STREAMING_TTS_ENABLED,
-    DEEPGRAM_STREAMING_AVAILABLE,
-    LIVEKIT_URL,
-    _livekit_active,
-)
-
-
-def voice_assistant():
-    """Render the LiveKit voice assistant interface."""
-    streaming_stt_available = STREAMING_STT_ENABLED and DEEPGRAM_STREAMING_AVAILABLE
-    streaming_tts_available = STREAMING_TTS_ENABLED and DEEPGRAM_STREAMING_AVAILABLE
-    return render_template(
-        "webrtc_voice_assistant.html",
-        streaming_stt_enabled=streaming_stt_available,
-        streaming_tts_enabled=streaming_tts_available,
-        livekit_enabled=_livekit_active(),
-        livekit_url=LIVEKIT_URL,
-    )
-
-
-# Override the Socket.IO template route with LiveKit UI.
-webrtc_bp.view_functions["voice_assistant"] = voice_assistant
+# Sentry integration for monitoring Redis interactions and errors
+try:
+    import sentry_sdk
+    from sentry_sdk.integrations.flask import FlaskIntegration
+    from sentry_sdk.integrations.socketio import SocketIOIntegration
+    SENTRY_AVAILABLE = True
+except ImportError:
+    SENTRY_AVAILABLE = False
+# Optional Redis imports - app should work without them
+try:
+    from convonet.redis_manager import redis_manager, create_session, get_session, update_session, delete_session
+    REDIS_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ Redis not available: {e}")
+    REDIS_AVAILABLE = False
+    # Create dummy functions for fallback
+    class DummyRedisManager:
+        def is_available(self):
+            return False
+    redis_manager = DummyRedisManager()
+    def create_session(*args, **kwargs):
+        return False
+    def get_session(*args, **kwargs):
+        return None
+    def update_session(*args, **kwargs):
+        return False
+    def delete_session(*args, **kwargs):
+        return False
 
 # Optional test PIN support (disabled by default unless explicitly enabled)
 ENABLE_TEST_PIN = os.getenv('ENABLE_TEST_PIN', 'false').lower() == 'true'
@@ -115,6 +110,10 @@ LIVEKIT_URL = os.getenv('LIVEKIT_URL', '').strip()
 LIVEKIT_API_KEY = os.getenv('LIVEKIT_API_KEY', '').strip()
 LIVEKIT_API_SECRET = os.getenv('LIVEKIT_API_SECRET', '').strip()
 LIVEKIT_ROOM_PREFIX = os.getenv('LIVEKIT_ROOM_PREFIX', 'voice-')
+LIVEKIT_INPUT_ENABLED = os.getenv(
+    'LIVEKIT_INPUT_ENABLED',
+    'true' if LIVEKIT_ENABLED else 'false'
+).lower() == 'true'
 
 # LLM model used for voice responses (warm-up target)
 VOICE_MODEL = os.getenv("VOICE_MODEL", "claude-3-5-haiku-20241022")
@@ -148,6 +147,9 @@ MODEL_WARMUP_LOCK = threading.Lock()
 # LiveKit helpers
 def _livekit_active() -> bool:
     return bool(LIVEKIT_ENABLED and livekit_manager and livekit_manager.is_available())
+
+def _livekit_input_active() -> bool:
+    return bool(_livekit_active() and LIVEKIT_INPUT_ENABLED)
 
 def _livekit_room_name(session_id: str) -> str:
     return f"{LIVEKIT_ROOM_PREFIX}{session_id}"
@@ -848,7 +850,7 @@ def voice_assistant():
     streaming_stt_available = STREAMING_STT_ENABLED and DEEPGRAM_STREAMING_AVAILABLE
     streaming_tts_available = STREAMING_TTS_ENABLED and DEEPGRAM_STREAMING_AVAILABLE
     return render_template(
-        'webrtc_voice_assistant.html',
+        'webrtc_voice_assistant_socketio.html',
         streaming_stt_enabled=streaming_stt_available,
         streaming_tts_enabled=streaming_tts_available,
         livekit_enabled=_livekit_active(),
@@ -1131,6 +1133,13 @@ def init_socketio(socketio_instance: SocketIO, app):
         # Clear active response controls on disconnect
         if session_id in active_response_controls:
             active_response_controls.pop(session_id, None)
+
+        # Close LiveKit session if active
+        try:
+            if _livekit_active():
+                livekit_manager.close_session(session_id)
+        except Exception as livekit_close_error:
+            print(f"⚠️ Error closing LiveKit session: {livekit_close_error}", flush=True)
         
         # Get user_id before deleting session (for pending response handling)
         user_id = None
@@ -1525,6 +1534,38 @@ def init_socketio(socketio_instance: SocketIO, app):
                 'success': False,
                 'message': "Authentication error. Please try again."
             })
+
+    @socketio.on('get_livekit_info', namespace='/voice')
+    def handle_get_livekit_info():
+        """Provide LiveKit connection info for the current session"""
+        session_id = request.sid
+
+        if not _livekit_active():
+            emit('livekit_info', {'success': False, 'message': 'LiveKit not configured.'})
+            return
+
+        session_data = None
+        if redis_manager.is_available():
+            session_data = get_session(session_id)
+        else:
+            session_data = active_sessions.get(session_id)
+
+        if not session_data:
+            emit('livekit_info', {'success': False, 'message': 'Session not found.'})
+            return
+
+        user_id = session_data.get('user_id') or session_id
+        info = _get_livekit_info(session_id, user_id)
+        if not info:
+            emit('livekit_info', {'success': False, 'message': 'LiveKit token unavailable.'})
+            return
+
+        try:
+            _ensure_livekit_session(session_id, user_id)
+        except Exception as livekit_error:
+            print(f"⚠️ LiveKit session error: {livekit_error}", flush=True)
+
+        emit('livekit_info', {'success': True, **info})
     
     @socketio.on('client_ready', namespace='/voice')
     def handle_client_ready(data):
@@ -1656,8 +1697,18 @@ def init_socketio(socketio_instance: SocketIO, app):
             active_sessions[session_id]['audio_buffer'] = b''  # Start with empty bytes for binary concatenation
             print(f"🔍 Debug: cleared in-memory audio buffer for session: {session_id}")
 
+        # Enable LiveKit input recording (if configured)
+        if _livekit_input_active():
+            try:
+                user_id = session_data.get('user_id') if session_data else None
+                _ensure_livekit_session(session_id, user_id or session_id)
+                livekit_manager.set_recording(session_id, True)
+                print(f"🎧 LiveKit input recording enabled for session {session_id}", flush=True)
+            except Exception as livekit_error:
+                print(f"⚠️ Failed to enable LiveKit recording: {livekit_error}", flush=True)
+
         # Start streaming STT session for low-latency transcription
-        if STREAMING_STT_ENABLED and DEEPGRAM_STREAMING_AVAILABLE:
+        if STREAMING_STT_ENABLED and DEEPGRAM_STREAMING_AVAILABLE and not _livekit_input_active():
             try:
                 # Clean up any previous streaming session
                 if session_id in streaming_sessions:
@@ -1867,6 +1918,13 @@ def init_socketio(socketio_instance: SocketIO, app):
             print(f"❌ Error updating recording state: {e}")
             sentry_capture_redis_operation("update_recording_state", session_id, False, str(e))
 
+        # Disable LiveKit recording (if active)
+        if _livekit_input_active():
+            try:
+                livekit_manager.set_recording(session_id, False)
+            except Exception as livekit_stop_error:
+                print(f"⚠️ Failed to disable LiveKit recording: {livekit_stop_error}", flush=True)
+
         # If streaming STT is active, stop the stream and return (skip batch transcription)
         if STREAMING_STT_ENABLED and session_id in streaming_sessions:
             try:
@@ -1878,11 +1936,22 @@ def init_socketio(socketio_instance: SocketIO, app):
             emit('recording_stopped', {'success': True, 'streaming': True})
             return
         
-        # Get audio buffer - now from client data or session
+        # Get audio buffer - prefer LiveKit input when enabled
         audio_buffer = None
+        if _livekit_input_active():
+            try:
+                audio_buffer = livekit_manager.pop_audio_buffer(session_id)
+                if audio_buffer:
+                    print(f"🎧 LiveKit audio buffer captured: {len(audio_buffer)} bytes", flush=True)
+                    sentry_capture_voice_event("audio_buffer_retrieved", session_id, details={"storage": "livekit", "buffer_size": len(audio_buffer)})
+                else:
+                    print("⚠️ LiveKit audio buffer empty", flush=True)
+            except Exception as livekit_pop_error:
+                print(f"⚠️ Failed to pop LiveKit audio buffer: {livekit_pop_error}", flush=True)
+                audio_buffer = None
         
         # Check if audio data is provided directly from client
-        if data and 'audio' in data:
+        if audio_buffer is None and data and 'audio' in data:
             try:
                 # Preserve base64 for Redis audio player, and decode for processing
                 audio_buffer_b64_from_client = data['audio']
@@ -1915,7 +1984,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                     'message': 'Error decoding audio data.'
                 })
                 return
-        else:
+        elif audio_buffer is None:
             # Fallback to session buffer (legacy)
             try:
                 if redis_manager.is_available():
@@ -1944,6 +2013,13 @@ def init_socketio(socketio_instance: SocketIO, app):
                 emit('error', {'message': 'Error retrieving audio data'})
                 return
         
+        if audio_buffer is None and _livekit_input_active():
+            emit('transcription', {
+                'success': False,
+                'message': 'No LiveKit audio received. Please check microphone permissions and try again.'
+            })
+            return
+
         # Check minimum audio length for meaningful speech recognition
         # WebRTC chunks are very small, so we need a much lower threshold
         min_audio_length = 10000  # Much lower threshold for WebRTC
@@ -2915,9 +2991,10 @@ def init_socketio(socketio_instance: SocketIO, app):
                                 sentry_capture_voice_event("pending_response_stored", session_id, user_id, details={"reason": "session_gone_during_tts"})
                             else:
                                 # Fallback to in-memory (not ideal but better than losing response)
-                                if not hasattr(webrtc_voice_server, 'pending_responses'):
-                                    webrtc_voice_server.pending_responses = {}
-                                webrtc_voice_server.pending_responses[user_id] = pending_response
+                                module_self = sys.modules[__name__]
+                                if not hasattr(module_self, 'pending_responses'):
+                                    module_self.pending_responses = {}
+                                module_self.pending_responses[user_id] = pending_response
                                 print(f"💾 Stored pending response in memory for user_id {user_id}", flush=True)
                         except Exception as store_error:
                             print(f"⚠️ Failed to store pending response: {store_error}", flush=True)
@@ -2968,9 +3045,10 @@ def init_socketio(socketio_instance: SocketIO, app):
                                         print(f"💾 Stored pending response for user_id {user_id} (client not in room)", flush=True)
                                         sentry_capture_voice_event("pending_response_stored_no_room", session_id, user_id, details={"reason": "client_not_in_room"})
                                     else:
-                                        if not hasattr(webrtc_voice_server, 'pending_responses'):
-                                            webrtc_voice_server.pending_responses = {}
-                                        webrtc_voice_server.pending_responses[user_id] = pending_response
+                                        module_self = sys.modules[__name__]
+                                        if not hasattr(module_self, 'pending_responses'):
+                                            module_self.pending_responses = {}
+                                        module_self.pending_responses[user_id] = pending_response
                                         print(f"💾 Stored pending response in memory for user_id {user_id}", flush=True)
                                 except Exception as store_error:
                                     print(f"⚠️ Error storing pending response: {store_error}", flush=True)
@@ -3179,21 +3257,3 @@ async def process_with_agent(
         if SENTRY_AVAILABLE:
             sentry_sdk.capture_exception(e)
         return "I'm sorry, I encountered an error. Please try again.", None
-
-
-def _livekit_voice_assistant_override():
-    """Render the LiveKit voice assistant interface (override)."""
-    streaming_stt_available = STREAMING_STT_ENABLED and DEEPGRAM_STREAMING_AVAILABLE
-    streaming_tts_available = STREAMING_TTS_ENABLED and DEEPGRAM_STREAMING_AVAILABLE
-    return render_template(
-        "webrtc_voice_assistant.html",
-        streaming_stt_enabled=streaming_stt_available,
-        streaming_tts_enabled=streaming_tts_available,
-        livekit_enabled=_livekit_active(),
-        livekit_url=LIVEKIT_URL,
-    )
-
-
-# Ensure LiveKit template is used for the main UI.
-webrtc_bp.view_functions["voice_assistant"] = _livekit_voice_assistant_override
-

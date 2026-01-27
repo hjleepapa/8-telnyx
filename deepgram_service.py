@@ -304,7 +304,15 @@ class DeepgramService:
             logger.warning(f"⚠️ Audio quality analysis failed: {e}")
             return {"is_silence": False, "rms": 0, "clipping_percentage": 0}
     
-    def synthesize_speech(self, text: str, voice: str = "aura-asteria-en", model: str = None) -> Optional[bytes]:
+    def synthesize_speech(
+        self,
+        text: str,
+        voice: str = "aura-asteria-en",
+        model: str = None,
+        encoding: Optional[str] = None,
+        sample_rate: Optional[int] = None,
+        container: Optional[str] = None,
+    ) -> Optional[bytes]:
         """
         Synthesize speech from text using Deepgram's Aura TTS API
         
@@ -330,6 +338,12 @@ class DeepgramService:
             # Only add model if explicitly provided (though it's usually not needed)
             if model:
                 params["model"] = model
+            if encoding:
+                params["encoding"] = encoding
+            if sample_rate:
+                params["sample_rate"] = str(sample_rate)
+            if container:
+                params["container"] = container
             
             # Request body
             payload = {
