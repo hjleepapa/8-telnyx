@@ -304,9 +304,15 @@
                 livekitSdk = window.LiveKit;
                 return true;
             }
-            return new Promise((resolve) => {
+            const sources = [
+                'https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js',
+                'https://unpkg.com/livekit-client/dist/livekit-client.umd.min.js',
+                'https://cdnjs.cloudflare.com/ajax/libs/livekit-client/1.0.23/livekit-client.umd.min.js'
+            ];
+
+            const loadScript = (src) => new Promise((resolve) => {
                 const script = document.createElement('script');
-                script.src = 'https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js';
+                script.src = src;
                 script.onload = () => {
                     livekitSdk = window.LiveKit || null;
                     resolve(Boolean(livekitSdk));
@@ -314,6 +320,14 @@
                 script.onerror = () => resolve(false);
                 document.head.appendChild(script);
             });
+
+            for (const src of sources) {
+                const loaded = await loadScript(src);
+                if (loaded) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         async function connectLivekit(info) {
