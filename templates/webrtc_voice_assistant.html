@@ -304,6 +304,21 @@
                 livekitSdk = window.LiveKit;
                 return true;
             }
+
+            const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+            const localScript = document.querySelector('script[src="/webrtc/livekit-client.umd.min.js"]');
+            if (localScript) {
+                for (let i = 0; i < 10; i += 1) {
+                    await wait(200);
+                    if (window.LiveKit) {
+                        livekitSdk = window.LiveKit;
+                        updateLivekitDebug({ sdk: 'local', status: 'loaded' });
+                        return true;
+                    }
+                }
+                updateLivekitDebug({ sdk: 'local', status: 'not-ready' });
+            }
+
             const sources = [
                 'https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js',
                 'https://unpkg.com/livekit-client/dist/livekit-client.umd.min.js',
@@ -311,13 +326,25 @@
             ];
 
             const loadScript = (src) => new Promise((resolve) => {
+                const existing = document.querySelector(`script[data-livekit-src="${src}"]`);
+                if (existing) {
+                    resolve(Boolean(window.LiveKit));
+                    return;
+                }
                 const script = document.createElement('script');
                 script.src = src;
+                script.dataset.livekitSrc = src;
                 script.onload = () => {
                     livekitSdk = window.LiveKit || null;
+                    if (livekitSdk) {
+                        updateLivekitDebug({ sdk: src, status: 'loaded' });
+                    }
                     resolve(Boolean(livekitSdk));
                 };
-                script.onerror = () => resolve(false);
+                script.onerror = () => {
+                    updateLivekitDebug({ sdk: src, status: 'failed' });
+                    resolve(false);
+                };
                 document.head.appendChild(script);
             });
 

@@ -871,6 +871,7 @@ def livekit_client_js():
     """Serve LiveKit client JS from same origin with CDN fallback."""
     global LIVEKIT_CLIENT_JS_CACHE
     if LIVEKIT_CLIENT_JS_CACHE:
+        print("[livekit] Serving cached client JS")
         return Response(LIVEKIT_CLIENT_JS_CACHE, mimetype="application/javascript")
 
     for url in LIVEKIT_CLIENT_URLS:
@@ -878,11 +879,38 @@ def livekit_client_js():
             resp = requests.get(url, timeout=5)
             if resp.status_code == 200 and resp.text:
                 LIVEKIT_CLIENT_JS_CACHE = resp.text
+                print(f"[livekit] Fetched client JS from {url}")
                 return Response(LIVEKIT_CLIENT_JS_CACHE, mimetype="application/javascript")
+            print(f"[livekit] CDN fetch failed ({resp.status_code}) for {url}")
         except Exception:
+            print(f"[livekit] CDN fetch error for {url}")
             continue
 
-    return Response("/* LiveKit client unavailable */", status=503, mimetype="application/javascript")
+    # Fall back to a tiny loader that tries the CDN in the browser.
+    fallback_js = (
+        "/* LiveKit client unavailable - fallback loader */\n"
+        "(function(){\n"
+        "  if (window.LiveKit) { return; }\n"
+        f"  var sources = {json.dumps(LIVEKIT_CLIENT_URLS)};\n"
+        "  var index = 0;\n"
+        "  function loadNext(){\n"
+        "    if (index >= sources.length) {\n"
+        "      console.warn('LiveKit SDK failed to load');\n"
+        "      return;\n"
+        "    }\n"
+        "    var src = sources[index++];\n"
+        "    var script = document.createElement('script');\n"
+        "    script.src = src;\n"
+        "    script.onload = function(){\n"
+        "      console.log('LiveKit SDK loaded from ' + src);\n"
+        "    };\n"
+        "    script.onerror = loadNext;\n"
+        "    document.head.appendChild(script);\n"
+        "  }\n"
+        "  loadNext();\n"
+        "})();\n"
+    )
+    return Response(fallback_js, mimetype="application/javascript")
 
 
 def chunk_text_by_sentences(text: str, min_chunk_size: int = 100, max_chunk_size: int = 500) -> list[str]:
@@ -1566,8 +1594,10 @@ def init_socketio(socketio_instance: SocketIO, app):
     def handle_get_livekit_info():
         """Provide LiveKit connection info for the current session"""
         session_id = request.sid
+        print(f"[livekit] Token request from session {session_id}", flush=True)
 
         if not _livekit_active():
+            print("[livekit] LiveKit not configured or unavailable", flush=True)
             emit('livekit_info', {'success': False, 'message': 'LiveKit not configured.'})
             return
 
@@ -1578,19 +1608,21 @@ def init_socketio(socketio_instance: SocketIO, app):
             session_data = active_sessions.get(session_id)
 
         if not session_data:
+            print(f"[livekit] Session not found for token request: {session_id}", flush=True)
             emit('livekit_info', {'success': False, 'message': 'Session not found.'})
             return
 
         user_id = session_data.get('user_id') or session_id
         info = _get_livekit_info(session_id, user_id)
         if not info:
+            print(f"[livekit] Token unavailable for session {session_id}", flush=True)
             emit('livekit_info', {'success': False, 'message': 'LiveKit token unavailable.'})
             return
 
         try:
             _ensure_livekit_session(session_id, user_id)
         except Exception as livekit_error:
-            print(f"⚠️ LiveKit session error: {livekit_error}", flush=True)
+            print(f"[livekit] Session error: {livekit_error}", flush=True)
 
         emit('livekit_info', {'success': True, **info})
     
