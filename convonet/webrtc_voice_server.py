@@ -3,7 +3,9 @@ LiveKit Voice Assistant Server (wrapper).
 Reuses Socket.IO control plane while switching audio to LiveKit.
 """
 
-from flask import render_template
+import os
+
+from flask import Blueprint, render_template
 
 from convonet.webrtc_voice_server_socketio import (
     webrtc_bp,
@@ -31,24 +33,6 @@ def voice_assistant():
 
 # Override the Socket.IO template route with LiveKit UI.
 webrtc_bp.view_functions["voice_assistant"] = voice_assistant
-"""
-LiveKit Voice Assistant Server (wrapper).
-Reuses Socket.IO control plane while switching audio to LiveKit.
-"""
-
-import os
-
-from flask import render_template
-
-from convonet.webrtc_voice_server_socketio import (
-    webrtc_bp,
-    init_socketio,
-    STREAMING_STT_ENABLED,
-    STREAMING_TTS_ENABLED,
-    DEEPGRAM_STREAMING_AVAILABLE,
-    LIVEKIT_URL,
-    _livekit_active,
-)
 
 
 def voice_assistant():
