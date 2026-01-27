@@ -14,8 +14,9 @@ import struct
 from typing import Optional
 from uuid import UUID
 from urllib.parse import quote
-from flask import Blueprint, render_template, request, jsonify
+from flask import Blueprint, render_template, request, jsonify, Response
 from flask_socketio import SocketIO, emit, join_room, leave_room
+import requests
 
 # Apply nest_asyncio to allow nested event loops (needed for eventlet compatibility)
 try:
@@ -113,6 +114,14 @@ LIVEKIT_INPUT_ENABLED = os.getenv(
     'LIVEKIT_INPUT_ENABLED',
     'true' if LIVEKIT_ENABLED else 'false'
 ).lower() == 'true'
+
+# LiveKit client CDN fallback URLs (used for proxying to same origin)
+LIVEKIT_CLIENT_URLS = [
+    "https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js",
+    "https://unpkg.com/livekit-client/dist/livekit-client.umd.min.js",
+    "https://cdnjs.cloudflare.com/ajax/libs/livekit-client/1.0.23/livekit-client.umd.min.js",
+]
+LIVEKIT_CLIENT_JS_CACHE = None
 
 # LLM model used for voice responses (warm-up target)
 VOICE_MODEL = os.getenv("VOICE_MODEL", "claude-3-5-haiku-20241022")
@@ -855,6 +864,25 @@ def voice_assistant():
         livekit_enabled=_livekit_active(),
         livekit_url=LIVEKIT_URL,
     )
+
+
+@webrtc_bp.route('/livekit-client.umd.min.js')
+def livekit_client_js():
+    """Serve LiveKit client JS from same origin with CDN fallback."""
+    global LIVEKIT_CLIENT_JS_CACHE
+    if LIVEKIT_CLIENT_JS_CACHE:
+        return Response(LIVEKIT_CLIENT_JS_CACHE, mimetype="application/javascript")
+
+    for url in LIVEKIT_CLIENT_URLS:
+        try:
+            resp = requests.get(url, timeout=5)
+            if resp.status_code == 200 and resp.text:
+                LIVEKIT_CLIENT_JS_CACHE = resp.text
+                return Response(LIVEKIT_CLIENT_JS_CACHE, mimetype="application/javascript")
+        except Exception:
+            continue
+
+    return Response("/* LiveKit client unavailable */", status=503, mimetype="application/javascript")
 
 
 def chunk_text_by_sentences(text: str, min_chunk_size: int = 100, max_chunk_size: int = 500) -> list[str]:
