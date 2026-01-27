@@ -1,4 +1,8 @@
-from deepgram import DeepgramClient
+try:
+    # Deepgram SDK v3+
+    from deepgram import DeepgramClient
+except ImportError:  # pragma: no cover - fallback for older SDKs
+    from deepgram import Deepgram as DeepgramClient
 import logging
 import os
 import asyncio
