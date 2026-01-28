@@ -136,6 +136,16 @@ class LiveKitRoomSession:
         def _on_participant_connected(participant):
             try:
                 print(f"👤 LiveKit participant connected: {participant.identity}", flush=True)
+                try:
+                    room_name = getattr(self.room, "name", None)
+                    participants = []
+                    for _, remote in getattr(self.room, "remote_participants", {}).items():
+                        identity = getattr(remote, "identity", None)
+                        if identity:
+                            participants.append(identity)
+                    print(f"🧭 LiveKit room '{room_name}' participants: {participants}", flush=True)
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -173,7 +183,15 @@ class LiveKitRoomSession:
         else:
             await self.room.connect(self.url, self.token)
         try:
-            print(f"✅ LiveKit room connected as {self.room.local_participant.identity}", flush=True)
+            room_name = getattr(self.room, "name", None)
+            local_identity = self.room.local_participant.identity
+            participants = []
+            for _, remote in getattr(self.room, "remote_participants", {}).items():
+                identity = getattr(remote, "identity", None)
+                if identity:
+                    participants.append(identity)
+            print(f"✅ LiveKit room '{room_name}' connected as {local_identity}", flush=True)
+            print(f"🧭 LiveKit room '{room_name}' participants: {participants}", flush=True)
         except Exception:
             pass
         self.audio_source = rtc.AudioSource(self.sample_rate, self.channels)
