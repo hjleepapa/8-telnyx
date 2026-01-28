@@ -320,8 +320,38 @@
                 updateLivekitDebug({ sdk: 'local', status: 'not-ready' });
             }
 
+            const loadWithFetch = async (src) => {
+                try {
+                    const response = await fetch(src, { cache: 'no-store' });
+                    if (!response.ok) {
+                        updateLivekitDebug({ sdk: src, status: `http-${response.status}` });
+                        return false;
+                    }
+                    const script = document.createElement('script');
+                    script.src = `${src}${src.includes('?') ? '&' : '?'}v=${Date.now()}`;
+                    script.dataset.livekitSrc = src;
+                    return await new Promise((resolve) => {
+                        script.onload = () => {
+                            livekitSdk = window.LiveKit || null;
+                            if (livekitSdk) {
+                                updateLivekitDebug({ sdk: src, status: 'loaded' });
+                            }
+                            resolve(Boolean(livekitSdk));
+                        };
+                        script.onerror = () => {
+                            updateLivekitDebug({ sdk: src, status: 'failed' });
+                            resolve(false);
+                        };
+                        document.head.appendChild(script);
+                    });
+                } catch (error) {
+                    updateLivekitDebug({ sdk: src, status: 'fetch-error' });
+                    return false;
+                }
+            };
+
             const sources = [
-                localSrc,
+                `${localSrc}?v=${Date.now()}`,
                 'https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js',
                 'https://unpkg.com/livekit-client/dist/livekit-client.umd.min.js',
                 'https://cdnjs.cloudflare.com/ajax/libs/livekit-client/1.0.23/livekit-client.umd.min.js'
@@ -351,7 +381,9 @@
             });
 
             for (const src of sources) {
-                const loaded = await loadScript(src);
+                const loaded = src.startsWith(localSrc)
+                    ? await loadWithFetch(localSrc)
+                    : await loadScript(src);
                 if (loaded) {
                     return true;
                 }
