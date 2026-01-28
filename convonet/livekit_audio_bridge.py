@@ -341,7 +341,8 @@ class LiveKitRoomSession:
             if track.kind == rtc.TrackKind.KIND_AUDIO:
                 track_sid = getattr(track, "sid", None)
                 print(f"🎧 LiveKit subscribed to audio track from {participant.identity} (sid={track_sid})", flush=True)
-                asyncio.create_task(self._consume_audio_track(track))
+                # CRITICAL: Use run_coroutine_threadsafe to schedule on self.loop, not create_task
+                asyncio.run_coroutine_threadsafe(self._consume_audio_track(track), self.loop)
 
         connect_options = None
         try:
