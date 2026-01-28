@@ -333,17 +333,25 @@ class LiveKitRoomSession:
             try:
                 kind = getattr(publication, "kind", None)
                 kind_name = str(kind).lower() if kind is not None else ""
-                print(f"🎙️ LiveKit Room Event: track_published by {participant.identity}, kind={kind_name}", flush=True)
+                print(f"🎙️ LiveKit Room Event: track_published by {participant.identity}, kind={kind_name} source={getattr(publication, 'source', 'unknown')}", flush=True)
+                
+                # Always force subscribe to audio tracks, regardless of auto_subscribe
                 if kind == rtc.TrackKind.KIND_AUDIO or "audio" in kind_name:
                     async def _subscribe():
                         try:
                             print(f"🎙️ LiveKit subscribing to {kind_name} track from {participant.identity}", flush=True)
-                            result = publication.set_subscribed(True)
-                            if asyncio.iscoroutine(result):
-                                await result
+                            if hasattr(publication, "set_subscribed"):
+                                result = publication.set_subscribed(True)
+                                if asyncio.iscoroutine(result):
+                                    await result
+                                print(f"✅ LiveKit subscribed to {participant.identity}", flush=True)
+                            else:
+                                print(f"⚠️ Publication has no set_subscribed method: {dir(publication)}", flush=True)
                         except Exception as e:
                             print(f"⚠️ LiveKit subscribe failed: {e}", flush=True)
-                    asyncio.create_task(_subscribe())
+                    
+                    # Run immediately in the loop
+                    asyncio.run_coroutine_threadsafe(_subscribe(), self.loop)
             except Exception as e:
                 print(f"⚠️ LiveKit on_track_published error: {e}", flush=True)
 
