@@ -207,6 +207,13 @@
         let livekitConnected = false;
         let livekitConnecting = false;
         let livekitMicEnabled = false;
+        let localAudioTrack = null;
+        let handsFreeEnabled = true;
+        let vadContext = null;
+        let vadAnalyser = null;
+        let vadTimer = null;
+        let vadSpeechFrames = 0;
+        let vadSilenceFrames = 0;
         const livekitAudioElements = new Map();
         let fallbackAudio = null;
         let livekitSdk = null;
@@ -215,6 +222,11 @@
         const STREAMING_TTS_ENABLED = {{ 'true' if streaming_tts_enabled else 'false' }};
         const LIVEKIT_ENABLED = {{ 'true' if livekit_enabled else 'false' }};
         const LIVEKIT_URL = "{{ livekit_url }}";
+        const VAD_THRESHOLD = 0.015;
+        const VAD_SPEECH_FRAMES = 3;
+        const VAD_SILENCE_FRAMES = 12;
+        handsFreeEnabled = LIVEKIT_ENABLED;
+        const LIVEKIT_DEBUG = window.location.search.includes('livekitDebug=1');
 
         function setLivekitStatus(state, message) {
             const status = document.getElementById('livekitStatus');
@@ -228,11 +240,16 @@
         }
 
         function updateLivekitDebug(info) {
+            if (!LIVEKIT_DEBUG) return;
             const panel = document.getElementById('livekitDebugPanel');
             const text = document.getElementById('livekitDebugText');
             if (!panel || !text) return;
             panel.style.display = 'block';
-            text.textContent = JSON.stringify(info, null, 2);
+            const safeInfo = { ...info };
+            if (safeInfo.token) {
+                safeInfo.token = `${safeInfo.token.slice(0, 6)}…${safeInfo.token.slice(-6)}`;
+            }
+            text.textContent = JSON.stringify(safeInfo, null, 2);
         }
 
         function showStatus(message, type = 'info') {
@@ -438,13 +455,43 @@
                 await livekitRoom.connect(info.url || LIVEKIT_URL, info.token, { autoSubscribe: true });
                 livekitConnected = true;
                 setLivekitStatus('online', 'LiveKit: connected');
-                showStatus('LiveKit connected. Ready to speak.', 'success');
+                showStatus('LiveKit connected.', 'success');
+
+                if (handsFreeEnabled) {
+                    const enabled = await ensurePublishedTrack();
+                    if (enabled) {
+                        startHandsFreeMode();
+                    } else {
+                        handsFreeEnabled = false;
+                        showStatus('Microphone permission denied. Use Click to speak.', 'error');
+                        enableMicButton();
+                    }
+                }
             } catch (error) {
                 console.error('❌ LiveKit connection error:', error);
                 setLivekitStatus('offline', 'LiveKit: failed');
                 showStatus('LiveKit connection failed.', 'error');
             } finally {
                 livekitConnecting = false;
+            }
+        }
+
+        async function ensurePublishedTrack() {
+            if (!livekitRoom || !livekitSdk) return false;
+            if (localAudioTrack) return true;
+            try {
+                localAudioTrack = await livekitSdk.createLocalAudioTrack({
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                });
+                await livekitRoom.localParticipant.publishTrack(localAudioTrack);
+                livekitMicEnabled = true;
+                updateLivekitDebug({ mic: 'published' });
+                return true;
+            } catch (error) {
+                console.error('❌ LiveKit mic publish error:', error);
+                return false;
             }
         }
 
@@ -501,7 +548,11 @@
 
                 document.getElementById('authSection').style.display = 'none';
                 document.getElementById('voiceSection').style.display = 'block';
-                document.getElementById('micButton').disabled = false;
+                if (handsFreeEnabled) {
+                    disableMicButtonForHandsFree();
+                } else {
+                    enableMicButton();
+                }
                 showStatus(data.message, 'success');
 
                 if (LIVEKIT_ENABLED) {
@@ -582,6 +633,10 @@
             const button = document.getElementById('micButton');
             const icon = document.getElementById('micIcon');
             const label = document.getElementById('micLabel');
+            if (handsFreeEnabled) {
+                disableMicButtonForHandsFree();
+                return;
+            }
             if (button) {
                 button.classList.remove('recording', 'processing');
                 button.disabled = false;
@@ -590,7 +645,9 @@
             if (label) label.textContent = 'Click to speak';
         }
 
-        async function startRecording() {
+        async function startRecording(options = {}) {
+            const skipMicEnable = options.skipMicEnable || false;
+            const silentUI = options.silentUI || false;
             if (!socket || !socket.connected) {
                 showStatus('Not connected.', 'error');
                 return;
@@ -605,9 +662,11 @@
             const button = document.getElementById('micButton');
             const icon = document.getElementById('micIcon');
             const label = document.getElementById('micLabel');
-            if (button) button.classList.add('recording');
-            if (icon) icon.className = 'fas fa-stop';
-            if (label) label.textContent = 'Recording... Click to stop';
+            if (!silentUI) {
+                if (button) button.classList.add('recording');
+                if (icon) icon.className = 'fas fa-stop';
+                if (label) label.textContent = 'Recording... Click to stop';
+            }
 
             try {
                 if (!livekitConnected) {
@@ -620,11 +679,13 @@
                         return;
                     }
                 }
-                const ok = await setMicrophoneEnabled(true);
-                if (!ok) {
-                    showStatus('Unable to start microphone.', 'error');
-                    resetMicButton();
-                    return;
+                if (!skipMicEnable) {
+                    const ok = await setMicrophoneEnabled(true);
+                    if (!ok) {
+                        showStatus('Unable to start microphone.', 'error');
+                        resetMicButton();
+                        return;
+                    }
                 }
                 socket.emit('start_recording');
             } catch (error) {
@@ -634,18 +695,22 @@
             }
         }
 
-        async function stopRecording() {
+        async function stopRecording(options = {}) {
+            const skipMicDisable = options.skipMicDisable || false;
+            const silentUI = options.silentUI || false;
             isRecording = false;
             isProcessing = true;
             const button = document.getElementById('micButton');
             const icon = document.getElementById('micIcon');
             const label = document.getElementById('micLabel');
-            if (button) button.classList.add('processing');
-            if (icon) icon.className = 'fas fa-spinner fa-spin';
-            if (label) label.textContent = 'Processing...';
+            if (!silentUI) {
+                if (button) button.classList.add('processing');
+                if (icon) icon.className = 'fas fa-spinner fa-spin';
+                if (label) label.textContent = 'Processing...';
+            }
 
             try {
-                if (livekitRoom && livekitMicEnabled) {
+                if (!skipMicDisable && livekitRoom && livekitMicEnabled) {
                     await setMicrophoneEnabled(false);
                 }
                 socket.emit('stop_recording');
@@ -656,8 +721,76 @@
             }
         }
 
+        function enableMicButton() {
+            const button = document.getElementById('micButton');
+            const label = document.getElementById('micLabel');
+            if (button) button.disabled = false;
+            if (label) label.textContent = 'Click to speak';
+        }
+
+        function disableMicButtonForHandsFree() {
+            const button = document.getElementById('micButton');
+            const label = document.getElementById('micLabel');
+            if (button) {
+                button.classList.remove('recording', 'processing');
+                button.style.opacity = '1';
+            }
+            if (label) label.textContent = 'Listening... (hands-free)';
+        }
+
+        function startHandsFreeMode() {
+            disableMicButtonForHandsFree();
+            startVadLoop();
+            showStatus('Hands-free mode enabled. Start speaking.', 'success');
+        }
+
+        function startVadLoop() {
+            if (vadTimer || !localAudioTrack) return;
+            try {
+                const track = localAudioTrack.mediaStreamTrack;
+                const stream = new MediaStream([track]);
+                vadContext = vadContext || new (window.AudioContext || window.webkitAudioContext)();
+                if (vadContext.state === 'suspended') {
+                    vadContext.resume();
+                }
+                const source = vadContext.createMediaStreamSource(stream);
+                vadAnalyser = vadContext.createAnalyser();
+                vadAnalyser.fftSize = 2048;
+                source.connect(vadAnalyser);
+                const data = new Float32Array(vadAnalyser.fftSize);
+                vadTimer = setInterval(() => {
+                    if (!vadAnalyser) return;
+                    vadAnalyser.getFloatTimeDomainData(data);
+                    let sum = 0;
+                    for (let i = 0; i < data.length; i += 1) {
+                        sum += data[i] * data[i];
+                    }
+                    const rms = Math.sqrt(sum / data.length);
+                    if (rms > VAD_THRESHOLD) {
+                        vadSpeechFrames += 1;
+                        vadSilenceFrames = 0;
+                    } else {
+                        vadSilenceFrames += 1;
+                        vadSpeechFrames = 0;
+                    }
+                    if (!isRecording && vadSpeechFrames >= VAD_SPEECH_FRAMES) {
+                        startRecording({ skipMicEnable: true, silentUI: true });
+                    }
+                    if (isRecording && vadSilenceFrames >= VAD_SILENCE_FRAMES) {
+                        stopRecording({ skipMicDisable: true, silentUI: true });
+                    }
+                }, 100);
+            } catch (error) {
+                console.error('❌ VAD initialization failed:', error);
+            }
+        }
+
         function toggleRecording() {
             if (isProcessing) return;
+            if (handsFreeEnabled) {
+                showStatus('Hands-free mode is enabled. Just speak.', 'info');
+                return;
+            }
             if (!isRecording) {
                 startRecording();
             } else {
