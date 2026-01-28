@@ -130,6 +130,34 @@ VOICE_MODEL = os.getenv("VOICE_MODEL", "").strip()
 
 webrtc_bp = Blueprint('webrtc_voice', __name__, url_prefix='/webrtc')
 
+@webrtc_bp.route('/livekit-debug')
+def livekit_debug():
+    """Return debug info about LiveKit configuration"""
+    import inspect
+    
+    status = {
+        "enabled_env": LIVEKIT_ENABLED,
+        "available_import": LIVEKIT_AVAILABLE,
+        "manager_class_exists": LiveKitSessionManager is not None,
+        "manager_instance_exists": livekit_manager is not None,
+        "manager_is_available": livekit_manager.is_available() if livekit_manager else False,
+        "env_vars": {
+            "URL": bool(LIVEKIT_URL),
+            "API_KEY": bool(LIVEKIT_API_KEY),
+            "API_SECRET": bool(LIVEKIT_API_SECRET),
+        }
+    }
+    
+    # Try to get import error if available
+    if not LIVEKIT_AVAILABLE:
+        try:
+            from livekit import rtc
+            status["import_rtc"] = "Success"
+        except ImportError as e:
+            status["import_rtc"] = str(e)
+            
+    return jsonify(status)
+
 # Initialize Deepgram service for STT and TTS
 # Note: Using Deepgram for both STT and TTS, Claude for LLM
 deepgram_service = None
