@@ -8,6 +8,7 @@ import jwt
 
 try:
     from livekit import rtc
+from livekit.rtc import RoomEvent
     LIVEKIT_AVAILABLE = True
 except Exception as e:
     print(f"⚠️ LiveKit SDK not available: {e}")
@@ -185,6 +186,14 @@ class LiveKitRoomSession:
             
             if not pubs:
                 try:
+                    print(f"🕵️ DEBUG {participant.identity} keys: {list(participant.__dict__.keys()) if hasattr(participant, '__dict__') else 'no __dict__'}", flush=True)
+                    for a in dir(participant):
+                        if "track" in a.lower() or "pub" in a.lower():
+                            v = getattr(participant, a, "N/A")
+                            print(f"🕵️ DEBUG {participant.identity} attr {a} = {v}", flush=True)
+                except Exception as e:
+                    print(f"🕵️ DEBUG {participant.identity} failed: {e}", flush=True)
+                try:
                     debug_attrs = [name for name in dir(participant) if "track" in name or "pub" in name]
                     # Also check if it's a dict and empty
                     is_dict = isinstance(getattr(participant, "track_publications", None), dict)
@@ -259,7 +268,7 @@ class LiveKitRoomSession:
 
         # Catch-all event logger to see what events are actually firing
         try:
-            @self.room.on("*")
+            # Removed invalid catch-all
             def _on_any_event(*args, **kwargs):
                 try:
                     event_name = args[0] if args else "unknown"
@@ -270,7 +279,7 @@ class LiveKitRoomSession:
         except Exception:
             pass
 
-        @self.room.on("participant_connected")
+        @self.room.on(RoomEvent.PARTICIPANT_CONNECTED)
         def _on_participant_connected(participant):
             try:
                 print(f"👤 LiveKit participant connected: {participant.identity}", flush=True)
@@ -294,7 +303,7 @@ class LiveKitRoomSession:
             except Exception:
                 pass
 
-        @self.room.on("track_published")
+        @self.room.on(RoomEvent.TRACK_PUBLISHED)
         def _on_track_published(publication, participant):
             try:
                 kind = getattr(publication, "kind", None)
@@ -313,7 +322,7 @@ class LiveKitRoomSession:
             except Exception as e:
                 print(f"⚠️ LiveKit on_track_published error: {e}", flush=True)
 
-        @self.room.on("track_subscribed")
+        @self.room.on(RoomEvent.TRACK_SUBSCRIBED)
         def _on_track_subscribed(track, publication, participant):
             if track.kind == rtc.TrackKind.KIND_AUDIO:
                 track_sid = getattr(track, "sid", None)
@@ -367,6 +376,26 @@ class LiveKitRoomSession:
         local_track = rtc.LocalAudioTrack.create_audio_track("assistant_audio", self.audio_source)
         await self.room.local_participant.publish_track(local_track)
         self.ready.set()
+        
+        # Room status monitor task
+        async def _monitor_room():
+            while not self._closed:
+                try:
+                    name = getattr(self.room, "name", "unknown")
+                    parts = list(getattr(self.room, "remote_participants", {}).keys())
+                    print(f"📊 Room '{name}' monitor: participants={parts}", flush=True)
+                    for pid in parts:
+                        p = self.room.remote_participants[pid]
+                        # Check tracks
+                        t_pubs = getattr(p, "track_publications", {})
+                        if not t_pubs:
+                            t_pubs = getattr(p, "_track_publications", {})
+                        print(f"  └─ Participant '{pid}' tracks: {list(t_pubs.keys())}", flush=True)
+                except Exception as me:
+                    print(f"⚠️ Room monitor error: {me}", flush=True)
+                await asyncio.sleep(5.0)
+        
+        asyncio.create_task(_monitor_room())
 
     def _run_loop(self):
         asyncio.set_event_loop(self.loop)
