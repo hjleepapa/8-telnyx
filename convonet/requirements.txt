@@ -183,5 +183,9 @@ redis>=5.0.0
 composio-core>=0.3.0
 flask-limiter>=3.0.0
 
+# LiveKit SDK
+livekit>=0.17.0
+livekit-api>=0.6.0
+
 # Deepgram SDK for WebRTC speech-to-text
 deepgram-sdk>=3.0.0

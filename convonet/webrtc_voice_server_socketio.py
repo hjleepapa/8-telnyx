@@ -1180,8 +1180,26 @@ def init_socketio(socketio_instance: SocketIO, app):
     socketio_instance_global = socketio_instance  # Store for use in nested functions
     flask_app = app  # Store Flask app directly (passed as parameter)
     
+    print(f"🔧 LiveKit Config Check:", flush=True)
+    print(f"   - LIVEKIT_ENABLED (env): {LIVEKIT_ENABLED}", flush=True)
+    print(f"   - LIVEKIT_AVAILABLE (import): {LIVEKIT_AVAILABLE}", flush=True)
+    print(f"   - LiveKitSessionManager (class): {LiveKitSessionManager is not None}", flush=True)
+    
     if LIVEKIT_ENABLED and LIVEKIT_AVAILABLE and LiveKitSessionManager and not livekit_manager:
-        livekit_manager = LiveKitSessionManager(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
+        print(f"🔧 Initializing LiveKitSessionManager...", flush=True)
+        try:
+            livekit_manager = LiveKitSessionManager(LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
+            print(f"   - LiveKit Manager Initialized: {livekit_manager is not None}", flush=True)
+            print(f"   - LiveKit Manager Available: {livekit_manager.is_available()}", flush=True)
+            if not livekit_manager.is_available():
+                print(f"   ⚠️ Manager reports unavailable (Check URL/Keys)", flush=True)
+                print(f"     URL present: {bool(LIVEKIT_URL)}", flush=True)
+                print(f"     API Key present: {bool(LIVEKIT_API_KEY)}", flush=True)
+                print(f"     API Secret present: {bool(LIVEKIT_API_SECRET)}", flush=True)
+        except Exception as e:
+            print(f"   ❌ LiveKit Initialization failed: {e}", flush=True)
+    else:
+        print(f"⚠️ LiveKit Config Skipped (One or more conditions failed)", flush=True)
     
     @socketio.on('connect', namespace='/voice')
     def handle_connect():

@@ -8,7 +8,25 @@ import jwt
 
 try:
     from livekit import rtc
-    from livekit.rtc import RoomEvent
+    from livekit import rtc
+    try:
+        from livekit.rtc import RoomEvent
+    except ImportError:
+        # Fallback for older/newer versions or debugging
+        print(f"⚠️ Could not import RoomEvent from livekit.rtc. Available: {dir(rtc)}")
+        if hasattr(rtc, 'RoomEvent'):
+            RoomEvent = rtc.RoomEvent
+        else:
+            raise
+    
+    # Try to print version
+    try:
+        import pkg_resources
+        version = pkg_resources.get_distribution("livekit").version
+        print(f"✅ LiveKit SDK {version} imported successfully", flush=True)
+    except Exception:
+        print(f"✅ LiveKit SDK imported (version unknown)", flush=True)
+
     LIVEKIT_AVAILABLE = True
 except Exception as e:
     print(f"⚠️ LiveKit SDK not available: {e}")
