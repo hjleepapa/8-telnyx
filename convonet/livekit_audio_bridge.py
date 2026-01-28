@@ -48,6 +48,7 @@ class LiveKitRoomSession:
         self.ready = threading.Event()
         self._closed = False
         self._frame_count = 0
+        self._frame_debugged = False
 
     def start(self):
         if not LIVEKIT_AVAILABLE:
@@ -101,10 +102,25 @@ class LiveKitRoomSession:
     def _handle_audio_frame(self, frame):
         if not self.recording_enabled:
             return
-        pcm = getattr(frame, "data", None)
+        pcm = None
+        for attr in ("data", "samples", "buffer", "pcm"):
+            if hasattr(frame, attr):
+                pcm = getattr(frame, attr, None)
+                if pcm is not None:
+                    break
+        if pcm is None and hasattr(frame, "to_bytes"):
+            try:
+                pcm = frame.to_bytes()
+            except Exception:
+                pcm = None
         if pcm is None:
-            pcm = getattr(frame, "samples", None)
-        if pcm is None:
+            if not self._frame_debugged:
+                self._frame_debugged = True
+                try:
+                    attrs = [a for a in dir(frame) if not a.startswith("_")]
+                    print(f"⚠️ LiveKit audio frame missing pcm data. attrs={attrs}", flush=True)
+                except Exception:
+                    pass
             return
         if isinstance(pcm, memoryview):
             pcm_bytes = pcm.tobytes()
@@ -119,7 +135,10 @@ class LiveKitRoomSession:
         self.input_buffer.extend(pcm_bytes)
         self._frame_count += 1
         if self._frame_count <= 3 or self._frame_count % 50 == 0:
-            print(f"🎧 LiveKit audio frame {self._frame_count}: {len(pcm_bytes)} bytes", flush=True)
+            sample_rate = getattr(frame, "sample_rate", None)
+            channels = getattr(frame, "num_channels", None)
+            spc = getattr(frame, "samples_per_channel", None)
+            print(f"🎧 LiveKit audio frame {self._frame_count}: {len(pcm_bytes)} bytes sr={sample_rate} ch={channels} spc={spc}", flush=True)
 
     async def _consume_audio_track(self, track):
         try:
