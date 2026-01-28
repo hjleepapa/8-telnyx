@@ -4,7 +4,7 @@ services:
     name: convonet-todo-app
     env: python
     region: oregon
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install --no-cache-dir -r requirements.txt && pip install --no-cache-dir --force-reinstall livekit==0.17.5
     startCommand: python -m gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:$PORT passenger_wsgi:application
     envVars:
       - key: PYTHON_VERSION
