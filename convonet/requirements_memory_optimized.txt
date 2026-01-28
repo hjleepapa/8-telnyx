@@ -39,6 +39,10 @@ flask-limiter>=3.0.0
 # Twilio
 twilio>=8.0.0
 
+# LiveKit SDK
+livekit>=0.17.0
+livekit-api>=0.6.0
+
 # Monitoring
 sentry-sdk[flask]>=2.0.0
 
