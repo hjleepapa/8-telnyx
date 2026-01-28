@@ -260,6 +260,24 @@ class LiveKitRoomSession:
                         pass
                 except Exception:
                     pass
+                try:
+                    if hasattr(participant, "on"):
+                        @participant.on("track_published")
+                        def _on_participant_track_published(publication):
+                            kind = getattr(publication, "kind", None)
+                            kind_name = str(kind).lower() if kind is not None else ""
+                            if kind == rtc.TrackKind.KIND_AUDIO or "audio" in kind_name:
+                                print(f"🎙️ LiveKit participant track published by {participant.identity}", flush=True)
+                                try:
+                                    result = publication.set_subscribed(True)
+                                    if asyncio.iscoroutine(result):
+                                        asyncio.run_coroutine_threadsafe(result, self.loop)
+                                except Exception as e:
+                                    print(f"⚠️ LiveKit participant subscribe failed: {e}", flush=True)
+                    else:
+                        print(f"⚠️ LiveKit participant has no event handler: {participant.identity}", flush=True)
+                except Exception as e:
+                    print(f"⚠️ LiveKit participant handler setup failed: {e}", flush=True)
             except Exception:
                 pass
 
