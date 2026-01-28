@@ -173,6 +173,8 @@ class LiveKitRoomSession:
                 pubs = participant.track_publications_by_sid
             elif hasattr(participant, "publications"):
                 pubs = participant.publications
+            elif hasattr(participant, "_track_publications"):
+                pubs = getattr(participant, "_track_publications", None)
             if not pubs:
                 try:
                     debug_attrs = [name for name in dir(participant) if "track" in name or "pub" in name]
