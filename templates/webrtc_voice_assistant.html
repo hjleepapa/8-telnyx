@@ -154,6 +154,19 @@
             white-space: pre-wrap;
             word-break: break-all;
         }
+        .flow-diagram {
+            margin-top: 16px;
+            padding: 12px 14px;
+            border-radius: 10px;
+            background: #f8f9fb;
+            border: 1px solid #e4e7ee;
+            font-size: 0.85rem;
+            color: #374151;
+        }
+        .flow-diagram pre {
+            margin: 8px 0 0;
+            white-space: pre-wrap;
+        }
     </style>
 </head>
 <body>
@@ -183,6 +196,24 @@
             <div class="debug-panel" id="livekitDebugPanel" style="display: none;">
                 <div><strong>LiveKit Debug</strong></div>
                 <pre id="livekitDebugText">Awaiting LiveKit token...</pre>
+            </div>
+            <div class="flow-diagram">
+                <strong>LiveKit Streaming Flow</strong>
+                <pre>
+Mic (Browser)
+  │  WebRTC audio track (Opus)
+  ▼
+LiveKit SFU
+  │  subscribed by Python LiveKit SDK
+  ▼
+Server Buffer (in-memory)
+  │  Deepgram STT
+  ▼
+LLM → TTS (linear16 PCM)
+  │
+  ▼
+LiveKit SFU → Browser playback
+                </pre>
             </div>
             <div class="voice-controls">
                 <button class="mic-button" id="micButton" onclick="toggleRecording()" disabled>
@@ -452,6 +483,12 @@
                     }
                 });
 
+                if (LiveKitClient.RoomEvent.LocalTrackPublished) {
+                    livekitRoom.on(LiveKitClient.RoomEvent.LocalTrackPublished, (publication) => {
+                        console.log('✅ LiveKit local track published', publication);
+                    });
+                }
+
                 await livekitRoom.connect(info.url || LIVEKIT_URL, info.token, { autoSubscribe: true });
                 livekitConnected = true;
                 setLivekitStatus('online', 'LiveKit: connected');
@@ -486,6 +523,10 @@
                     autoGainControl: true,
                 });
                 await livekitRoom.localParticipant.publishTrack(localAudioTrack);
+                if (typeof localAudioTrack.setEnabled === 'function') {
+                    localAudioTrack.setEnabled(true);
+                }
+                await livekitRoom.localParticipant.setMicrophoneEnabled(true);
                 livekitMicEnabled = true;
                 updateLivekitDebug({ mic: 'published' });
                 return true;
