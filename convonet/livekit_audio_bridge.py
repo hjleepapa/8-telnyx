@@ -71,6 +71,8 @@ class LiveKitRoomSession:
             self._frame_count = 0
             try:
                 self._ensure_audio_subscriptions()
+                self._schedule_subscription_retry(0.5, reason="recording_start_0.5s")
+                self._schedule_subscription_retry(1.5, reason="recording_start_1.5s")
             except Exception:
                 pass
 
@@ -213,6 +215,18 @@ class LiveKitRoomSession:
                     except Exception as e:
                         print(f"⚠️ LiveKit ensure subscribe failed: {e}", flush=True)
 
+    def _schedule_subscription_retry(self, delay_sec: float, reason: str):
+        if not self.loop:
+            return
+        async def _retry():
+            try:
+                await asyncio.sleep(delay_sec)
+                print(f"🔁 LiveKit subscription retry ({reason})", flush=True)
+                self._ensure_audio_subscriptions()
+            except Exception as e:
+                print(f"⚠️ LiveKit subscription retry failed: {e}", flush=True)
+        asyncio.run_coroutine_threadsafe(_retry(), self.loop)
+
     async def _consume_audio_track(self, track):
         try:
             track_sid = getattr(track, "sid", None)
@@ -240,6 +254,8 @@ class LiveKitRoomSession:
                     print(f"🧭 LiveKit room '{room_name}' participants: {participants}", flush=True)
                     try:
                         self._ensure_audio_subscriptions()
+                        self._schedule_subscription_retry(0.5, reason="participant_connected_0.5s")
+                        self._schedule_subscription_retry(1.5, reason="participant_connected_1.5s")
                     except Exception:
                         pass
                 except Exception:
