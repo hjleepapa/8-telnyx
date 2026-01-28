@@ -123,6 +123,8 @@ class LiveKitRoomSession:
 
     async def _consume_audio_track(self, track):
         try:
+            track_sid = getattr(track, "sid", None)
+            print(f"🎧 LiveKit audio stream start (sid={track_sid})", flush=True)
             audio_stream = rtc.AudioStream(track)
             async for frame in audio_stream:
                 self._handle_audio_frame(frame)
@@ -157,7 +159,9 @@ class LiveKitRoomSession:
                 print(f"🎙️ LiveKit audio track published by {participant.identity}", flush=True)
                 async def _subscribe():
                     try:
-                        await publication.set_subscribed(True)
+                        result = publication.set_subscribed(True)
+                        if asyncio.iscoroutine(result):
+                            await result
                     except Exception as e:
                         print(f"⚠️ LiveKit subscribe failed: {e}", flush=True)
                 asyncio.create_task(_subscribe())
@@ -165,7 +169,8 @@ class LiveKitRoomSession:
         @self.room.on("track_subscribed")
         def _on_track_subscribed(track, publication, participant):
             if track.kind == rtc.TrackKind.KIND_AUDIO:
-                print(f"🎧 LiveKit subscribed to audio track from {participant.identity}", flush=True)
+                track_sid = getattr(track, "sid", None)
+                print(f"🎧 LiveKit subscribed to audio track from {participant.identity} (sid={track_sid})", flush=True)
                 asyncio.create_task(self._consume_audio_track(track))
 
         connect_options = None
