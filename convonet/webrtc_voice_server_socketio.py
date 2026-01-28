@@ -124,7 +124,7 @@ LIVEKIT_CLIENT_URLS = [
 LIVEKIT_CLIENT_JS_CACHE = None
 
 # LLM model used for voice responses (warm-up target)
-VOICE_MODEL = os.getenv("VOICE_MODEL", "claude-3-5-haiku-20241022")
+VOICE_MODEL = os.getenv("VOICE_MODEL", "").strip()
 
 webrtc_bp = Blueprint('webrtc_voice', __name__, url_prefix='/webrtc')
 
@@ -161,6 +161,38 @@ def _livekit_input_active() -> bool:
 
 def _livekit_room_name(session_id: str) -> str:
     return f"{LIVEKIT_ROOM_PREFIX}{session_id}"
+
+def _get_llm_provider_for_user(user_id: Optional[str]) -> str:
+    provider = None
+    if redis_manager.is_available():
+        try:
+            if user_id:
+                provider = redis_manager.redis_client.get(f"user:{user_id}:llm_provider")
+            if not provider:
+                provider = redis_manager.redis_client.get("user:default:llm_provider")
+        except Exception as e:
+            print(f"⚠️ Error reading LLM provider preference: {e}", flush=True)
+    if not provider:
+        provider = os.getenv("LLM_PROVIDER", "claude").lower()
+    if provider not in ["claude", "gemini", "openai"]:
+        provider = "claude"
+    return provider
+
+def _select_voice_model(user_id: Optional[str]) -> str:
+    provider = _get_llm_provider_for_user(user_id)
+    if VOICE_MODEL:
+        if provider == "claude" and VOICE_MODEL.startswith("claude-"):
+            return VOICE_MODEL
+        if provider == "gemini" and VOICE_MODEL.startswith("gemini-"):
+            return VOICE_MODEL
+        if provider == "openai" and (VOICE_MODEL.startswith("gpt-") or VOICE_MODEL.startswith("o1") or VOICE_MODEL.startswith("o3")):
+            return VOICE_MODEL
+        print(f"⚠️ Ignoring VOICE_MODEL='{VOICE_MODEL}' for provider '{provider}'", flush=True)
+    if provider == "gemini":
+        return os.getenv("GOOGLE_VOICE_MODEL") or os.getenv("GOOGLE_MODEL", "gemini-2.5-flash")
+    if provider == "openai":
+        return os.getenv("OPENAI_VOICE_MODEL") or os.getenv("OPENAI_MODEL", "gpt-4o")
+    return os.getenv("ANTHROPIC_VOICE_MODEL") or os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
 
 def _get_livekit_info(session_id: str, user_id: str) -> Optional[dict]:
     if not _livekit_active() or not generate_livekit_token:
@@ -3285,7 +3317,7 @@ async def process_with_agent(
         
         # LATENCY OPTIMIZATION: Use Claude Haiku (faster model) for voice responses
         # Claude Haiku is ~2-3x faster than Sonnet 4, reducing agent processing time from ~5s to ~2-3s
-        voice_model = VOICE_MODEL  # Faster model for voice responses
+        voice_model = _select_voice_model(user_id)  # Faster model for voice responses
         
         # Use the same agent processing function as Twilio, but with faster model for voice
         result = await _run_agent_async(

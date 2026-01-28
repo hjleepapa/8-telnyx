@@ -306,7 +306,8 @@
             }
 
             const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-            const localScript = document.querySelector('script[src="/webrtc/livekit-client.umd.min.js"]');
+            const localSrc = '/webrtc/livekit-client.umd.min.js';
+            const localScript = document.querySelector(`script[src="${localSrc}"]`);
             if (localScript) {
                 for (let i = 0; i < 10; i += 1) {
                     await wait(200);
@@ -320,6 +321,7 @@
             }
 
             const sources = [
+                localSrc,
                 'https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js',
                 'https://unpkg.com/livekit-client/dist/livekit-client.umd.min.js',
                 'https://cdnjs.cloudflare.com/ajax/libs/livekit-client/1.0.23/livekit-client.umd.min.js'
