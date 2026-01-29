@@ -140,6 +140,10 @@ class LiveKitRoomSession:
                 for frame in _queue_frames():
                     await self.audio_source.capture_frame(frame)
                     frame_idx += 1
+                    # Re-introduced pacing: SDK 0.17.5 FFI can be sensitive to flooding.
+                    # We yield control to the loop every few frames.
+                    if frame_idx % 8 == 0:
+                         await asyncio.sleep(0.001) # Extremely brief yield
                 print(f"✅ LiveKit sent {frame_idx} audio frames for greeting playback", flush=True)
             except Exception as e:
                 print(f"⚠️ LiveKit capture_frame error: {e}", flush=True)
@@ -154,11 +158,20 @@ class LiveKitRoomSession:
         pcm = None
         frame_obj = frame
         
-        # In this SDK version, the frame is wrapped in AudioFrameEvent
-        if hasattr(frame, "frame"):
-            frame_obj = getattr(frame, "frame", frame)
+        # Robust unwrapping: hasattr can be flakey with Swig/FFI objects
+        # Try both direct attribute and property access
+        event_frame = getattr(frame, "frame", None)
+        if event_frame is not None:
+            frame_obj = event_frame
             if self._frame_count < 3:
-                print(f"📡 LiveKit unwrapped frame. New type={type(frame_obj)}", flush=True)
+                print(f"📡 LiveKit UNWRAPPED frame. type={type(frame_obj)}", flush=True)
+        elif "AudioFrameEvent" in str(type(frame)):
+            # If it's an event but has no .frame attribute, try to find ANY frame-like attr
+            for fattr in ("frame", "audio_frame", "audio"):
+                 fval = getattr(frame, fattr, None)
+                 if fval:
+                      frame_obj = fval
+                      break
 
         # Exhaustive attribute check for PCM data
         for attr in ("data", "samples", "buffer", "pcm"):
