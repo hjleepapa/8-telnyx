@@ -134,11 +134,13 @@ class LiveKitRoomSession:
         asyncio.run_coroutine_threadsafe(_send(), self.loop)
 
     def _handle_audio_frame(self, frame):
-        # ALWAYS log the very first frame even if recording is off to check connectivity
-        if self._frame_count == 0:
-            print(f"📡 LiveKit RECEIVED FIRST FRAME: type={type(frame)} recording_enabled={self.recording_enabled}", flush=True)
+        # ALWAYS log the very first few frames even if recording is off to check connectivity
+        if self._frame_count < 3:
+            print(f"📡 LiveKit RECEIVED FRAME #{self._frame_count + 1}: type={type(frame)} recording_enabled={self.recording_enabled}", flush=True)
 
         if not self.recording_enabled:
+            # We still increment frame count if we see them, to know they are arriving
+            self._frame_count += 1
             return
         
         pcm = None
@@ -361,50 +363,56 @@ class LiveKitRoomSession:
         def _on_participant_connected(participant):
             try:
                 print(f"👤 LiveKit participant connected: {participant.identity}", flush=True)
-                try:
-                    self._ensure_audio_subscriptions()
-                    self._schedule_subscription_retry(0.5, reason="participant_connected_0.5s")
-                    self._schedule_subscription_retry(1.5, reason="participant_connected_1.5s")
-                    self._schedule_subscription_retry(3.0, reason="participant_connected_3.0s")
-                except Exception:
-                    pass
-            except Exception:
-                pass
+                # Force an immediate check for this specific participant
+                self.loop.call_soon_threadsafe(self._ensure_audio_subscriptions)
+                self._schedule_subscription_retry(0.2, reason="immediate_followup")
+                self._schedule_subscription_retry(1.0, reason="delayed_sync")
+            except Exception as e:
+                print(f"⚠️ LiveKit participant_connected error: {e}", flush=True)
 
-        @self.room.on(RoomEvent.TRACK_PUBLISHED)
-        def _on_track_published(publication, participant):
+        @self.room.on(RoomEvent.PARTICIPANT_DISCONNECTED)
+        def _on_participant_disconnected(participant):
+            print(f"👤 LiveKit participant disconnected: {participant.identity}", flush=True)
+
+        @self.room.on("connection_state_changed")
+        def _on_connection_state_changed(state):
+            print(f"🌐 LiveKit room connection state: {state}", flush=True)
+
+        # Register audio-specific handlers for multiple naming conventions
+        def _on_track_pub_handler(publication, participant):
             try:
                 kind = getattr(publication, "kind", None)
                 kind_name = str(kind).lower() if kind is not None else ""
-                print(f"🎙️ LiveKit Room Event: track_published by {participant.identity}, kind={kind_name}", flush=True)
+                print(f"🎙️ LiveKit EVENT fired: track_published by {participant.identity}, kind={kind_name}", flush=True)
                 
-                # Always force subscribe to audio tracks, regardless of auto_subscribe
                 if kind == rtc.TrackKind.KIND_AUDIO or "audio" in kind_name:
                     async def _subscribe():
                         try:
                             print(f"🎙️ LiveKit subscribing to {kind_name} track from {participant.identity}", flush=True)
                             if hasattr(publication, "set_subscribed"):
                                 result = publication.set_subscribed(True)
-                                if asyncio.iscoroutine(result):
+                                if asyncio.iscoroutine(result) or asyncio.isfuture(result):
                                     await result
-                                print(f"✅ LiveKit subscribed to {participant.identity}", flush=True)
-                            else:
-                                print(f"⚠️ Publication has no set_subscribed method: {dir(publication)}", flush=True)
+                                print(f"✅ LiveKit subscribed success for {participant.identity}", flush=True)
                         except Exception as e:
                             print(f"⚠️ LiveKit subscribe failed: {e}", flush=True)
-                    
-                    # Run immediately in the loop
                     asyncio.run_coroutine_threadsafe(_subscribe(), self.loop)
             except Exception as e:
-                print(f"⚠️ LiveKit on_track_published error: {e}", flush=True)
+                print(f"⚠️ LiveKit track_published handler error: {e}", flush=True)
+
+        for event_name in ["track_published", "TrackPublished", "trackPublished"]:
+            self.room.on(event_name, _on_track_pub_handler)
 
         @self.room.on(RoomEvent.TRACK_SUBSCRIBED)
         def _on_track_subscribed(track, publication, participant):
-            if track.kind == rtc.TrackKind.KIND_AUDIO:
-                track_sid = getattr(track, "sid", None)
-                print(f"🎧 LiveKit subscribed to audio track from {participant.identity} (sid={track_sid})", flush=True)
-                # CRITICAL: Use run_coroutine_threadsafe to schedule on self.loop, not create_task
-                asyncio.run_coroutine_threadsafe(self._consume_audio_track(track), self.loop)
+            try:
+                kind = getattr(track, "kind", None)
+                if kind == rtc.TrackKind.KIND_AUDIO:
+                    track_sid = getattr(track, "sid", None)
+                    print(f"🎧 LiveKit SUCCESSFULLY SUBSCRIBED to audio track from {participant.identity} (sid={track_sid})", flush=True)
+                    asyncio.run_coroutine_threadsafe(self._consume_audio_track(track), self.loop)
+            except Exception as e:
+                print(f"⚠️ LiveKit on_track_subscribed error: {e}", flush=True)
 
         connect_options = None
         try:

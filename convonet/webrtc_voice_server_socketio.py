@@ -1685,17 +1685,23 @@ def init_socketio(socketio_instance: SocketIO, app):
                         if _livekit_active():
                             try:
                                 if redis_manager.is_available():
-                                    update_session(session_id, {
-                                        'pending_welcome_greeting': 'True',
-                                        'pending_welcome_name': user.first_name
-                                    })
+                                    if 'update_session' in globals() and update_session:
+                                        update_session(session_id, {
+                                            'pending_welcome_greeting': 'True',
+                                            'pending_welcome_name': user.first_name
+                                        })
+                                    else:
+                                        print("⚠️ update_session global missing or None during pending welcome greeting storage")
                                 else:
                                     active_sessions[session_id]['pending_welcome_greeting'] = True
                                     active_sessions[session_id]['pending_welcome_name'] = user.first_name
                                 print(f"💾 Stored pending welcome greeting for session {session_id}", flush=True)
                             except Exception as pending_welcome_error:
                                 print(f"⚠️ Failed to store pending welcome greeting: {pending_welcome_error}", flush=True)
-                                socketio.start_background_task(send_welcome_greeting, session_id, user.first_name)
+                                if 'send_welcome_greeting' in globals() and send_welcome_greeting:
+                                    socketio.start_background_task(send_welcome_greeting, session_id, user.first_name)
+                                else:
+                                    print("⚠️ send_welcome_greeting global missing or None during fallback")
                         else:
                             # Send welcome greeting with audio (background task)
                             socketio.start_background_task(
@@ -1716,6 +1722,8 @@ def init_socketio(socketio_instance: SocketIO, app):
         
         except Exception as e:
             print(f"❌ Authentication error: {e}")
+            import traceback
+            traceback.print_exc()
             sentry_capture_voice_event("authentication_error", session_id, details={"error": str(e)})
             if SENTRY_AVAILABLE:
                 sentry_sdk.capture_exception(e)
