@@ -594,7 +594,20 @@ def build_customer_profile_from_session(session_data: dict | None) -> dict | Non
             
             db_todo._init_database()
             with db_todo.SessionLocal() as db_session:
-                user = db_session.query(UserModel).filter(UserModel.id == UUID(user_id)).first()
+                # Add validation for UUID
+                is_valid_uuid = False
+                try:
+                    target_uuid = UUID(user_id) if user_id else None
+                    is_valid_uuid = True
+                except (ValueError, TypeError):
+                    target_uuid = None
+                
+                if not is_valid_uuid:
+                    print(f"⚠️ Invalid user_id format for DB lookup: {user_id}")
+                    user = None
+                else:
+                    user = db_session.query(UserModel).filter(UserModel.id == target_uuid).first()
+                
                 if user:
                     profile.update({
                         "customer_id": str(user.id),

@@ -1,10 +1,19 @@
 import asyncio
 import threading
 import time
+import os
+import selectors
 import uuid
-from typing import Optional
+from typing import Optional, Dict
 
 import jwt
+
+# Force real OS threads even in eventlet environment
+try:
+    import eventlet.patcher
+    real_threading = eventlet.patcher.original('threading')
+except ImportError:
+    real_threading = threading
 
 try:
     from livekit import rtc
@@ -72,7 +81,7 @@ class LiveKitRoomSession:
         self.audio_source = None
         self.room = None
         self.loop = asyncio.new_event_loop()
-        self.thread = threading.Thread(target=self._run_loop, daemon=True)
+        self.thread = None # Will be initialized in start()
         self.ready = threading.Event()
         self._closed = False
         self._frame_count = 0
@@ -81,6 +90,7 @@ class LiveKitRoomSession:
     def start(self):
         if not LIVEKIT_AVAILABLE:
             return
+        self.thread = real_threading.Thread(target=self._run_loop, name=f"LK-{self.token[-5:]}", daemon=True)
         self.thread.start()
         self.ready.wait(timeout=10)
 
@@ -137,10 +147,24 @@ class LiveKitRoomSession:
         async def _send():
             try:
                 # Wait for at least one remote participant (the user) to be ready
+                # AND wait for them to have at least one audio track published/subscribed
                 # This ensures we don't start sending audio to a "phantom" room
                 wait_count = 0
-                while not getattr(self.room, "remote_participants", {}) and wait_count < 10:
-                     print(f"⏳ LiveKit waiting for participant before sending audio (retry {wait_count+1}/10)...", flush=True)
+                while wait_count < 10:
+                     participants = getattr(self.room, "remote_participants", {})
+                     has_audio = False
+                     for p in participants.values():
+                          for pub in getattr(p, "track_publications", {}).values():
+                               if pub.kind == rtc.TrackKind.KIND_AUDIO:
+                                    has_audio = True
+                                    break
+                          if has_audio: break
+                     
+                     if participants and has_audio:
+                          print(f"✅ LiveKit participant and audio track found after {wait_count*0.5}s", flush=True)
+                          break
+                          
+                     print(f"⏳ LiveKit waiting for participant/audio (retry {wait_count+1}/10)...", flush=True)
                      await asyncio.sleep(0.5)
                      wait_count += 1
 
@@ -149,7 +173,6 @@ class LiveKitRoomSession:
                     await self.audio_source.capture_frame(frame)
                     frame_idx += 1
                     # Real-time pacing: avoid loop starvation.
-                    # 2 frames = 40ms of audio. Sleeping 10ms makes it 4x real-time.
                     if frame_idx % 2 == 0:
                          await asyncio.sleep(0.01)
                 print(f"✅ LiveKit sent {frame_idx} audio frames for greeting playback", flush=True)
@@ -172,34 +195,34 @@ class LiveKitRoomSession:
         if event_frame is not None:
             frame_obj = event_frame
             if self._frame_count < 3:
-                print(f"📡 LiveKit UNWRAPPED frame. type={type(frame_obj)}", flush=True)
+                print(f"📡 LiveKit UNWRAPPED frame using getattr. type={type(frame_obj)}", flush=True)
         elif "AudioFrameEvent" in str(type(frame)):
             if self._frame_count < 1:
                  print(f"📡 DEBUG DIR of frame: {dir(frame)}", flush=True)
-                 try: print(f"📡 DEBUG VARS of frame: {vars(frame)}", flush=True)
-                 except: pass
 
             # If it's an event but has no .frame attribute, try to find ANY frame-like attr
             for fattr in ("frame", "audio_frame", "audio", "_frame", "raw_frame"):
-                 fval = getattr(frame, fattr, None)
-                 if fval:
-                      frame_obj = fval
-                      if self._frame_count < 3:
-                           print(f"📡 LiveKit found inner frame in attribute '{fattr}'", flush=True)
-                      break
+                 try:
+                      fval = getattr(frame, fattr, None)
+                      if fval:
+                           frame_obj = fval
+                           if self._frame_count < 3:
+                                print(f"📡 LiveKit found inner frame in attribute '{fattr}'", flush=True)
+                           break
+                 except: pass
         
         # If we STILL don't have a frame_obj that looks right, try to find data directly on frame
-        # In some versions, the event IS the frame or has frame attributes flattened
-        
         # Exhaustive attribute check for PCM data
         for attr in ("data", "samples", "buffer", "pcm", "_data", "_samples"):
-            if hasattr(frame_obj, attr):
-                val = getattr(frame_obj, attr, None)
-                if val is not None:
-                    pcm = val
-                    if self._frame_count < 3:
-                        print(f"📡 LiveKit found data in attribute '{attr}': type={type(pcm)}", flush=True)
-                    break
+            try:
+                if hasattr(frame_obj, attr):
+                    val = getattr(frame_obj, attr, None)
+                    if val is not None:
+                        pcm = val
+                        if self._frame_count < 3:
+                            print(f"📡 LiveKit found data in attribute '{attr}': type={type(pcm)}", flush=True)
+                        break
+            except: pass
 
         if not self.recording_enabled:
             # We still increment frame count if we see them, to know they are arriving
@@ -305,7 +328,7 @@ class LiveKitRoomSession:
                             except:
                                 pass
                 except Exception as e:
-                    print(f"�️ DEBUG introspection failed: {e}", flush=True)
+                    print(f"️ DEBUG introspection failed: {e}", flush=True)
                 continue
             
             # Normalize to iterator
@@ -558,17 +581,23 @@ class LiveKitRoomSession:
         
         asyncio.create_task(_monitor_room())
 
-        # Threaded Heartbeat (safer in eventlet)
+        async def _loop_heartbeat():
+             while self.loop and self.loop.is_running():
+                  print(f"💓 Loop Heartbeat: Task is running on loop", flush=True)
+                  await asyncio.sleep(5.0)
+        
+        self.loop.create_task(_loop_heartbeat())
+
+        # Threaded Heartbeat (safer in eventlet) - keep as double check
         def _heartbeat():
             while self.loop and self.loop.is_running():
-                print(f"💓 LiveKit Heartbeat: Loop is alive (thread={threading.current_thread().name})", flush=True)
-                time.sleep(5.0) # This is monkey-patched but safe in a separate thread
+                # print(f"💓 LiveKit Heartbeat: Loop thread is alive", flush=True)
+                time.sleep(10.0) 
         
-        hb_thread = threading.Thread(target=_heartbeat, name=f"HB-{self.url[-5:]}", daemon=True)
+        hb_thread = real_threading.Thread(target=_heartbeat, name=f"HB-{self.url[-5:]}", daemon=True)
         hb_thread.start()
 
     def _run_loop(self):
-        import selectors
         # Use a specific selector to avoid issues with eventlet patching
         selector = selectors.SelectSelector()
         self.loop = asyncio.SelectorEventLoop(selector)
