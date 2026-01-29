@@ -502,18 +502,35 @@ LiveKit SFU → Browser playback
                 });
 
                 livekitRoom.on(LiveKitClient.RoomEvent.TrackSubscribed, (track) => {
+                    console.log(`🔊 LiveKit track subscribed: ${track.kind} (${track.sid})`);
                     if (track.kind === LiveKitClient.Track.Kind.Audio) {
                         const element = track.attach();
                         element.autoplay = true;
                         element.playsInline = true;
                         element.style.display = 'none';
+                        element.id = `audio-${track.sid}`;
                         document.body.appendChild(element);
-                        element.play().catch(() => {});
+                        
+                        const playAudio = () => {
+                            element.play().then(() => {
+                                console.log(`✅ Playing audio track: ${track.sid}`);
+                                showStatus('Assistant is speaking...', 'success');
+                            }).catch((err) => {
+                                console.warn(`⚠️ Playback blocked for ${track.sid}:`, err);
+                                showStatus('Audio blocked. Click anywhere to enable sound.', 'info');
+                            });
+                        };
+
+                        playAudio();
+                        // Retry on next click if blocked
+                        document.addEventListener('click', playAudio, { once: true });
+                        
                         livekitAudioElements.set(track.sid, element);
                     }
                 });
 
                 livekitRoom.on(LiveKitClient.RoomEvent.TrackUnsubscribed, (track) => {
+                    console.log(`🔇 LiveKit track unsubscribed: ${track.sid}`);
                     const element = livekitAudioElements.get(track.sid);
                     if (element) {
                         track.detach(element);
