@@ -2853,8 +2853,13 @@ def init_socketio(socketio_instance: SocketIO, app):
                     def generate_early_tts(first_sentence: str):
                         """Generate TTS for first sentence in background thread"""
                         try:
+                            # Check if main response is already being handled to avoid race conditions
+                            if result_container.get('done'):
+                                print(f"⏭️ Skipping early TTS: final response already ready", flush=True)
+                                return
+
                             print(f"🎵 Starting early TTS generation for first sentence...", flush=True)
-                            socketio.emit('status', {'message': 'Generating speech...'}, namespace='/voice', room=session_id)
+                            # Status is now emitted on main thread before starting this task
                             
                             # Use TTS settings prepared earlier
                             chunk_audio = None
@@ -2933,6 +2938,9 @@ def init_socketio(socketio_instance: SocketIO, app):
                             if first_sentence_ready and text_accumulator['first_sentence']:
                                 first_sentence = text_accumulator['first_sentence']
                                 print(f"✅ First sentence ready! Starting early TTS: {first_sentence[:80]}...", flush=True)
+                                # Emit status on main thread to avoid race condition with agent_response
+                                if socketio:
+                                    socketio.emit('status', {'message': 'Generating speech...'}, namespace='/voice', room=session_id)
                                 # Start early TTS generation in background thread
                                 early_tts_future = executor.submit(generate_early_tts, first_sentence)
                             else:
@@ -3443,47 +3451,46 @@ def init_socketio(socketio_instance: SocketIO, app):
                                         pending_response = {
                                             'text': agent_response,
                                             'audio': audio_base64,
+                                            'is_streaming': is_streaming if 'is_streaming' in locals() else False,
                                             'created_at': time.time(),
                                             'original_session_id': session_id
                                         }
                                         redis_key = f"pending_response:{user_id}"
                                         if redis_manager.is_available():
                                             redis_manager.redis_client.setex(redis_key, 300, json.dumps(pending_response))
-                                            print(f"💾 Stored large response in Redis for HTTP delivery", flush=True)
-                                            
-                                            # Send small notification via Socket.IO
-                                            emit_socketio.emit('pending_response_available', {
+                                            print(f"💾 Stored pending response for user_id {user_id} (using HTTP fallback)", flush=True)
+                                            # Emit partial response so client knows to poll
+                                            emit_socketio.emit('agent_response', {
                                                 'success': True,
-                                                'message': 'Response ready - fetching via HTTP...',
+                                                'text': agent_response,
+                                                'audio': '', # Empty audio prompts client to use HTTP poll
+                                                'pending': True,
                                                 'user_id': user_id
                                             }, namespace='/voice', room=session_id)
-                                            print(f"✅ Large response notification sent - client will fetch via HTTP", flush=True)
-                                    except Exception as store_error:
-                                        print(f"⚠️ Error storing large response: {store_error}", flush=True)
-                                        # Fallback: try sending anyway (might work, might fail)
-                                        emit_socketio.emit('agent_response', {
-                                            'success': True,
-                                            'text': agent_response,
-                                            'audio': audio_base64,
-                                            'is_streaming': is_streaming if 'is_streaming' in locals() else False
-                                        }, namespace='/voice', room=session_id, callback=emit_callback)
-                                else:
-                                    # No user_id, try sending anyway
+                                    except Exception as e:
+                                        print(f"⚠️ Error in HTTP fallback storage: {e}", flush=True)
+                            else:
+                                # Normal Socket.IO emission
+                                try:
                                     emit_socketio.emit('agent_response', {
                                         'success': True,
                                         'text': agent_response,
                                         'audio': audio_base64,
                                         'is_streaming': is_streaming if 'is_streaming' in locals() else False
                                     }, namespace='/voice', room=session_id, callback=emit_callback)
-                            else:
-                                # Small enough to send via Socket.IO
-                                emit_socketio.emit('agent_response', {
+                                    print(f"✅ agent_response event emitted to session {session_id}", flush=True)
+                                except Exception as e:
+                                    print(f"⚠️ Error emitting agent_response: {e}", flush=True)
+                            
+                            # Signal completion regardless of delivery method
+                            try:
+                                emit_socketio.emit('agent_response_complete', {
                                     'success': True,
-                                    'text': agent_response,
-                                    'audio': audio_base64,
-                                    'is_streaming': is_streaming if 'is_streaming' in locals() else False
-                                }, namespace='/voice', room=session_id, callback=emit_callback)
-                                print(f"✅ agent_response event emitted to session {session_id} (Socket.IO will handle delivery)", flush=True)
+                                    'session_id': session_id
+                                }, namespace='/voice', room=session_id)
+                                print(f"🏁 Emitted agent_response_complete for session {session_id}", flush=True)
+                            except Exception as e:
+                                print(f"⚠️ Error emitting agent_response_complete: {e}", flush=True)
                     except Exception as emit_error:
                         print(f"❌ Error during emit: {emit_error}", flush=True)
                         import traceback
