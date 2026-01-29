@@ -107,14 +107,12 @@ STREAMING_TTS_MODEL = os.getenv('STREAMING_TTS_MODEL', 'aura-2-asteria-en')
 
 # LiveKit configuration (audio transport)
 LIVEKIT_ENABLED = os.getenv('LIVEKIT_ENABLED', 'false').lower() == 'true'
+# Force LiveKit input enabled if LiveKit itself is enabled
+LIVEKIT_INPUT_ENABLED = os.getenv("LIVEKIT_INPUT_ENABLED", "True").lower() == "true"
 LIVEKIT_URL = os.getenv('LIVEKIT_URL', '').strip()
 LIVEKIT_API_KEY = os.getenv('LIVEKIT_API_KEY', '').strip()
 LIVEKIT_API_SECRET = os.getenv('LIVEKIT_API_SECRET', '').strip()
 LIVEKIT_ROOM_PREFIX = os.getenv('LIVEKIT_ROOM_PREFIX', 'voice-')
-LIVEKIT_INPUT_ENABLED = os.getenv(
-    'LIVEKIT_INPUT_ENABLED',
-    'true' if LIVEKIT_ENABLED else 'false'
-).lower() == 'true'
 
 # LiveKit client CDN fallback URLs (used for proxying to same origin)
 LIVEKIT_CLIENT_URLS = [
@@ -1242,6 +1240,9 @@ def init_socketio(socketio_instance: SocketIO, app):
             print(f"   ❌ LiveKit Initialization failed: {e}", flush=True)
     else:
         print(f"⚠️ LiveKit Config Skipped (One or more conditions failed)", flush=True)
+
+    # Global guards for this namespace to throttle overlapping agent runs
+    processing_guards = {}
     
     @socketio.on('connect', namespace='/voice')
     def handle_connect():
@@ -1898,6 +1899,14 @@ def init_socketio(socketio_instance: SocketIO, app):
         """Start audio recording"""
         session_id = request.sid
         
+        # Guard: Ignore start recording if already processing a previous request
+        is_busy = processing_guards.get(session_id)
+        if is_busy:
+            print(f"⏩ Session {session_id} is BUSY (processing_guard=True), ignoring start_recording", flush=True)
+            return
+        
+        print(f"🎤 [SocketIO] start_recording event received from {session_id}", flush=True)
+        
         # Get session data
         session_data = None
         if redis_manager.is_available():
@@ -1941,15 +1950,17 @@ def init_socketio(socketio_instance: SocketIO, app):
             active_sessions[session_id]['audio_buffer'] = b''  # Start with empty bytes for binary concatenation
             print(f"🔍 Debug: cleared in-memory audio buffer for session: {session_id}")
 
-        # Enable LiveKit input recording (if configured)
-        if _livekit_input_active():
+        # Enable LiveKit input recording (if enabled)
+        if _livekit_active():
             try:
-                user_id = session_data.get('user_id') if session_data else None
-                _ensure_livekit_session(session_id, user_id or session_id)
+                # Use current session_data or fetch fresh
+                curr_user_id = session_data.get('user_id') if session_data else session_id
+                _ensure_livekit_session(session_id, curr_user_id)
                 livekit_manager.set_recording(session_id, True)
-                print(f"🎧 LiveKit input recording enabled for session {session_id}", flush=True)
+                print(f"🎧 LiveKit input recording ACTIVATED for session {session_id}", flush=True)
             except Exception as livekit_error:
-                print(f"⚠️ Failed to enable LiveKit recording: {livekit_error}", flush=True)
+                print(f"⚠️ Failed to activate LiveKit recording: {livekit_error}", flush=True)
+
 
         # Start streaming STT session for low-latency transcription
         if STREAMING_STT_ENABLED and DEEPGRAM_STREAMING_AVAILABLE and not _livekit_input_active():
@@ -2120,6 +2131,13 @@ def init_socketio(socketio_instance: SocketIO, app):
         """Stop recording and process audio"""
         session_id = request.sid
         
+        print(f"🛑 [SocketIO] stop_recording event received from {session_id}", flush=True)
+        
+        # Guard: Ignore redundant stop events if already processing
+        if processing_guards.get(session_id):
+            print(f"⏩ Session {session_id} is BUSY (processing_guard=True), ignoring stop_recording", flush=True)
+            return
+        
         # Capture stop recording event in Sentry
         sentry_capture_voice_event("stop_recording", session_id)
         
@@ -2278,45 +2296,7 @@ def init_socketio(socketio_instance: SocketIO, app):
             })
             return
         
-        # Analyze audio buffer to understand what's in it (do not mutate original buffer)
-        try:
-            # If this is WebM (EBML header), skip PCM-based analysis
-            is_webm = len(audio_buffer) >= 4 and audio_buffer[:4] == b"\x1a\x45\xdf\xa3"
-            if not is_webm:
-                import numpy as np
-                analysis_buffer = audio_buffer
-                if len(analysis_buffer) % 2 != 0:
-                    analysis_buffer = analysis_buffer[:-1]
-                
-                if len(analysis_buffer) > 0:
-                    audio_data = np.frombuffer(analysis_buffer, dtype=np.int16)
-                    rms = np.sqrt(np.mean(audio_data.astype(np.float32) ** 2))
-                    unique_values = len(np.unique(audio_data))
-                    max_val = np.max(audio_data)
-                    min_val = np.min(audio_data)
-                    
-                    print(f"🔍 Audio Analysis: RMS={rms:.2f}, Unique={unique_values}, Range=[{min_val}, {max_val}], Samples={len(audio_data)}")
-                    
-                    # Check for silence
-                    if rms < 100:
-                        print("⚠️ Audio appears to be silence")
-                        emit('transcription', {
-                            'success': False,
-                            'message': 'No speech detected. Please speak clearly into your microphone.'
-                        })
-                        return
-                    
-                    # Check for constant values
-                    if unique_values < 10:
-                        print("⚠️ Audio has very few unique values - might be constant signal")
-                        emit('transcription', {
-                            'success': False,
-                            'message': 'Audio appears to be constant signal. Please check your microphone.'
-                        })
-                        return
-        except Exception as e:
-            print(f"⚠️ Audio analysis failed: {e}")
-        
+        # Audio analysis moved to background task to avoid blocking event loop
         # Process audio asynchronously
         sentry_capture_voice_event("audio_processing_started", session_id, details={"buffer_size": len(audio_buffer)})
         socketio.start_background_task(
@@ -2329,48 +2309,54 @@ def init_socketio(socketio_instance: SocketIO, app):
     
     def send_welcome_greeting(session_id, user_name):
         """Send welcome greeting with TTS audio after authentication"""
-        with flask_app.app_context():
-            try:
-                print(f"🎤 Generating welcome greeting for {user_name}")
-                
-                # Generate welcome message
-                welcome_text = f"Welcome back, {user_name}! I'm your Convonet productivity assistant. How can I help you today?"
-                
-                # Generate TTS audio using Deepgram
-                deepgram_tts = get_deepgram_tts_service()
-                if _livekit_active():
-                    audio_bytes = deepgram_tts.synthesize_speech(
-                        welcome_text,
-                        voice="aura-asteria-en",
-                        encoding="linear16",
-                        sample_rate=24000,
-                        container="none"
-                    )
-                else:
-                    audio_bytes = deepgram_tts.synthesize_speech(welcome_text, voice="aura-asteria-en")
-                
-                if not audio_bytes:
-                    raise Exception("Deepgram TTS failed to generate audio")
-                
-                if _livekit_active():
-                    _ensure_livekit_session(session_id, session_id)
-                    _send_livekit_pcm(session_id, audio_bytes, sample_rate=24000, channels=1)
-                    socketio.emit('welcome_greeting', {
-                        'text': welcome_text
-                    }, namespace='/voice', room=session_id)
-                else:
-                    # Convert to base64
-                    audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
-                    # Send to client
-                    socketio.emit('welcome_greeting', {
-                        'text': welcome_text,
-                        'audio': audio_base64
-                    }, namespace='/voice', room=session_id)
-                
-                print(f"✅ Welcome greeting sent to {user_name}")
-                
-            except Exception as e:
-                print(f"❌ Error generating welcome greeting: {e}")
+        def _greeting_task():
+            with flask_app.app_context():
+                try:
+                    print(f"🎤 Generating welcome greeting for {user_name}")
+                    
+                    # Generate welcome message
+                    welcome_text = f"Welcome back, {user_name}! I'm your Convonet productivity assistant. How can I help you today?"
+                    
+                    # Generate TTS audio using Deepgram
+                    deepgram_tts = get_deepgram_tts_service()
+                    if _livekit_active():
+                        audio_bytes = deepgram_tts.synthesize_speech(
+                            welcome_text,
+                            voice="aura-asteria-en",
+                            encoding="linear16",
+                            sample_rate=24000,
+                            container="none"
+                        )
+                    else:
+                        audio_bytes = deepgram_tts.synthesize_speech(welcome_text, voice="aura-asteria-en")
+                    
+                    if not audio_bytes:
+                        raise Exception("Deepgram TTS failed to generate audio")
+                    
+                    if _livekit_active():
+                        # Use the correct bridge send_pcm method via livekit_manager
+                        session = livekit_manager.get_session(session_id)
+                        if session:
+                            session.send_pcm(audio_bytes, sample_rate=24000, channels=1)
+                        
+                        socketio.emit('welcome_greeting', {
+                            'text': welcome_text
+                        }, namespace='/voice', room=session_id)
+                    else:
+                        # Convert to base64
+                        audio_base64 = base64.b64encode(audio_bytes).decode('utf-8')
+                        # Send to client
+                        socketio.emit('welcome_greeting', {
+                            'text': welcome_text,
+                            'audio': audio_base64
+                        }, namespace='/voice', room=session_id)
+                    
+                    print(f"✅ Welcome greeting sent to {user_name}")
+                    
+                except Exception as e:
+                    print(f"❌ Error generating welcome greeting: {e}")
+        
+        socketio.start_background_task(_greeting_task)
     
     
     def process_audio_async(session_id, audio_buffer, transcribed_text_override: Optional[str] = None, use_streaming_tts: bool = False):
@@ -2378,6 +2364,31 @@ def init_socketio(socketio_instance: SocketIO, app):
         import sys
         buffer_size = len(audio_buffer) if audio_buffer else 0
         print(f"🚀 process_audio_async STARTED for session: {session_id}, buffer size: {buffer_size}", flush=True)
+        
+        # Throttling: Ignore tiny buffers
+        if buffer_size < 10000 and not transcribed_text_override:
+            print(f"⚠️ Audio buffer too small ({buffer_size} bytes), skipping processing", flush=True)
+            return
+        
+        # Set guard
+        processing_guards[session_id] = True
+        try:
+            if audio_buffer and len(audio_buffer) > 0:
+                is_webm = len(audio_buffer) >= 4 and audio_buffer[:4] == b"\x1a\x45\xdf\xa3"
+                if not is_webm:
+                    import numpy as np
+                    analysis_buf = audio_buffer
+                    if len(analysis_buf) % 2 != 0: analysis_buf = analysis_buf[:-1]
+                    audio_data = np.frombuffer(analysis_buf, dtype=np.int16)
+                    rms = np.sqrt(np.mean(audio_data.astype(np.float32) ** 2))
+                    unique_vals = len(np.unique(audio_data))
+                    print(f"🔍 Background Audio Analysis: RMS={rms:.2f}, Unique={unique_vals}, Samples={len(audio_data)}")
+                    if rms < 100 or unique_vals < 10:
+                        print(f"⚠️ Audio quality too low or silent (RMS={rms:.2f}), skipping.", flush=True)
+                        return
+        except Exception as e:
+            print(f"⚠️ Background audio analysis failed: {e}")
+
         sys.stdout.flush()
         # Use the stored Flask app instance for application context
         print(f"🔧 Entering Flask app context...", flush=True)
@@ -3516,6 +3527,11 @@ def init_socketio(socketio_instance: SocketIO, app):
                 socketio.emit('error', {
                     'message': f"Error processing audio: {str(e)}"
                 }, namespace='/voice', room=session_id)
+            finally:
+                # Clear guard
+                processing_guards.pop(session_id, None)
+                print(f"🧹 processing_guard CLEARED for session: {session_id}", flush=True)
+                sys.stdout.flush()
 
 
 async def process_with_agent(

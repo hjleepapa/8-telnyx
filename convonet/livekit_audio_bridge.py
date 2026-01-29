@@ -117,19 +117,19 @@ class LiveKitRoomSession:
         self.sample_rate = sample_rate
         self.channels = channels
         self.recording_enabled = False
-        self.input_buffer = bytearray()
+        from queue import Queue
+        self.audio_queue = Queue()
         self.audio_source = None
         self.room = None
         self.loop = None
         self.thread = None # Will be initialized in start()
         self.ready = real_threading.Event()
-        self._closed = False
         self._frame_count = 0
-        self._recording_lock = real_threading.Lock()
         self._frame_debugged = False
         self._audio_streams: Dict[str, rtc.AudioStream] = {} # SID -> AudioStream (keep alive)
         self._consumed_tracks: Set[str] = set() # SIDs
         self._heartbeat_stop = real_threading.Event()
+        # NO MORE RECORDING LOCK - using atomic boolean and queue
 
     def start(self):
         if not LIVEKIT_AVAILABLE:
@@ -147,23 +147,30 @@ class LiveKitRoomSession:
             pass
 
     def set_recording(self, enabled: bool):
-        with self._recording_lock:
-            self.recording_enabled = enabled
-            if enabled:
-                self.input_buffer = bytearray()
-                self._frame_count = 0
-                try:
-                    self._ensure_audio_subscriptions()
-                    self._schedule_subscription_retry(0.5, reason="recording_start_0.5s")
-                    self._schedule_subscription_retry(1.5, reason="recording_start_1.5s")
-                except Exception:
-                    pass
+        self.recording_enabled = enabled
+        if enabled:
+            # Clear queue (thread-safe naturally)
+            while not self.audio_queue.empty():
+                try: self.audio_queue.get_nowait()
+                except: break
+            self._frame_count = 0
+            try:
+                self._ensure_audio_subscriptions()
+                # Schedule via the loop thread
+                self._schedule_subscription_retry(0.5, reason="recording_start_0.5s")
+                self._schedule_subscription_retry(1.5, reason="recording_start_1.5s")
+            except Exception:
+                pass
 
     def pop_audio_buffer(self) -> bytes:
-        with self._recording_lock:
-            data = bytes(self.input_buffer)
-            self.input_buffer = bytearray()
-            return data
+        # NO LOCK: Queue.get_nowait() is thread-safe and non-blocking for greenlets
+        chunks = []
+        while not self.audio_queue.empty():
+            try:
+                chunks.append(self.audio_queue.get_nowait())
+            except:
+                break
+        return b"".join(chunks)
 
     def send_pcm(self, pcm_bytes: bytes, sample_rate: Optional[int] = None, channels: Optional[int] = None):
         if not LIVEKIT_AVAILABLE:
@@ -193,29 +200,20 @@ class LiveKitRoomSession:
         async def _send():
             try:
                 # Wait for at least one remote participant (the user) to be ready
-                # AND wait for them to have at least one audio track published/subscribed
-                # This ensures we don't start sending audio to a "phantom" room
+                # We NO LONGER wait for them to publish audio (which caused greetings to fail)
                 wait_count = 0
-                while wait_count < 10:
+                while wait_count < 6:
                      participants = getattr(self.room, "remote_participants", {})
-                     has_audio = False
-                     for p in participants.values():
-                          for pub in getattr(p, "track_publications", {}).values():
-                               if pub.kind == rtc.TrackKind.KIND_AUDIO:
-                                    has_audio = True
-                                    break
-                          if has_audio: break
-                     
-                     if participants and has_audio:
-                          print(f"✅ LiveKit participant and audio track found after {wait_count*0.5}s. Starting audio stream.", flush=True)
+                     if participants:
+                          print(f"✅ LiveKit participant found after {wait_count*0.5}s. Starting audio stream.", flush=True)
                           break
-                          
-                     print(f"⏳ LiveKit waiting for participant/audio (retry {wait_count+1}/10)...", flush=True)
+                           
+                     print(f"⏳ LiveKit waiting for participant (retry {wait_count+1}/6)...", flush=True)
                      await asyncio.sleep(0.5)
                      wait_count += 1
                 
-                if wait_count >= 10:
-                    print(f"⚠️ LiveKit timed out waiting for participant/audio track to send greeting.", flush=True)
+                if wait_count >= 6 and not getattr(self.room, "remote_participants", {}):
+                    print(f"⚠️ LiveKit timed out waiting for participant to send greeting.", flush=True)
                     return
 
                 frame_idx = 0
@@ -232,12 +230,14 @@ class LiveKitRoomSession:
         asyncio.run_coroutine_threadsafe(_send(), self.loop)
 
     def _handle_audio_frame(self, frame):
-        with self._recording_lock:
-            # When recording just started, log the first few frames to confirm reconnection
-            if self.recording_enabled and self._frame_count < 10:
-                print(f"📡 LiveKit RECEIVED FRAME #{self._frame_count + 1} (Recording=True)", flush=True)
-            elif not self.recording_enabled and self._frame_count < 3:
-                print(f"📡 LiveKit RECEIVED FRAME #{self._frame_count + 1} (Recording=False)", flush=True)
+        # NO LOCK: reading recording_enabled is atomic-enough for boolean
+        recording_active = self.recording_enabled
+        
+        # When recording just started, log the first few frames to confirm reconnection
+        if recording_active and self._frame_count < 10:
+            print(f"📡 LiveKit RECEIVED FRAME #{self._frame_count + 1} (Recording=True)", flush=True)
+        elif not recording_active and self._frame_count < 3:
+            print(f"📡 LiveKit RECEIVED FRAME #{self._frame_count + 1} (Recording=False)", flush=True)
 
             pcm = None
             frame_obj = frame
@@ -327,14 +327,18 @@ class LiveKitRoomSession:
                 return
 
             # Success: Buffering
-            self.input_buffer.extend(pcm_bytes)
-            self._frame_count += 1
-            
-            # Periodic logging of success
-            if self._frame_count <= 3 or self._frame_count % 50 == 0:
-                sample_rate = getattr(frame_obj, "sample_rate", "N/A")
-                channels = getattr(frame_obj, "num_channels", "N/A")
-                print(f"🎧 LiveKit audio frame {self._frame_count}: {len(pcm_bytes)} bytes buffered. sr={sample_rate} ch={channels}", flush=True)
+            # NO LOCK for the queue itself as it is thread-safe
+            if self.recording_enabled:
+                self.audio_queue.put(pcm_bytes)
+                self._frame_count += 1
+                
+                # Periodic logging of success
+                if self._frame_count <= 3 or self._frame_count % 50 == 0:
+                    sample_rate = getattr(frame_obj, "sample_rate", "N/A")
+                    channels = getattr(frame_obj, "num_channels", "N/A")
+                    print(f"🎧 LiveKit audio frame {self._frame_count}: {len(pcm_bytes)} bytes queued. sr={sample_rate} ch={channels}", flush=True)
+            else:
+                self._frame_count += 1
 
     def _ensure_audio_subscriptions(self):
         """Ensure we are subscribed to all remote audio tracks"""
@@ -343,8 +347,8 @@ class LiveKitRoomSession:
 
         print(f"🔎 LiveKit ensure subscribe: participants={len(self.room.remote_participants)}", flush=True)
         
-        with self._recording_lock: # Protect track registry
-            for p_id, participant in self.room.remote_participants.items():
+        # No more lock needed for track discovery
+        for p_id, participant in self.room.remote_participants.items():
                 # Helper to log attributes for debugging
                 try:
                     if not getattr(participant, "_debug_logged", False):
@@ -457,15 +461,14 @@ class LiveKitRoomSession:
     async def _consume_audio_track(self, track):
         track_sid = getattr(track, "sid", "unknown")
         
-        with self._recording_lock:
-            if track_sid in self._audio_streams:
-                print(f"🎧 LiveKit skipping duplicate consumer for {track_sid}", flush=True)
-                return
-            
-            print(f"🎧 LiveKit audio stream start (sid={track_sid})", flush=True)
-            audio_stream = rtc.AudioStream(track)
-            self._audio_streams[track_sid] = audio_stream
-            self._consumed_tracks.add(track_sid)
+        if track_sid in self._audio_streams:
+            print(f"🎧 LiveKit skipping duplicate consumer for {track_sid}", flush=True)
+            return
+        
+        print(f"🎧 LiveKit audio stream start (sid={track_sid})", flush=True)
+        audio_stream = rtc.AudioStream(track)
+        self._audio_streams[track_sid] = audio_stream
+        self._consumed_tracks.add(track_sid)
         
         try:
             print(f"🎧 LiveKit AudioStream iteration starting (sid={track_sid})", flush=True)
@@ -487,9 +490,8 @@ class LiveKitRoomSession:
         except Exception as e:
             print(f"⚠️ LiveKit AudioStream task error (sid={track_sid}): {e}", flush=True)
         finally:
-            with self._recording_lock:
-                 self._consumed_tracks.discard(track_sid)
-                 self._audio_streams.pop(track_sid, None)
+            self._consumed_tracks.discard(track_sid)
+            self._audio_streams.pop(track_sid, None)
             print(f"🎧 LiveKit AudioStream task ended (sid={track_sid})", flush=True)
 
     async def _connect(self):
@@ -552,13 +554,13 @@ class LiveKitRoomSession:
                 kind = getattr(track, "kind", None)
                 if kind == rtc.TrackKind.KIND_AUDIO:
                     track_sid = getattr(track, "sid", "unknown")
-                    with self._recording_lock:
-                        if track_sid not in self._consumed_tracks:
-                            print(f"🎧 LiveKit SUCCESSFULLY SUBSCRIBED to audio track from {participant.identity} (sid={track_sid})", flush=True)
-                            self._consumed_tracks.add(track_sid)
-                            asyncio.run_coroutine_threadsafe(self._consume_audio_track(track), self.loop)
-                        else:
-                            print(f"🎧 LiveKit track {track_sid} already being consumed, skipping subscribed event", flush=True)
+                    # No lock needed for track registry check
+                    if track_sid not in self._consumed_tracks:
+                        print(f"🎧 LiveKit SUCCESSFULLY SUBSCRIBED to audio track from {participant.identity} (sid={track_sid})", flush=True)
+                        self._consumed_tracks.add(track_sid)
+                        asyncio.run_coroutine_threadsafe(self._consume_audio_track(track), self.loop)
+                    else:
+                        print(f"🎧 LiveKit track {track_sid} already being consumed, skipping subscribed event", flush=True)
             except Exception as e:
                 print(f"⚠️ LiveKit on_track_subscribed error: {e}", flush=True)
 
@@ -598,6 +600,7 @@ class LiveKitRoomSession:
         try:
             room_name = getattr(self.room, "name", None)
             local_participant = getattr(self.room, "local_participant", None)
+            # No more lock needed for participant metadata
             if local_participant:
                 local_identity = getattr(local_participant, "identity", "unknown")
             else:
@@ -627,7 +630,9 @@ class LiveKitRoomSession:
         
         self.audio_source = rtc.AudioSource(self.sample_rate, self.channels)
         local_track = rtc.LocalAudioTrack.create_audio_track("assistant_audio", self.audio_source)
-        await self.room.local_participant.publish_track(local_track)
+        publication = await self.room.local_participant.publish_track(local_track)
+        if publication:
+            print(f"✅ LiveKit assistant audio track PUBLISHED (sid={getattr(publication, 'sid', 'unknown')})", flush=True)
         self.ready.set()
         
         # Room status monitor task
