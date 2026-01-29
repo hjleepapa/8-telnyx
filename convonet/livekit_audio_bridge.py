@@ -3,8 +3,9 @@ import threading
 import time
 import os
 import selectors
+import sys
 import uuid
-from typing import Optional, Dict
+from typing import Optional, Dict, Set
 
 import jwt
 
@@ -12,43 +13,79 @@ import jwt
 try:
     import eventlet.patcher
     real_threading = eventlet.patcher.original('threading')
+    real_time = eventlet.patcher.original('time')
+    real_selectors = eventlet.patcher.original('selectors')
+    real_select = eventlet.patcher.original('select')
+    real_socket = eventlet.patcher.original('socket')
     # Use real locks to avoid greenlet switching issues in FFI callbacks
     RealThreadPoolExecutor = eventlet.patcher.original('concurrent.futures').ThreadPoolExecutor
 except ImportError:
     real_threading = threading
+    real_time = time
+    real_selectors = selectors
+    real_select = None
+    real_socket = None
     from concurrent.futures import ThreadPoolExecutor as RealThreadPoolExecutor
 
-try:
-    from livekit import rtc
-    # Debug: Print rtc module contents immediately
-    print(f"🔍 LiveKit RTC Module Contents: {dir(rtc)}", flush=True)
-    
-    try:
-        from livekit.rtc import RoomEvent
-    except ImportError:
-        # Fallback for older/newer versions or debugging
-        print(f"⚠️ Could not import RoomEvent from livekit.rtc. Available: {dir(rtc)}")
-        if hasattr(rtc, 'RoomEvent'):
-            RoomEvent = rtc.RoomEvent
-        else:
-            print("⚠️ Defining fallback RoomEvent class")
-            class RoomEvent:
-                PARTICIPANT_CONNECTED = "participant_connected"
-                PARTICIPANT_DISCONNECTED = "participant_disconnected"
-                TRACK_PUBLISHED = "track_published"
-                TRACK_UNPUBLISHED = "track_unpublished"
-                TRACK_SUBSCRIBED = "track_subscribed"
-                TRACK_UNSUBSCRIBED = "track_unsubscribed"
-    
-    # Try to print version
-    try:
-        import pkg_resources
-        version = pkg_resources.get_distribution("livekit").version
-        print(f"✅ LiveKit SDK {version} imported successfully", flush=True)
-    except Exception:
-        print(f"✅ LiveKit SDK imported (version unknown)", flush=True)
+LIVEKIT_AVAILABLE = False
+rtc = None
 
-    LIVEKIT_AVAILABLE = True
+try:
+    # THE "NUCLEAR" ISOLATION TRICK:
+    # Temporarily force the real OS modules into sys.modules so that 
+    # when livekit imports them, it gets the clean, non-monkeypatched versions.
+    _orig_modules = {}
+    _to_isolate = {
+        'threading': real_threading,
+        'time': real_time,
+        'selectors': real_selectors,
+    }
+    if real_select: _to_isolate['select'] = real_select
+    if real_socket: _to_isolate['socket'] = real_socket
+
+    for name, mod in _to_isolate.items():
+        _orig_modules[name] = sys.modules.get(name)
+        sys.modules[name] = mod
+    
+    try:
+        from livekit import rtc
+        # Debug: Print rtc module contents immediately
+        print(f"🔍 LiveKit RTC Module Contents: {dir(rtc)}", flush=True)
+        
+        try:
+            from livekit.rtc import RoomEvent
+        except ImportError:
+            # Fallback for older/newer versions or debugging
+            print(f"⚠️ Could not import RoomEvent from livekit.rtc. Available: {dir(rtc)}")
+            if hasattr(rtc, 'RoomEvent'):
+                RoomEvent = rtc.RoomEvent
+            else:
+                print("⚠️ Defining fallback RoomEvent class")
+                class RoomEvent:
+                    PARTICIPANT_CONNECTED = "participant_connected"
+                    PARTICIPANT_DISCONNECTED = "participant_disconnected"
+                    TRACK_PUBLISHED = "track_published"
+                    TRACK_UNPUBLISHED = "track_unpublished"
+                    TRACK_SUBSCRIBED = "track_subscribed"
+                    TRACK_UNSUBSCRIBED = "track_unsubscribed"
+        
+        # Try to print version
+        try:
+            import pkg_resources
+            version = pkg_resources.get_distribution("livekit").version
+            print(f"✅ LiveKit SDK {version} imported successfully", flush=True)
+        except Exception:
+            print(f"✅ LiveKit SDK imported (version unknown)", flush=True)
+
+        LIVEKIT_AVAILABLE = True
+    finally:
+        # Restore the potentially monkeypatched modules for the rest of the application
+        for name, mod in _orig_modules.items():
+            if mod is not None:
+                sys.modules[name] = mod
+            else:
+                sys.modules.pop(name, None)
+                
 except Exception as e:
     print(f"⚠️ LiveKit SDK not available: {e}")
     LIVEKIT_AVAILABLE = False
@@ -90,6 +127,9 @@ class LiveKitRoomSession:
         self._frame_count = 0
         self._recording_lock = real_threading.Lock()
         self._frame_debugged = False
+        self._audio_streams: Dict[str, rtc.AudioStream] = {} # SID -> AudioStream (keep alive)
+        self._consumed_tracks: Set[str] = set() # SIDs
+        self._heartbeat_stop = real_threading.Event()
 
     def start(self):
         if not LIVEKIT_AVAILABLE:
@@ -167,12 +207,16 @@ class LiveKitRoomSession:
                           if has_audio: break
                      
                      if participants and has_audio:
-                          print(f"✅ LiveKit participant and audio track found after {wait_count*0.5}s", flush=True)
+                          print(f"✅ LiveKit participant and audio track found after {wait_count*0.5}s. Starting audio stream.", flush=True)
                           break
                           
                      print(f"⏳ LiveKit waiting for participant/audio (retry {wait_count+1}/10)...", flush=True)
                      await asyncio.sleep(0.5)
                      wait_count += 1
+                
+                if wait_count >= 10:
+                    print(f"⚠️ LiveKit timed out waiting for participant/audio track to send greeting.", flush=True)
+                    return
 
                 frame_idx = 0
                 for frame in _queue_frames():
@@ -189,9 +233,11 @@ class LiveKitRoomSession:
 
     def _handle_audio_frame(self, frame):
         with self._recording_lock:
-            # ALWAYS log the very first few frames to check connectivity and structure
-            if self._frame_count < 3:
-                print(f"📡 LiveKit RECEIVED FRAME #{self._frame_count + 1}: type={type(frame)} recording_enabled={self.recording_enabled}", flush=True)
+            # When recording just started, log the first few frames to confirm reconnection
+            if self.recording_enabled and self._frame_count < 10:
+                print(f"📡 LiveKit RECEIVED FRAME #{self._frame_count + 1} (Recording=True)", flush=True)
+            elif not self.recording_enabled and self._frame_count < 3:
+                print(f"📡 LiveKit RECEIVED FRAME #{self._frame_count + 1} (Recording=False)", flush=True)
 
             pcm = None
             frame_obj = frame
@@ -297,74 +343,77 @@ class LiveKitRoomSession:
 
         print(f"🔎 LiveKit ensure subscribe: participants={len(self.room.remote_participants)}", flush=True)
         
-        for p_id, participant in self.room.remote_participants.items():
-            # Helper to log attributes for debugging
-            try:
-                if not getattr(participant, "_debug_logged", False):
-                    print(f"🕵️ DEBUG {participant.identity} keys: {list(participant.__dict__.keys()) if hasattr(participant, '__dict__') else 'no __dict__'}", flush=True)
-                    # Dump everything that looks like a track if strict lookups failed
-                    participant._debug_logged = True
-            except:
-                pass
-
-            # Try to find tracks in various potential locations
-            pubs = None
-            if hasattr(participant, "track_publications") and participant.track_publications:
-                pubs = participant.track_publications
-            elif hasattr(participant, "tracks") and participant.tracks:
-                pubs = participant.tracks
-            elif hasattr(participant, "audio_track_publications") and participant.audio_track_publications:
-                pubs = participant.audio_track_publications
-            elif hasattr(participant, "track_publications_by_sid") and participant.track_publications_by_sid:
-                pubs = participant.track_publications_by_sid
-            elif hasattr(participant, "publications") and participant.publications:
-                pubs = participant.publications
-            elif hasattr(participant, "_track_publications") and participant._track_publications:
-                pubs = getattr(participant, "_track_publications", None)
-            
-            # If still nothing, do a deep search and log it
-            if not pubs:
+        with self._recording_lock: # Protect track registry
+            for p_id, participant in self.room.remote_participants.items():
+                # Helper to log attributes for debugging
                 try:
-                    # One-time deep introspection log
-                    print(f"🕵️ DEBUG Introspecting participant {participant.identity} for missing tracks...", flush=True)
-                    for a in dir(participant):
-                        if "track" in a.lower() or "pub" in a.lower():
-                            try:
-                                v = getattr(participant, a, "N/A")
-                                print(f"   - {a}: {v}", flush=True)
-                            except:
-                                pass
-                except Exception as e:
-                    print(f"️ DEBUG introspection failed: {e}", flush=True)
-                continue
-            
-            # Normalize to iterator
-            pub_items = []
-            if isinstance(pubs, dict):
-                pub_items = pubs.values()
-            elif isinstance(pubs, list) or hasattr(pubs, '__iter__'):
-                pub_items = list(pubs)
+                    if not getattr(participant, "_debug_logged", False):
+                        print(f"🕵️ DEBUG {participant.identity} keys: {list(participant.__dict__.keys()) if hasattr(participant, '__dict__') else 'no __dict__'}", flush=True)
+                        # Dump everything that looks like a track if strict lookups failed
+                        participant._debug_logged = True
+                except:
+                    pass
 
-            if not pub_items:
-                 print(f"🔎 LiveKit found empty publications list for {participant.identity}", flush=True)
-
-            for publication in pub_items:
-                kind = getattr(publication, "kind", None)
-                kind_name = str(kind).lower() if kind is not None else ""
+                # Try to find tracks in various potential locations
+                pubs = None
+                if hasattr(participant, "track_publications") and participant.track_publications:
+                    pubs = participant.track_publications
+                elif hasattr(participant, "tracks") and participant.tracks:
+                    pubs = participant.tracks
+                elif hasattr(participant, "audio_track_publications") and participant.audio_track_publications:
+                    pubs = participant.audio_track_publications
+                elif hasattr(participant, "track_publications_by_sid") and participant.track_publications_by_sid:
+                    pubs = participant.track_publications_by_sid
+                elif hasattr(participant, "publications") and participant.publications:
+                    pubs = participant.publications
+                elif hasattr(participant, "_track_publications") and participant._track_publications:
+                    pubs = getattr(participant, "_track_publications", None)
                 
-                if kind == rtc.TrackKind.KIND_AUDIO or "audio" in kind_name:
-                    if not getattr(publication, "subscribed", False):
-                        try:
-                            print(f"🎙️ LiveKit manually subscribing to {kind_name} track for {participant.identity}", flush=True)
-                            if hasattr(publication, "set_subscribed"):
-                                result = publication.set_subscribed(True)
-                                if asyncio.iscoroutine(result):
-                                    asyncio.run_coroutine_threadsafe(result, self.loop)
-                                print(f"✅ LiveKit ensured audio subscribed for {participant.identity}", flush=True)
-                            else:
-                                print(f"⚠️ Publication has no set_subscribed: {publication}", flush=True)
-                        except Exception as e:
-                            print(f"⚠️ LiveKit ensure subscribe failed: {e}", flush=True)
+                # If still nothing, do a deep search and log it
+                if not pubs:
+                    try:
+                        # One-time deep introspection log
+                        print(f"🕵️ DEBUG Introspecting participant {participant.identity} for missing tracks...", flush=True)
+                        for a in dir(participant):
+                            if "track" in a.lower() or "pub" in a.lower():
+                                try:
+                                    v = getattr(participant, a, "N/A")
+                                    print(f"   - {a}: {v}", flush=True)
+                                except:
+                                    pass
+                    except Exception as e:
+                        print(f"️ DEBUG introspection failed: {e}", flush=True)
+                    continue
+                
+                # Normalize to iterator
+                pub_items = []
+                if isinstance(pubs, dict):
+                    pub_items = pubs.values()
+                elif isinstance(pubs, list) or hasattr(pubs, '__iter__'):
+                    pub_items = list(pubs)
+
+                if not pub_items:
+                     print(f"🔎 LiveKit found empty publications list for {participant.identity}", flush=True)
+
+                for publication in pub_items:
+                    kind = getattr(publication, "kind", None)
+                    kind_name = str(kind).lower() if kind is not None else ""
+                    track_sid = getattr(publication, "sid", "unknown")
+                    
+                    if kind == rtc.TrackKind.KIND_AUDIO or "audio" in kind_name:
+                        if track_sid not in self._consumed_tracks:
+                            if getattr(publication, "track", None):
+                                print(f"🎙️ LiveKit track {track_sid} discovered, starting consumer...", flush=True)
+                                self._consumed_tracks.add(track_sid)
+                                self.loop.create_task(self._consume_audio_track(publication.track))
+                            elif not getattr(publication, "subscribed", False):
+                                try:
+                                    print(f"🎙️ LiveKit attempting subscription to {track_sid}...", flush=True)
+                                    result = publication.set_subscribed(True)
+                                    if asyncio.iscoroutine(result):
+                                        asyncio.run_coroutine_threadsafe(result, self.loop)
+                                except Exception as e:
+                                    print(f"⚠️ LiveKit subscribe error for {track_sid}: {e}", flush=True)
 
     def _schedule_subscription_retry(self, delay_sec: float, reason: str):
         if not self.loop:
@@ -406,45 +455,38 @@ class LiveKitRoomSession:
         asyncio.run_coroutine_threadsafe(_retry(), self.loop)
 
     async def _consume_audio_track(self, track):
-        track_sid = getattr(track, "sid", None)
+        track_sid = getattr(track, "sid", "unknown")
         print(f"🎧 LiveKit audio stream start (sid={track_sid})", flush=True)
         
-        self.audio_stream = rtc.AudioStream(track)
-        sid = track_sid # Use a local variable for sid within the inner function
+        audio_stream = rtc.AudioStream(track)
+        # Store in bridge to keep alive
+        with self._recording_lock:
+             self._audio_streams[track_sid] = audio_stream
         
-        async def _consume():
-            print(f"🎧 LiveKit AudioStream iteration starting (sid={sid})", flush=True)
-            try:
-                # Use manual iteration to be more resilient to iterator stalling
-                it = self.audio_stream.__aiter__()
-                while not self._closed:
-                    try:
-                        frame_event = await asyncio.wait_for(it.__anext__(), timeout=5.0)
-                        self._handle_audio_frame(frame_event)
-                    except StopAsyncIteration:
-                        print(f"🎧 LiveKit AudioStream reached end (sid={sid})", flush=True)
-                        break
-                    except asyncio.TimeoutError:
-                        # Silently continue if no frame for 5s, heartbeat will confirm loop health
-                        continue
-                    except Exception as e:
-                        print(f"⚠️ LiveKit AudioStream iteration error (sid={sid}): {e}", flush=True)
-                        break
-            except Exception as e:
-                print(f"⚠️ LiveKit AudioStream failed to start (sid={sid}): {e}", flush=True)
-            finally:
-                print(f"🎧 LiveKit AudioStream task ended (sid={sid})", flush=True)
-
         try:
-            await _consume()
-        except asyncio.CancelledError:
-            print(f"🎧 LiveKit audio stream {track_sid} CANCELLED", flush=True)
+            print(f"🎧 LiveKit AudioStream iteration starting (sid={track_sid})", flush=True)
+            # Use manual iteration to be more resilient to iterator stalling
+            it = audio_stream.__aiter__()
+            while not self._closed:
+                try:
+                    frame_event = await asyncio.wait_for(it.__anext__(), timeout=5.0)
+                    self._handle_audio_frame(frame_event)
+                except StopAsyncIteration:
+                    print(f"🎧 LiveKit AudioStream reached end (sid={track_sid})", flush=True)
+                    break
+                except asyncio.TimeoutError:
+                    # Silently continue, heartbeat task will confirm loop is still healthy
+                    continue
+                except Exception as e:
+                    print(f"⚠️ LiveKit AudioStream iteration error (sid={track_sid}): {e}", flush=True)
+                    break
         except Exception as e:
-            import traceback
-            print(f"⚠️ LiveKit audio stream {track_sid} error: {e}", flush=True)
-            print(f"⚠️ Traceback: {traceback.format_exc()}", flush=True)
+            print(f"⚠️ LiveKit AudioStream task error (sid={track_sid}): {e}", flush=True)
         finally:
-            print(f"🎧 LiveKit audio stream {track_sid} TASK COMPLETE", flush=True)
+            with self._recording_lock:
+                 self._consumed_tracks.discard(track_sid)
+                 self._audio_streams.pop(track_sid, None)
+            print(f"🎧 LiveKit AudioStream task ended (sid={track_sid})", flush=True)
 
     async def _connect(self):
         self.room = rtc.Room()
@@ -616,9 +658,8 @@ class LiveKitRoomSession:
 
         # Threaded Heartbeat (safer in eventlet) - keep as double check
         def _heartbeat():
-            while self.loop and self.loop.is_running():
-                # print(f"💓 LiveKit Heartbeat: Loop thread is alive", flush=True)
-                time.sleep(10.0) 
+            while self.loop and self.loop.is_running() and not self._heartbeat_stop.is_set():
+                self._heartbeat_stop.wait(10.0) 
         
         hb_thread = real_threading.Thread(target=_heartbeat, name=f"HB-{self.url[-5:]}", daemon=True)
         hb_thread.start()
