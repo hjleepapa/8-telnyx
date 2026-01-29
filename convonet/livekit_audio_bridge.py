@@ -140,11 +140,6 @@ class LiveKitRoomSession:
                 for frame in _queue_frames():
                     await self.audio_source.capture_frame(frame)
                     frame_idx += 1
-                    # Pacing: the SDK expects roughly 20ms frames. 
-                    # If we don't sleep at all, we might flood the buffer.
-                    # A small sleep every few frames helps the SDK's internal queue.
-                    if frame_idx % 10 == 0:
-                        await asyncio.sleep(0.02) # 20ms pause every 200ms of audio
                 print(f"✅ LiveKit sent {frame_idx} audio frames for greeting playback", flush=True)
             except Exception as e:
                 print(f"⚠️ LiveKit capture_frame error: {e}", flush=True)
@@ -528,13 +523,33 @@ class LiveKitRoomSession:
                             pass
                 except Exception as me:
                     print(f"⚠️ Room monitor error: {me}", flush=True)
-                await asyncio.sleep(2.0)
-                print("💓 Heartbeat: LiveKit loop is alive", flush=True)
+                await asyncio.sleep(5.0) # Use a longer sleep for the monitor
         
         asyncio.create_task(_monitor_room())
 
+        # Threaded Heartbeat (safer in eventlet)
+        def _heartbeat():
+            while self.loop and self.loop.is_running():
+                print(f"💓 LiveKit Heartbeat: Loop is alive (thread={threading.current_thread().name})", flush=True)
+                time.sleep(5.0) # This is monkey-patched but safe in a separate thread
+        
+        hb_thread = threading.Thread(target=_heartbeat, name=f"HB-{self.url[-5:]}", daemon=True)
+        hb_thread.start()
+
     def _run_loop(self):
+        import selectors
+        # Use a specific selector to avoid issues with eventlet patching
+        selector = selectors.SelectSelector()
+        self.loop = asyncio.SelectorEventLoop(selector)
         asyncio.set_event_loop(self.loop)
+        
+        # Apply nest_asyncio inside the thread
+        try:
+            import nest_asyncio
+            nest_asyncio.apply(self.loop)
+        except:
+            pass
+            
         try:
             self.loop.run_until_complete(self._connect())
             self.loop.run_forever()
