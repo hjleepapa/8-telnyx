@@ -395,6 +395,15 @@ class LiveKitRoomSession:
             print(f"🧭 LiveKit room '{room_name}' participants: {participants}", flush=True)
         except Exception:
             pass
+        
+        # CRITICAL: Subscribe to any participants already in the room
+        # This handles the race condition where participants connect before PARTICIPANT_CONNECTED fires
+        try:
+            self._ensure_audio_subscriptions()
+            print(f"🔎 LiveKit checked for existing participants after connect", flush=True)
+        except Exception as e:
+            print(f"⚠️ LiveKit initial subscription check failed: {e}", flush=True)
+        
         self.audio_source = rtc.AudioSource(self.sample_rate, self.channels)
         local_track = rtc.LocalAudioTrack.create_audio_track("assistant_audio", self.audio_source)
         await self.room.local_participant.publish_track(local_track)
