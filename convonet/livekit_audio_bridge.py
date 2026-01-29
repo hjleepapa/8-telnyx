@@ -129,6 +129,7 @@ class LiveKitRoomSession:
         self._audio_streams: Dict[str, rtc.AudioStream] = {} # SID -> AudioStream (keep alive)
         self._consumed_tracks: Set[str] = set() # SIDs
         self._heartbeat_stop = real_threading.Event()
+        self._closed = False
         # NO MORE RECORDING LOCK - using atomic boolean and queue
 
     def start(self):
@@ -218,12 +219,13 @@ class LiveKitRoomSession:
 
                 frame_idx = 0
                 for frame in _queue_frames():
+                    if self._closed: break
                     await self.audio_source.capture_frame(frame)
                     frame_idx += 1
                     # Real-time pacing: avoid loop starvation.
                     if frame_idx % 2 == 0:
                          await asyncio.sleep(0.01)
-                print(f"✅ LiveKit sent {frame_idx} audio frames for greeting playback", flush=True)
+                print(f"✅ LiveKit sent {frame_idx} audio frames for greeting playback (closed={self._closed})", flush=True)
             except Exception as e:
                 print(f"⚠️ LiveKit capture_frame error: {e}", flush=True)
 
