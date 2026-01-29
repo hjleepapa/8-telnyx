@@ -130,6 +130,8 @@ class LiveKitRoomSession:
         self._consumed_tracks: Set[str] = set() # SIDs
         self._heartbeat_stop = real_threading.Event()
         self._closed = False
+        self._send_lock = None # Will be initialized in start() loop
+        self.local_track = None # To prevent GC
         # NO MORE RECORDING LOCK - using atomic boolean and queue
 
     def start(self):
@@ -199,35 +201,38 @@ class LiveKitRoomSession:
                 yield frame
 
         async def _send():
-            try:
-                # Wait for at least one remote participant (the user) to be ready
-                # We NO LONGER wait for them to publish audio (which caused greetings to fail)
-                wait_count = 0
-                while wait_count < 6:
-                     participants = getattr(self.room, "remote_participants", {})
-                     if participants:
-                          print(f"✅ LiveKit participant found after {wait_count*0.5}s. Starting audio stream.", flush=True)
-                          break
-                           
-                     print(f"⏳ LiveKit waiting for participant (retry {wait_count+1}/6)...", flush=True)
-                     await asyncio.sleep(0.5)
-                     wait_count += 1
+            if self._send_lock is None:
+                self._send_lock = asyncio.Lock()
                 
-                if wait_count >= 6 and not getattr(self.room, "remote_participants", {}):
-                    print(f"⚠️ LiveKit timed out waiting for participant to send greeting.", flush=True)
-                    return
-
-                frame_idx = 0
-                for frame in _queue_frames():
-                    if self._closed: break
-                    await self.audio_source.capture_frame(frame)
-                    frame_idx += 1
-                    # Real-time pacing: avoid loop starvation.
-                    if frame_idx % 2 == 0:
-                         await asyncio.sleep(0.01)
-                print(f"✅ LiveKit sent {frame_idx} audio frames for greeting playback (closed={self._closed})", flush=True)
-            except Exception as e:
-                print(f"⚠️ LiveKit capture_frame error: {e}", flush=True)
+            async with self._send_lock:
+                try:
+                    # Wait for at least one remote participant (the user) to be ready
+                    wait_count = 0
+                    while wait_count < 6:
+                         participants = getattr(self.room, "remote_participants", {})
+                         if participants:
+                              print(f"✅ LiveKit participant found after {wait_count*0.5}s. Starting audio stream.", flush=True)
+                              break
+                               
+                         print(f"⏳ LiveKit waiting for participant (retry {wait_count+1}/6)...", flush=True)
+                         await asyncio.sleep(0.5)
+                         wait_count += 1
+                    
+                    if wait_count >= 6 and not getattr(self.room, "remote_participants", {}):
+                        print(f"⚠️ LiveKit timed out waiting for participant for outbound audio.", flush=True)
+                        return
+    
+                    frame_idx = 0
+                    for frame in _queue_frames():
+                        if self._closed: break
+                        await self.audio_source.capture_frame(frame)
+                        frame_idx += 1
+                        # Real-time pacing: avoid loop starvation.
+                        if frame_idx % 2 == 0:
+                             await asyncio.sleep(0.01)
+                    print(f"✅ LiveKit sent {frame_idx} audio frames (closed={self._closed})", flush=True)
+                except Exception as e:
+                    print(f"⚠️ LiveKit capture_frame error: {e}", flush=True)
 
         asyncio.run_coroutine_threadsafe(_send(), self.loop)
 
@@ -627,8 +632,8 @@ class LiveKitRoomSession:
             print(f"⚠️ LiveKit initial subscription check failed: {e}", flush=True)
         
         self.audio_source = rtc.AudioSource(self.sample_rate, self.channels)
-        local_track = rtc.LocalAudioTrack.create_audio_track("assistant_audio", self.audio_source)
-        publication = await self.room.local_participant.publish_track(local_track)
+        self.local_track = rtc.LocalAudioTrack.create_audio_track("assistant_audio", self.audio_source)
+        publication = await self.room.local_participant.publish_track(self.local_track)
         if publication:
             print(f"✅ LiveKit assistant audio track PUBLISHED (sid={getattr(publication, 'sid', 'unknown')})", flush=True)
         self.ready.set()
