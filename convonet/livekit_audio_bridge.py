@@ -280,10 +280,18 @@ class LiveKitRoomSession:
             track_sid = getattr(track, "sid", None)
             print(f"🎧 LiveKit audio stream start (sid={track_sid})", flush=True)
             audio_stream = rtc.AudioStream(track)
+            print(f"🎧 LiveKit AudioStream created, starting iteration...", flush=True)
+            frame_count = 0
             async for frame in audio_stream:
+                frame_count += 1
+                if frame_count <= 5 or frame_count % 50 == 0:
+                    print(f"🎧 LiveKit received frame #{frame_count}", flush=True)
                 self._handle_audio_frame(frame)
+            print(f"🎧 LiveKit audio stream ended after {frame_count} frames", flush=True)
         except Exception as e:
-            print(f"⚠️ LiveKit audio stream error: {e}")
+            import traceback
+            print(f"⚠️ LiveKit audio stream error: {e}", flush=True)
+            print(f"⚠️ Traceback: {traceback.format_exc()}", flush=True)
 
     async def _connect(self):
         self.room = rtc.Room()
