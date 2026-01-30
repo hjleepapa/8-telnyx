@@ -263,6 +263,10 @@ LiveKit SFU → Browser playback
         const livekitAudioElements = new Map();
         let fallbackAudio = null;
         let livekitSdk = null;
+        let livekitPlaybackBlocked = false;
+        let livekitPlaybackReady = false;
+        let lastLivekitPlaybackAt = 0;
+        let userGestureUnlocked = false;
 
         const STREAMING_STT_ENABLED = {{ 'true' if streaming_stt_enabled else 'false' }};
         const STREAMING_TTS_ENABLED = {{ 'true' if streaming_tts_enabled else 'false' }};
@@ -591,6 +595,8 @@ LiveKit SFU → Browser playback
                         const element = track.attach();
                         element.autoplay = true;
                         element.playsInline = true;
+                        element.muted = false;
+                        element.volume = 1;
                         // element.style.display = 'none'; // REMOVED: display:none can sometimes block playback in some browsers
                         element.style.position = 'absolute';
                         element.style.opacity = '0';
@@ -611,9 +617,13 @@ LiveKit SFU → Browser playback
                             element.play().then(() => {
                                 console.log(`✅ Playing audio track: ${track.sid}`);
                                 assistantSpeaking = true;
+                                livekitPlaybackReady = true;
+                                livekitPlaybackBlocked = false;
+                                lastLivekitPlaybackAt = Date.now();
                                 showStatus('Assistant is speaking...', 'success');
                             }).catch((err) => {
                                 console.warn(`⚠️ Playback blocked for ${track.sid}:`, err);
+                                livekitPlaybackBlocked = true;
                                 showStatus('Audio blocked. Click anywhere to enable sound.', 'info');
                             });
                         };
@@ -839,6 +849,18 @@ LiveKit SFU → Browser playback
                 }
                 if (data.audio && !LIVEKIT_ENABLED) {
                     playAudioResponse(data.audio);
+                } else if (data.audio && LIVEKIT_ENABLED) {
+                    const shouldFallback = !livekitConnected || livekitPlaybackBlocked || livekitAudioElements.size === 0;
+                    if (shouldFallback) {
+                        playAudioResponse(data.audio);
+                    } else {
+                        setTimeout(() => {
+                            const noRecentPlayback = Date.now() - lastLivekitPlaybackAt > 800;
+                            if (noRecentPlayback && !assistantSpeaking) {
+                                playAudioResponse(data.audio);
+                            }
+                        }, 800);
+                    }
                 }
                 
                 // If using LiveKit and it's a short response, the audio was sent via PCM.
@@ -862,6 +884,12 @@ LiveKit SFU → Browser playback
                 console.log('📣 Welcome greeting:', data);
                 if (data.text) {
                     addTranscript('agent', data.text);
+                }
+                if (data.audio) {
+                    const shouldFallback = !livekitConnected || livekitPlaybackBlocked || livekitAudioElements.size === 0;
+                    if (shouldFallback) {
+                        playAudioResponse(data.audio);
+                    }
                 }
             });
 
@@ -927,6 +955,9 @@ LiveKit SFU → Browser playback
 
             stopAllPlayback();
             isRecording = true;
+            if (vadContext && vadContext.state === 'suspended') {
+                try { await vadContext.resume(); } catch (_) {}
+            }
             const button = document.getElementById('micButton');
             const icon = document.getElementById('micIcon');
             const label = document.getElementById('micLabel');
@@ -1004,8 +1035,9 @@ LiveKit SFU → Browser playback
             if (button) {
                 button.classList.remove('recording', 'processing');
                 button.style.opacity = '1';
+                button.disabled = false;
             }
-            if (label) label.textContent = 'Listening... (hands-free)';
+            if (label) label.textContent = 'Listening... (hands-free). Click to speak';
         }
 
         function startHandsFreeMode() {
@@ -1066,10 +1098,6 @@ LiveKit SFU → Browser playback
 
         function toggleRecording() {
             if (isProcessing) return;
-            if (handsFreeEnabled) {
-                showStatus('Hands-free mode is enabled. Just speak.', 'info');
-                return;
-            }
             if (!isRecording) {
                 startRecording();
             } else {
@@ -1094,6 +1122,18 @@ LiveKit SFU → Browser playback
             if (authButton) {
                 authButton.addEventListener('click', authenticate);
             }
+            // Unlock audio/VAD on first user gesture (required by browsers)
+            document.addEventListener('click', () => {
+                if (userGestureUnlocked) return;
+                userGestureUnlocked = true;
+                if (vadContext && vadContext.state === 'suspended') {
+                    vadContext.resume().catch(() => {});
+                }
+                if (handsFreeEnabled && !vadTimer) {
+                    startVadLoop();
+                }
+                resumeLiveKitPlayback();
+            }, { once: true });
         });
     </script>
 </body>

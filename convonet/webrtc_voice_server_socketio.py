@@ -188,6 +188,26 @@ def _synthesize_deepgram_linear16(text: str, voice: str = "aura-asteria-en", sam
         container="none"
     )
 
+def _encode_linear16_wav_base64(
+    pcm_bytes: bytes,
+    sample_rate: int = 48000,
+    channels: int = 1,
+    sample_width: int = 2
+) -> str:
+    """Encode raw linear16 PCM as WAV base64 for browser fallback."""
+    if not pcm_bytes:
+        return ""
+    if pcm_bytes[:4] == b"RIFF" and b"WAVE" in pcm_bytes[:12]:
+        wav_bytes = pcm_bytes
+    else:
+        wav_bytes = StreamingTTSStream._wrap_linear16_wav(
+            pcm_bytes,
+            sample_rate=sample_rate,
+            channels=channels,
+            sample_width=sample_width
+        )
+    return base64.b64encode(wav_bytes).decode("utf-8")
+
 # Active sessions storage (fallback for when Redis is unavailable)
 active_sessions = {}
 
@@ -2413,10 +2433,17 @@ def init_socketio(socketio_instance: SocketIO, app):
                         session = livekit_manager.get_session(session_id)
                         if session:
                             session.send_pcm(audio_bytes, sample_rate=48000, channels=1)
+                        audio_base64 = _encode_linear16_wav_base64(
+                            audio_bytes,
+                            sample_rate=48000,
+                            channels=1,
+                            sample_width=2
+                        )
                         
                         socketio.emit('welcome_greeting', {
                             'success': True,
-                            'text': welcome_text
+                            'text': welcome_text,
+                            'audio': audio_base64
                         }, namespace='/voice', room=session_id)
                     else:
                         # Convert to base64
@@ -2631,10 +2658,16 @@ def init_socketio(socketio_instance: SocketIO, app):
 
                         if _livekit_active():
                             _send_livekit_pcm(session_id, audio_bytes, sample_rate=48000, channels=1)
+                            audio_base64 = _encode_linear16_wav_base64(
+                                audio_bytes,
+                                sample_rate=48000,
+                                channels=1,
+                                sample_width=2
+                            )
                             socketio.emit('agent_response', {
                                 'success': True,
                                 'text': transfer_message,
-                                'audio': '',
+                                'audio': audio_base64,
                                 'transfer': True
                             }, namespace='/voice', room=session_id)
                         else:
@@ -3147,6 +3180,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                             print(f"🔊 Short response ({len(agent_response)} chars), using non-streaming TTS", flush=True)
                             audio_bytes = None
                             use_livekit_audio = _livekit_active()
+                            livekit_audio_sent = False
                             if response_cancel_event.is_set():
                                 print("🛑 Response cancelled before short TTS generation (barge-in)", flush=True)
                                 if session_id in active_response_controls:
@@ -3199,7 +3233,14 @@ def init_socketio(socketio_instance: SocketIO, app):
                         
                             if use_livekit_audio:
                                 _send_livekit_pcm(session_id, audio_bytes, sample_rate=48000, channels=1)
-                                audio_base64 = ""
+                                livekit_audio_sent = True
+                                # Provide WAV fallback for browsers if LiveKit playback fails
+                                audio_base64 = _encode_linear16_wav_base64(
+                                    audio_bytes,
+                                    sample_rate=48000,
+                                    channels=1,
+                                    sample_width=2
+                                )
                                 print(f"🔊 TTS generated for LiveKit: {len(audio_bytes)} bytes", flush=True)
                                 sentry_capture_voice_event("tts_generation_completed", session_id, session.get('user_id'), details={"audio_size": len(audio_bytes), "chunks": 1, "livekit": True})
                             else:
@@ -3215,6 +3256,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                             audio_base64 = ""  # Will accumulate for fallback/pending storage
                             all_audio_chunks = []
                             chunk_errors = []
+                            livekit_audio_sent = False
                         
                             # Initialize TTS service
                             elevenlabs_service = None
@@ -3278,6 +3320,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                                     if chunk_audio:
                                         if use_livekit_audio:
                                             _send_livekit_pcm(session_id, chunk_audio, sample_rate=48000, channels=1)
+                                            livekit_audio_sent = True
                                             # Wrap for browser in case they want to play via SocketIO too (optional)
                                             chunk_audio_wav = StreamingTTSStream._wrap_linear16_wav(chunk_audio, sample_rate=48000, channels=1, sample_width=2)
                                             chunk_base64 = base64.b64encode(chunk_audio_wav).decode('utf-8')
@@ -3561,7 +3604,8 @@ def init_socketio(socketio_instance: SocketIO, app):
                                         'success': True,
                                         'text': agent_response,
                                         'audio': audio_base64,
-                                        'is_streaming': is_streaming if 'is_streaming' in locals() else False
+                                        'is_streaming': is_streaming if 'is_streaming' in locals() else False,
+                                        'livekit_audio_sent': livekit_audio_sent if 'livekit_audio_sent' in locals() else False
                                     }, namespace='/voice', room=session_id, callback=emit_callback)
                                     print(f"✅ agent_response event emitted to session {session_id}", flush=True)
                                 except Exception as e:
