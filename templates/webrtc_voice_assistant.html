@@ -1017,7 +1017,7 @@ LiveKit SFU → Browser playback
                     const rms = Math.sqrt(sum / data.length);
                     
                 // If assistant is speaking, use a MUCH higher threshold to avoid self-interruption (echo)
-                const effectiveThreshold = assistantSpeaking ? (VAD_THRESHOLD * 20) : VAD_THRESHOLD;
+                const effectiveThreshold = assistantSpeaking ? (VAD_THRESHOLD * 25) : VAD_THRESHOLD;
                     
                     if (rms > effectiveThreshold) {
                         if (assistantSpeaking) {

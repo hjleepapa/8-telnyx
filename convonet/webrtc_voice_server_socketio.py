@@ -38,7 +38,7 @@ from deepgram_service import get_deepgram_service
 
 # Deepgram streaming SDK (async)
 try:
-    from deepgram import AsyncDeepgramClient
+    from deepgram import AsyncDeepgramClient, SpeakOptions
     from deepgram.core.events import EventType
     from deepgram.extensions.types.sockets import (
         ListenV2MediaMessage,
@@ -260,6 +260,7 @@ def _ensure_livekit_session(session_id: str, user_id: str):
 
 def _send_livekit_pcm(session_id: str, pcm_bytes: bytes, sample_rate: int = 48000, channels: int = 1):
     if _livekit_active() and pcm_bytes:
+        print(f"📡 Bridge: Sending {len(pcm_bytes)} bytes to LiveKit for session {session_id}", flush=True)
         livekit_manager.send_pcm(session_id, pcm_bytes, sample_rate=sample_rate, channels=channels)
 
 # LiveKit session manager (optional)
@@ -282,8 +283,8 @@ class StreamingTTSStream:
         self.model = model
         self.use_livekit_audio = use_livekit_audio
         self.loop = asyncio.new_event_loop()
-        self.thread = threading.Thread(target=self._run_loop, daemon=True)
         self.text_queue = None
+        self.thread = threading.Thread(target=self._run_loop, daemon=True)
         self.ready = threading.Event()
         self.stop_event = threading.Event()
         self.chunk_index = 0
@@ -293,15 +294,28 @@ class StreamingTTSStream:
         self.ready.wait(timeout=5.0)
 
     def send_text(self, text: str):
-        if not text or not text.strip() or not self.text_queue:
+        if not text or not text.strip():
             return
+        
+        # Ensure queue is ready
+        if not self.text_queue:
+            for _ in range(20): # Wait up to 2 seconds
+                if self.text_queue:
+                    break
+                time.sleep(0.1)
+        
+        if not self.text_queue:
+            print(f"⚠️ StreamingTTS: queue still not ready for text: {text[:20]}...", flush=True)
+            return
+
         print(f"🎙️ StreamingTTS: received text: {text[:50]}...", flush=True)
         asyncio.run_coroutine_threadsafe(self.text_queue.put(text), self.loop)
 
     def flush_and_close(self):
-        if self.text_queue:
-            print(f"🎙️ StreamingTTS: flushing", flush=True)
-            asyncio.run_coroutine_threadsafe(self.text_queue.put(None), self.loop)
+        if not self.text_queue:
+            return
+        print(f"🎙️ StreamingTTS: flushing", flush=True)
+        asyncio.run_coroutine_threadsafe(self.text_queue.put(None), self.loop)
 
     def stop(self):
         self.flush_and_close()
@@ -364,27 +378,63 @@ class StreamingTTSStream:
             client = AsyncDeepgramClient(api_key=os.getenv("DEEPGRAM_API_KEY"))
 
             async def run_connection():
-                async with client.speak.v1.connect(
-                    model=self.model,
-                    encoding="linear16",
-                    sample_rate=48000
-                ) as connection:
-                    def on_message(message: SpeakV1SocketClientResponse) -> None:
-                        if isinstance(message, bytes):
-                            self._emit_audio_chunk(message)
+                try:
+                    options = SpeakOptions(
+                        model=self.model,
+                        encoding="linear16",
+                        sample_rate=48000
+                    )
+                    
+                    async with client.speak.v("1").connect(options) as connection:
+                        print("📡 Deepgram TTS connection established", flush=True)
+                        
+                        def on_audio_data(self_unused, data, **kwargs):
+                            if isinstance(data, bytes):
+                                self._emit_audio_chunk(data)
+                            else:
+                                print(f"🤔 Deepgram TTS received non-bytes data: {type(data)}", flush=True)
 
-                    connection.on(EventType.MESSAGE, on_message)
-                    connection.on(EventType.ERROR, lambda error: print(f"❌ Deepgram TTS error: {error}", flush=True))
-                    await connection.start_listening()
-                    self.ready.set()
+                        def on_error(self_unused, error, **kwargs):
+                            print(f"❌ Deepgram TTS error: {error}", flush=True)
 
-                    while not self.stop_event.is_set():
-                        text = await self.text_queue.get()
-                        if text is None:
-                            await connection.send_control(SpeakV1ControlMessage(type="Flush"))
-                            await connection.send_control(SpeakV1ControlMessage(type="Close"))
-                            break
-                        await connection.send_text(SpeakV1TextMessage(text=text))
+                        def on_open(self_unused, open_msg, **kwargs):
+                            print("✅ Deepgram TTS socket opened", flush=True)
+                            self.ready.set()
+
+                        def on_metadata(self_unused, metadata, **kwargs):
+                            print(f"📊 Deepgram TTS metadata: {metadata}", flush=True)
+
+                        connection.on(EventType.AudioData, on_audio_data)
+                        connection.on(EventType.Error, on_error)
+                        connection.on(EventType.Open, on_open)
+                        connection.on(EventType.Metadata, on_metadata)
+                        connection.on(EventType.Close, lambda self_unused, close_msg, **kwargs: print("📉 Deepgram TTS socket closed", flush=True))
+                        
+                        # Use a small delay to ensure ready.set() is processed if Open doesn't fire immediately
+                        self.loop.call_later(0.5, self.ready.set)
+
+                        while not self.stop_event.is_set():
+                            try:
+                                # Use wait_for to check stop_event periodically
+                                text = await asyncio.wait_for(self.text_queue.get(), timeout=0.5)
+                                if text is None:
+                                    print("🎙️ Deepgram TTS: Sending Flush and Close", flush=True)
+                                    await connection.flush()
+                                    break
+                                
+                                # Send text to Deepgram
+                                if text.strip():
+                                    await connection.send_text(text)
+                            except asyncio.TimeoutError:
+                                continue
+                            except Exception as queue_err:
+                                print(f"⚠️ Deepgram TTS queue error: {queue_err}", flush=True)
+                                break
+                                
+                    print("📡 Deepgram TTS connection closed", flush=True)
+                except Exception as conn_err:
+                    print(f"❌ Deepgram TTS connection error: {conn_err}", flush=True)
+                    self.ready.set() # Don't block forever if connection fails
 
             self.loop.run_until_complete(run_connection())
         except Exception as e:
