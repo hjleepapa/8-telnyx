@@ -111,7 +111,7 @@ def generate_livekit_token(api_key: str, api_secret: str, identity: str, room: s
 
 
 class LiveKitRoomSession:
-    def __init__(self, url: str, token: str, sample_rate: int = 24000, channels: int = 1):
+    def __init__(self, url: str, token: str, sample_rate: int = 48000, channels: int = 1):
         self.url = url
         self.token = token
         self.sample_rate = sample_rate
@@ -132,6 +132,7 @@ class LiveKitRoomSession:
         self._closed = False
         self._send_lock = None # Will be initialized in start() loop
         self.local_track = None # To prevent GC
+        self.assistant_speaking = False # Track if assistant is talking
         # NO MORE RECORDING LOCK - using atomic boolean and queue
 
     def start(self):
@@ -205,6 +206,7 @@ class LiveKitRoomSession:
                 self._send_lock = asyncio.Lock()
                 
             async with self._send_lock:
+                self.assistant_speaking = True
                 try:
                     # Check connection state
                     if self.room.connection_state != rtc.ConnectionState.CONN_CONNECTED:
@@ -233,7 +235,7 @@ class LiveKitRoomSession:
                          await asyncio.sleep(0.5)
                          wait_count += 1
                     
-                    if wait_count >= 6 and not getattr(self.room, "remote_participants", {}):
+                    if wait_count >= 10 and not getattr(self.room, "remote_participants", {}):
                         print(f"⚠️ LiveKit timed out waiting for participant for outbound audio.", flush=True)
                         return
     
@@ -259,6 +261,8 @@ class LiveKitRoomSession:
                     print(f"✅ LiveKit sent {frame_idx} audio frames (closed={self._closed})", flush=True)
                 except Exception as e:
                     print(f"⚠️ LiveKit capture_frame error: {e}", flush=True)
+                finally:
+                    self.assistant_speaking = False
 
         asyncio.run_coroutine_threadsafe(_send(), self.loop)
 

@@ -636,6 +636,13 @@ LiveKit SFU → Browser playback
 
         async function setMicrophoneEnabled(enabled) {
             if (!livekitRoom) return false;
+            
+            // If assistant is speaking and we want to enable mic, check if we should block it
+            if (enabled && assistantSpeaking) {
+                console.log('🔇 Mic enable blocked while assistant is speaking');
+                return false;
+            }
+
             try {
                 await livekitRoom.localParticipant.setMicrophoneEnabled(enabled);
                 livekitMicEnabled = enabled;
@@ -936,9 +943,17 @@ LiveKit SFU → Browser playback
                     const rms = Math.sqrt(sum / data.length);
                     
                     // If assistant is speaking, use a much higher threshold to avoid self-interruption
-                    const effectiveThreshold = assistantSpeaking ? (VAD_THRESHOLD * 4) : VAD_THRESHOLD;
+                    const effectiveThreshold = assistantSpeaking ? (VAD_THRESHOLD * 6) : VAD_THRESHOLD;
                     
                     if (rms > effectiveThreshold) {
+                        if (assistantSpeaking) {
+                            console.log('🗣️ User interrupted assistant (high volume)');
+                            assistantSpeaking = false;
+                            // Mute mic immediately to prevent further echo loops
+                            await setMicrophoneEnabled(false);
+                            // Then resume it for actual recording
+                            setTimeout(() => setMicrophoneEnabled(true), 100);
+                        }
                         vadSpeechFrames += 1;
                         vadSilenceFrames = 0;
                     } else {

@@ -167,7 +167,7 @@ def get_deepgram_tts_service():
         deepgram_service = get_deepgram_service()
     return deepgram_service
 
-def _synthesize_deepgram_linear16(text: str, voice: str = "aura-asteria-en", sample_rate: int = 24000) -> Optional[bytes]:
+def _synthesize_deepgram_linear16(text: str, voice: str = "aura-asteria-en", sample_rate: int = 48000) -> Optional[bytes]:
     deepgram_tts = get_deepgram_tts_service()
     if not deepgram_tts:
         return None
@@ -255,7 +255,7 @@ def _ensure_livekit_session(session_id: str, user_id: str):
     assistant_identity = f"assistant:{session_id}"
     return livekit_manager.ensure_session(session_id, room_name, assistant_identity)
 
-def _send_livekit_pcm(session_id: str, pcm_bytes: bytes, sample_rate: int = 24000, channels: int = 1):
+def _send_livekit_pcm(session_id: str, pcm_bytes: bytes, sample_rate: int = 48000, channels: int = 1):
     if _livekit_active() and pcm_bytes:
         livekit_manager.send_pcm(session_id, pcm_bytes, sample_rate=sample_rate, channels=channels)
 
@@ -305,11 +305,11 @@ class StreamingTTSStream:
     def _emit_audio_chunk(self, chunk_bytes: bytes):
         try:
             if self.use_livekit_audio and _livekit_active():
-                _send_livekit_pcm(self.session_id, chunk_bytes, sample_rate=24000, channels=1)
+                _send_livekit_pcm(self.session_id, chunk_bytes, sample_rate=48000, channels=1)
                 return
             # Deepgram streaming TTS returns raw PCM (linear16); wrap as WAV for browser decode.
             if not (chunk_bytes[:4] == b'RIFF' and b'WAVE' in chunk_bytes[:12]):
-                chunk_bytes = self._wrap_linear16_wav(chunk_bytes, sample_rate=24000, channels=1, sample_width=2)
+                chunk_bytes = self._wrap_linear16_wav(chunk_bytes, sample_rate=48000, channels=1, sample_width=2)
             chunk_base64 = base64.b64encode(chunk_bytes).decode('utf-8')
             self.socketio.emit('audio_chunk', {
                 'success': True,
@@ -361,7 +361,7 @@ class StreamingTTSStream:
                 async with client.speak.v1.connect(
                     model=self.model,
                     encoding="linear16",
-                    sample_rate=24000
+                    sample_rate=48000
                 ) as connection:
                     def on_message(message: SpeakV1SocketClientResponse) -> None:
                         if isinstance(message, bytes):
@@ -2324,7 +2324,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                             welcome_text,
                             voice="aura-asteria-en",
                             encoding="linear16",
-                            sample_rate=24000,
+                            sample_rate=48000,
                             container="none"
                         )
                     else:
@@ -2337,7 +2337,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                         # Use the correct bridge send_pcm method via livekit_manager
                         session = livekit_manager.get_session(session_id)
                         if session:
-                            session.send_pcm(audio_bytes, sample_rate=24000, channels=1)
+                            session.send_pcm(audio_bytes, sample_rate=48000, channels=1)
                         
                         socketio.emit('welcome_greeting', {
                             'text': welcome_text
@@ -2556,7 +2556,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                             raise Exception("Deepgram TTS failed to generate audio")
 
                         if _livekit_active():
-                            _send_livekit_pcm(session_id, audio_bytes, sample_rate=24000, channels=1)
+                            _send_livekit_pcm(session_id, audio_bytes, sample_rate=48000, channels=1)
                             socketio.emit('agent_response', {
                                 'success': True,
                                 'text': transfer_message,
@@ -2595,7 +2595,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                         if _livekit_active():
                             ack_audio = _synthesize_deepgram_linear16(ack_text)
                             if ack_audio:
-                                _send_livekit_pcm(session_id, ack_audio, sample_rate=24000, channels=1)
+                                _send_livekit_pcm(session_id, ack_audio, sample_rate=48000, channels=1)
                                 print("📤 Emitted LiveKit acknowledgement audio", flush=True)
                         else:
                             deepgram_tts = get_deepgram_tts_service()
@@ -2742,7 +2742,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                         if _livekit_active():
                             filler_audio = _synthesize_deepgram_linear16(filler_text)
                             if filler_audio:
-                                _send_livekit_pcm(session_id, filler_audio, sample_rate=24000, channels=1)
+                                _send_livekit_pcm(session_id, filler_audio, sample_rate=48000, channels=1)
                                 return
                         deepgram_tts = get_deepgram_tts_service()
                         if deepgram_tts:
@@ -2886,7 +2886,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                             
                             if chunk_audio:
                                 if _livekit_active():
-                                    _send_livekit_pcm(session_id, chunk_audio, sample_rate=24000, channels=1)
+                                    _send_livekit_pcm(session_id, chunk_audio, sample_rate=48000, channels=1)
                                     print(f"📤 Emitted EARLY LiveKit audio chunk ({len(chunk_audio)} bytes)", flush=True)
                                 else:
                                     chunk_base64 = base64.b64encode(chunk_audio).decode('utf-8')
@@ -3106,7 +3106,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                                     agent_response,
                                     voice="aura-asteria-en",
                                     encoding="linear16",
-                                    sample_rate=24000,
+                                    sample_rate=48000,
                                     container="none"
                                 )
                             else:
@@ -3117,7 +3117,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                             raise Exception(f"{tts_provider.capitalize()} TTS failed to generate audio")
                     
                         if use_livekit_audio:
-                            _send_livekit_pcm(session_id, audio_bytes, sample_rate=24000, channels=1)
+                            _send_livekit_pcm(session_id, audio_bytes, sample_rate=48000, channels=1)
                             audio_base64 = ""
                             print(f"🔊 TTS generated for LiveKit: {len(audio_bytes)} bytes", flush=True)
                             sentry_capture_voice_event("tts_generation_completed", session_id, session.get('user_id'), details={"audio_size": len(audio_bytes), "chunks": 1, "livekit": True})
@@ -3196,8 +3196,8 @@ def init_socketio(socketio_instance: SocketIO, app):
                     
                                 if chunk_audio:
                                     if use_livekit_audio:
-                                        _send_livekit_pcm(session_id, chunk_audio, sample_rate=24000, channels=1)
-                                        chunk_audio = StreamingTTSStream._wrap_linear16_wav(chunk_audio, sample_rate=24000, channels=1, sample_width=2)
+                                        _send_livekit_pcm(session_id, chunk_audio, sample_rate=48000, channels=1)
+                                        chunk_audio = StreamingTTSStream._wrap_linear16_wav(chunk_audio, sample_rate=48000, channels=1, sample_width=2)
                                     chunk_base64 = base64.b64encode(chunk_audio).decode('utf-8')
                                     all_audio_chunks.append(chunk_base64)
                     
