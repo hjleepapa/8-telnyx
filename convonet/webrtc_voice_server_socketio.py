@@ -2944,6 +2944,9 @@ def init_socketio(socketio_instance: SocketIO, app):
                     # Use timeout that matches routes.py execution_timeout (15s for Claude/OpenAI, 12s for Gemini)
                     timeout_seconds = 60.0
                     
+                    # Container to share results between agent_task and main thread
+                    result_container = {'response': None, 'transfer': None, 'done': False, 'error': None}
+                    
                     # Define the task to run in the background thread
                     async def agent_task():
                         try:
