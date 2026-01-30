@@ -307,8 +307,10 @@ LiveKit SFU → Browser playback
         const LIVEKIT_URL = "{{ livekit_url }}";
         const VAD_THRESHOLD = 0.015;
         const VAD_SPEECH_FRAMES = 3;
-        const VAD_SILENCE_FRAMES = 12;
+        const VAD_SILENCE_FRAMES = 20;  // Increased from 12 to 20 (2 seconds) for more tolerance
+        const VAD_RECORDING_GRACE_PERIOD = 2000;  // 2 second grace period after recording starts
         let assistantStartedSpeakingAt = 0;
+        let recordingStartedAt = 0;  // Track when recording started for grace period
         handsFreeEnabled = LIVEKIT_ENABLED;
         const LIVEKIT_DEBUG = window.location.search.includes('livekitDebug=1');
 
@@ -1002,6 +1004,10 @@ LiveKit SFU → Browser playback
 
             stopAllPlayback();
             isRecording = true;
+            recordingStartedAt = Date.now();  // Track when recording started
+            // Reset VAD counters to give user time to start speaking
+            vadSilenceFrames = 0;
+            vadSpeechFrames = 0;
             if (vadContext && vadContext.state === 'suspended') {
                 try { await vadContext.resume(); } catch (_) {}
             }
@@ -1166,7 +1172,9 @@ LiveKit SFU → Browser playback
                     if (!isRecording && vadSpeechFrames >= VAD_SPEECH_FRAMES) {
                         startRecording({ skipMicEnable: true, silentUI: true });
                     }
-                    if (isRecording && vadSilenceFrames >= VAD_SILENCE_FRAMES) {
+                    // Only auto-stop if grace period has passed (gives user time to start speaking)
+                    const timeSinceRecordingStarted = Date.now() - recordingStartedAt;
+                    if (isRecording && vadSilenceFrames >= VAD_SILENCE_FRAMES && timeSinceRecordingStarted > VAD_RECORDING_GRACE_PERIOD) {
                         stopRecording({ skipMicDisable: true, silentUI: true });
                     }
                 }, 100);
