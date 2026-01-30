@@ -292,10 +292,12 @@ class StreamingTTSStream:
     def send_text(self, text: str):
         if not text or not text.strip() or not self.text_queue:
             return
+        print(f"🎙️ StreamingTTS: received text: {text[:50]}...", flush=True)
         asyncio.run_coroutine_threadsafe(self.text_queue.put(text), self.loop)
 
     def flush_and_close(self):
         if self.text_queue:
+            print(f"🎙️ StreamingTTS: flushing", flush=True)
             asyncio.run_coroutine_threadsafe(self.text_queue.put(None), self.loop)
 
     def stop(self):
@@ -305,6 +307,7 @@ class StreamingTTSStream:
     def _emit_audio_chunk(self, chunk_bytes: bytes):
         try:
             if self.use_livekit_audio and _livekit_active():
+                print(f"🔊 StreamingTTS: sending {len(chunk_bytes)} bytes to LiveKit", flush=True)
                 _send_livekit_pcm(self.session_id, chunk_bytes, sample_rate=48000, channels=1)
                 return
             # Deepgram streaming TTS returns raw PCM (linear16); wrap as WAV for browser decode.

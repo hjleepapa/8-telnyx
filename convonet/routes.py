@@ -2037,43 +2037,45 @@ Your messages are read aloud, so be brief and conversational."""
                                 # STREAMING OPTIMIZATION: Emit text chunks as they arrive
                                 if "messages" in state:
                                     from langchain_core.messages import AIMessage
-                                    for msg in state.get("messages", []):
-                                        if not isinstance(msg, AIMessage):
-                                            continue
-                                        if not hasattr(msg, 'content') or not isinstance(msg.content, str) or not msg.content:
-                                            continue
+                                    # ONLY process the latest message to avoid re-streaming history
+                                    messages = state.get("messages", [])
+                                    if messages:
+                                        msg = messages[-1]
+                                        if isinstance(msg, AIMessage) and hasattr(msg, 'content') and isinstance(msg.content, str) and msg.content:
+                                            # Avoid repeating already streamed text; emit only new suffix
+                                            msg_id = getattr(msg, "id", None)
+                                            # For new messages, id might be None. Use a unique object for comparison if needed.
+                                            # But in a single run, messages[-1] will be the same object or a growing one.
+                                            
+                                            # If this is a different message than before, reset tracking
+                                            if msg_id != last_streamed_msg_id:
+                                                last_streamed_msg_id = msg_id
+                                                last_streamed_text = ""
 
-                                        # Avoid repeating already streamed text; emit only new suffix
-                                        msg_id = getattr(msg, "id", None)
-                                        if msg_id is not None and msg_id != last_streamed_msg_id:
-                                            last_streamed_msg_id = msg_id
-                                            last_streamed_text = ""
+                                            if msg.content.startswith(last_streamed_text):
+                                                delta_text = msg.content[len(last_streamed_text):]
+                                            else:
+                                                delta_text = msg.content
 
-                                        if msg.content.startswith(last_streamed_text):
-                                            delta_text = msg.content[len(last_streamed_text):]
-                                        else:
-                                            delta_text = msg.content
+                                            if delta_text:
+                                                # Emit to client via Socket.IO if available
+                                                if socketio and session_id:
+                                                    socketio.emit(
+                                                        'agent_stream_chunk',
+                                                        {'text': delta_text, 'type': 'text'},
+                                                        namespace='/voice',
+                                                        room=session_id
+                                                    )
 
-                                        if not delta_text:
-                                            continue
+                                                # Call text_chunk_callback for early/streaming TTS (server-side)
+                                                if text_chunk_callback:
+                                                    try:
+                                                        # print(f"🎙️ Sending delta to TTS: {delta_text[:50]}...", flush=True)
+                                                        text_chunk_callback(delta_text)
+                                                    except Exception as callback_error:
+                                                        print(f"⚠️ Error in text_chunk_callback: {callback_error}", flush=True)
 
-                                        # Emit to client via Socket.IO if available
-                                        if socketio and session_id:
-                                            socketio.emit(
-                                                'agent_stream_chunk',
-                                                {'text': delta_text, 'type': 'text'},
-                                                namespace='/voice',
-                                                room=session_id
-                                            )
-
-                                        # Call text_chunk_callback for early/streaming TTS (server-side)
-                                        if text_chunk_callback:
-                                            try:
-                                                text_chunk_callback(delta_text)
-                                            except Exception as callback_error:
-                                                print(f"⚠️ Error in text_chunk_callback: {callback_error}", flush=True)
-
-                                        last_streamed_text = msg.content
+                                                last_streamed_text = msg.content
                                 
                                 if "messages" in state:
                                     new_tool_calls_in_update = 0

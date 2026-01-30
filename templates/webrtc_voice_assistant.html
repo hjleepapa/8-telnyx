@@ -942,17 +942,17 @@ LiveKit SFU → Browser playback
                     }
                     const rms = Math.sqrt(sum / data.length);
                     
-                    // If assistant is speaking, use a much higher threshold to avoid self-interruption
-                    const effectiveThreshold = assistantSpeaking ? (VAD_THRESHOLD * 6) : VAD_THRESHOLD;
+                    // If assistant is speaking, use a MUCH higher threshold to avoid self-interruption (echo)
+                    const effectiveThreshold = assistantSpeaking ? (VAD_THRESHOLD * 15) : VAD_THRESHOLD;
                     
                     if (rms > effectiveThreshold) {
                         if (assistantSpeaking) {
-                            console.log('🗣️ User interrupted assistant (high volume)');
-                            assistantSpeaking = false;
-                            // Mute mic immediately to prevent further echo loops
+                            console.log(`🗣️ User interrupted assistant (volume: ${rms.toFixed(4)}, threshold: ${effectiveThreshold.toFixed(4)})`);
+                            stopAllPlayback();
+                            // Mute mic immediately to prevent further echo loops during the "interrupted" state
                             await setMicrophoneEnabled(false);
-                            // Then resume it for actual recording
-                            setTimeout(() => setMicrophoneEnabled(true), 100);
+                            // Then resume it for actual recording after a short delay
+                            setTimeout(() => setMicrophoneEnabled(true), 200);
                         }
                         vadSpeechFrames += 1;
                         vadSilenceFrames = 0;
