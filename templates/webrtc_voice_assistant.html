@@ -506,6 +506,12 @@ LiveKit SFU → Browser playback
                 livekitRoom.on(LiveKitClient.RoomEvent.TrackSubscribed, (track) => {
                     console.log(`🔊 LiveKit track subscribed: ${track.kind} (${track.sid})`);
                     if (track.kind === LiveKitClient.Track.Kind.Audio) {
+                        // Check if we already have an element for this track
+                        if (livekitAudioElements.has(track.sid)) {
+                            console.log(`♻️ Using existing audio element for track: ${track.sid}`);
+                            return;
+                        }
+
                         const element = track.attach();
                         element.autoplay = true;
                         element.playsInline = true;

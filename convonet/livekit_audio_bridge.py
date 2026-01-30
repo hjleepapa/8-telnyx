@@ -206,6 +206,19 @@ class LiveKitRoomSession:
                 
             async with self._send_lock:
                 try:
+                    # Check connection state
+                    if self.room.connection_state != rtc.ConnectionState.CONN_CONNECTED:
+                        print(f"🔄 LiveKit room not connected ({self.room.connection_state}), attempting to wait...", flush=True)
+                        # Wait up to 5 seconds for reconnection
+                        for _ in range(10):
+                            if self.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+                                break
+                            await asyncio.sleep(0.5)
+                        
+                        if self.room.connection_state != rtc.ConnectionState.CONN_CONNECTED:
+                            print(f"❌ LiveKit room still not connected ({self.room.connection_state}), cannot send audio.", flush=True)
+                            return
+
                     # Wait for at least one remote participant (the user) to be ready
                     wait_count = 0
                     while wait_count < 6:
@@ -223,13 +236,18 @@ class LiveKitRoomSession:
                         return
     
                     frame_idx = 0
+                    start_time = time.time()
                     for frame in _queue_frames():
                         if self._closed: break
                         await self.audio_source.capture_frame(frame)
                         frame_idx += 1
-                        # Real-time pacing: avoid loop starvation.
-                        if frame_idx % 2 == 0:
-                             await asyncio.sleep(0.01)
+                        
+                        # Real-time pacing: 20ms per frame
+                        elapsed = time.time() - start_time
+                        expected = frame_idx * 0.020
+                        if expected > elapsed:
+                            await asyncio.sleep(expected - elapsed)
+                            
                     print(f"✅ LiveKit sent {frame_idx} audio frames (closed={self._closed})", flush=True)
                 except Exception as e:
                     print(f"⚠️ LiveKit capture_frame error: {e}", flush=True)
@@ -642,6 +660,10 @@ class LiveKitRoomSession:
         async def _monitor_room():
             while not self._closed:
                 try:
+                    # Heartbeat: send a small data packet to keep connection alive
+                    if self.room.connection_state == rtc.ConnectionState.CONN_CONNECTED:
+                        await self.room.local_participant.publish_data(b"hb")
+                    
                     name = getattr(self.room, "name", "unknown")
                     parts = list(getattr(self.room, "remote_participants", {}).keys())
                     print(f"📊 Room '{name}' monitor: participants={parts}", flush=True)
