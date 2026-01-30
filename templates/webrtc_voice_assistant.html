@@ -269,6 +269,7 @@ LiveKit SFU → Browser playback
         let localAudioTrack = null;
         let handsFreeEnabled = true;
         let assistantSpeaking = false;
+        let assistantStoppedSpeakingAt = 0;
         function setAssistantSpeaking(value, reason = 'unknown') {
             if (assistantSpeaking !== value) {
                 console.log(`🎙️ assistantSpeaking: ${assistantSpeaking} -> ${value} (reason: ${reason})`);
@@ -281,6 +282,9 @@ LiveKit SFU → Browser playback
                 
                 if (value) {
                     assistantStartedSpeakingAt = Date.now();
+                } else {
+                    // Track when assistant stopped speaking for echo cooldown
+                    assistantStoppedSpeakingAt = Date.now();
                 }
             }
         }
@@ -964,6 +968,11 @@ LiveKit SFU → Browser playback
         function resetMicButton() {
             isRecording = false;
             isProcessing = false;
+            // Clear the safety timeout
+            if (processingTimeout) {
+                clearTimeout(processingTimeout);
+                processingTimeout = null;
+            }
             const button = document.getElementById('micButton');
             const icon = document.getElementById('micIcon');
             const label = document.getElementById('micLabel');
@@ -1033,6 +1042,8 @@ LiveKit SFU → Browser playback
             }
         }
 
+        let processingTimeout = null;
+        
         async function stopRecording(options = {}) {
             const skipMicDisable = options.skipMicDisable || false;
             const silentUI = options.silentUI || false;
@@ -1046,6 +1057,16 @@ LiveKit SFU → Browser playback
                 if (icon) icon.className = 'fas fa-spinner fa-spin';
                 if (label) label.textContent = 'Processing...';
             }
+
+            // Safety timeout: reset button if no response within 30 seconds
+            if (processingTimeout) clearTimeout(processingTimeout);
+            processingTimeout = setTimeout(() => {
+                if (isProcessing) {
+                    console.warn('⚠️ Processing timeout - resetting button state');
+                    showStatus('Request timed out. Please try again.', 'error');
+                    resetMicButton();
+                }
+            }, 30000);
 
             try {
                 if (!skipMicDisable && livekitRoom && livekitMicEnabled) {
@@ -1115,6 +1136,14 @@ LiveKit SFU → Browser playback
                 // Cooldown: ignore VAD for 1 second after assistant starts speaking to avoid echo from start of audio
                 const timeSinceAssistantStarted = Date.now() - assistantStartedSpeakingAt;
                 if (assistantSpeaking && timeSinceAssistantStarted < 1000) {
+                    return;
+                }
+                
+                // Cooldown: ignore VAD for 1.5 seconds after assistant STOPS speaking to avoid detecting echo
+                const timeSinceAssistantStopped = Date.now() - assistantStoppedSpeakingAt;
+                if (!assistantSpeaking && assistantStoppedSpeakingAt > 0 && timeSinceAssistantStopped < 1500) {
+                    // Reset speech frames during cooldown to prevent false triggers
+                    vadSpeechFrames = 0;
                     return;
                 }
 

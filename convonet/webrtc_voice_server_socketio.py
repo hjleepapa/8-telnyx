@@ -2527,6 +2527,11 @@ def init_socketio(socketio_instance: SocketIO, app):
         # Throttling: Ignore tiny buffers
         if buffer_size < 10000 and not transcribed_text_override:
             print(f"⚠️ Audio buffer too small ({buffer_size} bytes), skipping processing", flush=True)
+            # Notify client so it can reset its state
+            socketio.emit('error', {
+                'message': 'Recording too short. Please speak for a bit longer.',
+                'details': f'Audio buffer was only {buffer_size} bytes. Try holding the record button longer or speaking for at least 1 second.'
+            }, namespace='/voice', room=session_id)
             return
         
         # Set guard
@@ -2544,6 +2549,13 @@ def init_socketio(socketio_instance: SocketIO, app):
                     print(f"🔍 Background Audio Analysis: RMS={rms:.2f}, Unique={unique_vals}, Samples={len(audio_data)}")
                     if rms < 100 or unique_vals < 10:
                         print(f"⚠️ Audio quality too low or silent (RMS={rms:.2f}), skipping.", flush=True)
+                        # Notify client and clear guard before early return
+                        socketio.emit('error', {
+                            'message': 'No speech detected. Please speak clearly into your microphone.',
+                            'details': f'Audio was too quiet or silent (volume level: {rms:.0f}). Try speaking louder or closer to your microphone.'
+                        }, namespace='/voice', room=session_id)
+                        processing_guards.pop(session_id, None)
+                        print(f"🧹 processing_guard CLEARED (audio too quiet) for session: {session_id}", flush=True)
                         return
         except Exception as e:
             print(f"⚠️ Background audio analysis failed: {e}")
