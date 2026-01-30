@@ -221,13 +221,15 @@ class LiveKitRoomSession:
 
                     # Wait for at least one remote participant (the user) to be ready
                     wait_count = 0
-                    while wait_count < 6:
+                    while wait_count < 10: # Increased wait time
                          participants = getattr(self.room, "remote_participants", {})
                          if participants:
                               print(f"✅ LiveKit participant found after {wait_count*0.5}s. Starting audio stream.", flush=True)
+                              # Extra safety: wait a tiny bit more for subscription to stabilize
+                              await asyncio.sleep(0.2)
                               break
                                
-                         print(f"⏳ LiveKit waiting for participant (retry {wait_count+1}/6)...", flush=True)
+                         print(f"⏳ LiveKit waiting for participant (retry {wait_count+1}/10)...", flush=True)
                          await asyncio.sleep(0.5)
                          wait_count += 1
                     
@@ -239,6 +241,12 @@ class LiveKitRoomSession:
                     start_time = time.time()
                     for frame in _queue_frames():
                         if self._closed: break
+                        
+                        # Check if audio_source is still valid
+                        if not self.audio_source:
+                            print(f"❌ LiveKit audio_source became None during send", flush=True)
+                            break
+                            
                         await self.audio_source.capture_frame(frame)
                         frame_idx += 1
                         
