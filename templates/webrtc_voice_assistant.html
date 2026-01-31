@@ -1143,7 +1143,15 @@ LiveKit SFU → Browser playback
         }
 
         function startVadLoop() {
-            if (vadTimer || !localAudioTrack) return;
+            if (vadTimer) {
+                console.log('🔊 VAD loop already running, skipping');
+                return;
+            }
+            if (!localAudioTrack) {
+                console.log('⚠️ VAD: localAudioTrack not available');
+                return;
+            }
+            console.log('🎙️ Starting VAD loop');
             try {
                 const track = localAudioTrack.mediaStreamTrack;
                 const stream = new MediaStream([track]);
@@ -1156,6 +1164,7 @@ LiveKit SFU → Browser playback
                 vadAnalyser.fftSize = 2048;
                 source.connect(vadAnalyser);
                 const data = new Float32Array(vadAnalyser.fftSize);
+                let vadLoopCount = 0;
                 vadTimer = setInterval(async () => {
                     if (!vadAnalyser) return;
                     vadAnalyser.getFloatTimeDomainData(data);
@@ -1164,10 +1173,16 @@ LiveKit SFU → Browser playback
                         sum += data[i] * data[i];
                     }
                     const rms = Math.sqrt(sum / data.length);
+                    vadLoopCount++;
+                    
+                    // Debug: log every 50 iterations (5 seconds) to confirm VAD is running
+                    if (vadLoopCount % 50 === 0) {
+                        console.log(`🔊 VAD status: rms=${rms.toFixed(4)}, threshold=${VAD_THRESHOLD}, isRecording=${isRecording}, speechFrames=${vadSpeechFrames}, silenceFrames=${vadSilenceFrames}`);
+                    }
                     
                     // Debug: log high volume frames
                     if (rms > VAD_THRESHOLD * 0.5) {
-                        // console.log(`🔊 VAD RMS: ${rms.toFixed(4)} (threshold: ${effectiveThreshold.toFixed(4)}, as: ${assistantSpeaking})`);
+                        console.log(`🔊 VAD detected activity: rms=${rms.toFixed(4)}, threshold=${VAD_THRESHOLD}, isRecording=${isRecording}, speechFrames=${vadSpeechFrames}`);
                     }
                     
                 // Cooldown: ignore VAD for 1 second after assistant starts speaking to avoid echo from start of audio
