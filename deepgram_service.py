@@ -308,6 +308,38 @@ class DeepgramService:
             logger.warning(f"⚠️ Audio quality analysis failed: {e}")
             return {"is_silence": False, "rms": 0, "clipping_percentage": 0}
     
+    def _strip_markdown_for_tts(self, text: str) -> str:
+        """Strip markdown formatting from text before TTS to avoid reading 'star star' etc."""
+        import re
+        
+        # Remove bold/italic markers (**, *, __, _)
+        text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)  # **bold**
+        text = re.sub(r'\*([^*]+)\*', r'\1', text)      # *italic*
+        text = re.sub(r'__([^_]+)__', r'\1', text)      # __bold__
+        text = re.sub(r'_([^_]+)_', r'\1', text)        # _italic_
+        
+        # Remove headers (# ## ### etc.)
+        text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+        
+        # Remove code blocks and inline code
+        text = re.sub(r'```[^`]*```', '', text, flags=re.DOTALL)  # ```code blocks```
+        text = re.sub(r'`([^`]+)`', r'\1', text)  # `inline code`
+        
+        # Remove links [text](url) -> text
+        text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+        
+        # Remove horizontal rules
+        text = re.sub(r'^[-*_]{3,}\s*$', '', text, flags=re.MULTILINE)
+        
+        # Remove blockquotes
+        text = re.sub(r'^>\s+', '', text, flags=re.MULTILINE)
+        
+        # Clean up extra whitespace
+        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = text.strip()
+        
+        return text
+
     def synthesize_speech(
         self,
         text: str,
@@ -330,7 +362,9 @@ class DeepgramService:
             Audio bytes (MP3 format) or None if failed
         """
         try:
-            logger.info(f"🔊 Deepgram TTS: Synthesizing speech for text: '{text[:50]}...'")
+            # Strip markdown formatting to avoid TTS reading "star star" etc.
+            clean_text = self._strip_markdown_for_tts(text)
+            logger.info(f"🔊 Deepgram TTS: Synthesizing speech for text: '{clean_text[:50]}...'")
             
             # Use Deepgram's TTS API
             url = "https://api.deepgram.com/v1/speak"
@@ -349,9 +383,9 @@ class DeepgramService:
             if container:
                 params["container"] = container
             
-            # Request body
+            # Request body - use clean_text with markdown stripped
             payload = {
-                "text": text
+                "text": clean_text
             }
             
             # Make the request

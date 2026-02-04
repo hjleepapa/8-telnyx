@@ -176,12 +176,48 @@ def get_deepgram_tts_service():
         deepgram_service = get_deepgram_service()
     return deepgram_service
 
+def _strip_markdown_for_tts(text: str) -> str:
+    """Strip markdown formatting from text before TTS to avoid reading 'star star' etc."""
+    import re
+    
+    # Remove bold/italic markers (**, *, __, _)
+    text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)  # **bold**
+    text = re.sub(r'\*([^*]+)\*', r'\1', text)      # *italic*
+    text = re.sub(r'__([^_]+)__', r'\1', text)      # __bold__
+    text = re.sub(r'_([^_]+)_', r'\1', text)        # _italic_
+    
+    # Remove headers (# ## ### etc.)
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    
+    # Remove code blocks and inline code
+    text = re.sub(r'```[^`]*```', '', text, flags=re.DOTALL)  # ```code blocks```
+    text = re.sub(r'`([^`]+)`', r'\1', text)  # `inline code`
+    
+    # Remove links [text](url) -> text
+    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)
+    
+    # Remove horizontal rules
+    text = re.sub(r'^[-*_]{3,}\s*$', '', text, flags=re.MULTILINE)
+    
+    # Remove blockquotes
+    text = re.sub(r'^>\s+', '', text, flags=re.MULTILINE)
+    
+    # Clean up extra whitespace
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = text.strip()
+    
+    return text
+
 def _synthesize_deepgram_linear16(text: str, voice: str = "aura-asteria-en", sample_rate: int = 48000) -> Optional[bytes]:
     deepgram_tts = get_deepgram_tts_service()
     if not deepgram_tts:
         return None
+    
+    # Strip markdown formatting to avoid TTS reading "star star" etc.
+    clean_text = _strip_markdown_for_tts(text)
+    
     return deepgram_tts.synthesize_speech(
-        text,
+        clean_text,
         voice=voice,
         encoding="linear16",
         sample_rate=sample_rate,

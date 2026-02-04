@@ -1868,7 +1868,12 @@ CRITICAL RULES:
 3. Be proactive - if user says "create", "add", "todo", "reminder", "calendar event", immediately use the tool
 4. Make reasonable assumptions when details are missing
 
-Your messages are read aloud, so be brief and conversational."""
+VOICE OUTPUT FORMAT (CRITICAL):
+- This is a VOICE assistant - your responses will be READ ALOUD by text-to-speech
+- DO NOT use markdown formatting (no **, no *, no #, no bullet points)
+- DO NOT use numbered lists with periods - say "first", "second", "third" instead
+- Use natural spoken language, not written/visual formatting
+- Keep responses brief and conversational for speech"""
                         
                         # Get conversation history from AgentState
                         # AgentState is a Pydantic BaseModel, so we access it as an attribute
