@@ -36,7 +36,7 @@ def detect_healthcare_intent(text: str) -> bool:
         "eob",
         "why was my claim",
         
-        # Eligibility
+        # Eligibility & Coverage
         "am i covered",
         "coverage active",
         "eligibility",
@@ -45,6 +45,12 @@ def detect_healthcare_intent(text: str) -> bool:
         "insurance active",
         "coverage dates",
         "when does my coverage",
+        "health care coverage",
+        "healthcare coverage",
+        "check coverage",
+        "my coverage",
+        "coverage status",
+        "verify coverage",
         
         # Benefits
         "benefits",
