@@ -64,6 +64,7 @@ def detect_healthcare_intent(text: str) -> bool:
         "my plan", "plan benefits", "deductible", "met my deductible",
         "out of pocket", "out-of-pocket", "oop max", "copay", "co-pay",
         "coinsurance",
+        "appeal", "appeal denial", "denial",
         
         # Prior Authorization
         "prior auth", "prior authorization", "pre-authorization",
