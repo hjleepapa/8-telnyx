@@ -81,9 +81,15 @@ def detect_healthcare_intent(text: str) -> bool:
         "preventive care", "annual physical", "screening",
         "mammogram", "colonoscopy", "flu shot",
         
+        # Medical Procedures
+        "mri", "ct scan", "cat scan", "x-ray", "xray", "ultrasound",
+        "surgery", "procedure", "lab work", "blood test",
+        "physical therapy", "pt session", "imaging", "scan",
+        
         # General Healthcare
         "health insurance", "member services", "healthcare",
-        "health plan", "medical bill", "medical claim", "insurance claim"
+        "health plan", "medical bill", "medical claim", "insurance claim",
+        "why was my", "was denied", "got denied"
     ]
     
     for keyword in healthcare_keywords:

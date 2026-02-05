@@ -115,6 +115,22 @@ def detect_healthcare_intent(text: str) -> bool:
         "colonoscopy",
         "flu shot",
         
+        # Medical Procedures (commonly discussed with insurance)
+        "mri",
+        "ct scan",
+        "cat scan",
+        "x-ray",
+        "xray",
+        "ultrasound",
+        "surgery",
+        "procedure",
+        "lab work",
+        "blood test",
+        "physical therapy",
+        "pt session",
+        "imaging",
+        "scan",
+        
         # General Healthcare
         "health insurance",
         "insurance question",
@@ -124,7 +140,10 @@ def detect_healthcare_intent(text: str) -> bool:
         "medical bill",
         "medical claim",
         "insurance claim",
-        "health coverage"
+        "health coverage",
+        "why was my",  # Common pattern for denial questions
+        "was denied",
+        "got denied"
     ]
     
     # Check if any healthcare keyword is present
