@@ -89,14 +89,24 @@
         .chart-container {
             background: white;
             border-radius: 12px;
-            padding: 30px;
+            padding: 20px;
             margin-bottom: 20px;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: flex;
+            align-items: center;
+            gap: 30px;
         }
         
         .chart-container h2 {
             color: #333;
-            margin-bottom: 20px;
+            margin-bottom: 0;
+            white-space: nowrap;
+        }
+        
+        .chart-wrapper {
+            width: 200px;
+            height: 200px;
+            flex-shrink: 0;
         }
         
         .interactions-list {
@@ -352,7 +362,10 @@
         
         <div class="chart-container">
             <h2>Provider Distribution</h2>
-            <canvas id="providerChart"></canvas>
+            <div class="chart-wrapper">
+                <canvas id="providerChart"></canvas>
+            </div>
+            <div id="lastRefresh" style="color: #999; font-size: 12px;">Auto-refresh: every 5 minutes</div>
         </div>
         
         <div class="interactions-list">
@@ -377,7 +390,7 @@
                             <button class="filter-btn" onclick="filterByDomain('healthcare')" style="border-color: #ef4444;">🏥 Healthcare</button>
                         </div>
                     </div>
-                    <button class="refresh-btn" onclick="loadInteractions()">🔄 Refresh</button>
+                    <button class="refresh-btn" onclick="manualRefresh()">🔄 Refresh</button>
                 </div>
             </div>
             <div id="interactionsList" class="loading">Loading interactions...</div>
@@ -391,12 +404,29 @@
         let selectedInteractionId = null;
         
         // Load data on page load
+        const AUTO_REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes in milliseconds
+        
         document.addEventListener('DOMContentLoaded', function() {
             loadStats();
             loadInteractions();
-            setInterval(loadStats, 10000); // Refresh stats every 10 seconds
-            setInterval(loadInteractions, 10000); // Refresh interactions every 10 seconds
+            updateLastRefreshTime();
+            setInterval(() => {
+                loadStats();
+                loadInteractions();
+                updateLastRefreshTime();
+            }, AUTO_REFRESH_INTERVAL);
         });
+        
+        function updateLastRefreshTime() {
+            const now = new Date().toLocaleTimeString();
+            document.getElementById('lastRefresh').textContent = `Last refresh: ${now} (auto-refresh: every 5 min)`;
+        }
+        
+        function manualRefresh() {
+            loadStats();
+            loadInteractions();
+            updateLastRefreshTime();
+        }
         
         async function loadStats() {
             try {
