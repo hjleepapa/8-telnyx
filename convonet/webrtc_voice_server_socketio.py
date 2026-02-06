@@ -1277,6 +1277,55 @@ def chunk_text_by_sentences(text: str, min_chunk_size: int = 100, max_chunk_size
     return filtered_chunks if filtered_chunks else [text.strip()] if text.strip() else []
 
 
+def _normalize_agent_response_text(agent_response):
+    """Normalize agent responses to plain text for TTS/UI."""
+    try:
+        if isinstance(agent_response, list):
+            texts = []
+            for item in agent_response:
+                if isinstance(item, dict):
+                    if item.get("type") == "text" and item.get("text"):
+                        texts.append(item["text"])
+                    elif isinstance(item.get("text"), str):
+                        texts.append(item["text"])
+            if texts:
+                agent_response = " ".join(t.strip() for t in texts if t)
+
+        if isinstance(agent_response, dict):
+            if isinstance(agent_response.get("text"), str):
+                agent_response = agent_response["text"]
+            elif isinstance(agent_response.get("message"), str):
+                agent_response = agent_response["message"]
+            else:
+                agent_response = json.dumps(agent_response)
+
+        if isinstance(agent_response, str):
+            stripped = agent_response.strip()
+            if stripped.startswith("{") and stripped.endswith("}"):
+                try:
+                    parsed = json.loads(stripped)
+                    if isinstance(parsed, dict):
+                        if isinstance(parsed.get("message"), str):
+                            return parsed["message"]
+                        if "provider" in parsed and "network_status" in parsed:
+                            provider = parsed.get("provider", {})
+                            network = parsed.get("network_status", {})
+                            name = provider.get("name")
+                            specialty = provider.get("specialty")
+                            status = "in network" if network.get("is_in_network") else "out of network"
+                            tier = network.get("tier_description") or network.get("network_tier")
+                            base = " ".join(p for p in [name, f"({specialty})" if specialty else None] if p)
+                            details = ", ".join(p for p in [status, tier] if p)
+                            if base and details:
+                                return f"{base} is {details}."
+                except Exception:
+                    pass
+
+        return agent_response if isinstance(agent_response, str) else str(agent_response)
+    except Exception:
+        return str(agent_response)
+
+
 @webrtc_bp.route('/debug-session/<session_id>')
 def debug_session(session_id):
     """Debug endpoint to check Redis session data"""
@@ -3166,6 +3215,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                     traceback.print_exc()
                     agent_response = "I'm sorry, I encountered an error. Please try again."
                     transfer_marker = None
+                agent_response = _normalize_agent_response_text(agent_response)
                 sentry_capture_voice_event("agent_processing_completed", session_id, session.get('user_id'), details={"response_length": len(agent_response)})
                 if response_cancel_event.is_set():
                     print("🛑 Response cancelled before TTS generation (barge-in)", flush=True)
