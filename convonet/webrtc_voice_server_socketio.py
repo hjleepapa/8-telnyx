@@ -113,6 +113,7 @@ STREAMING_TTS_ENABLED = os.getenv('STREAMING_TTS_ENABLED', 'true').lower() == 't
 STREAMING_STT_ENDPOINTING_MS = int(os.getenv('STREAMING_STT_ENDPOINTING_MS', '300'))
 STREAMING_STT_MODEL = os.getenv('STREAMING_STT_MODEL', 'nova-2')
 STREAMING_TTS_MODEL = os.getenv('STREAMING_TTS_MODEL', 'aura-2-asteria-en')
+CALL_CENTER_MAX_CONVERSATION_MESSAGES = int(os.getenv('CALL_CENTER_MAX_CONVERSATION_MESSAGES', '200'))
 
 # LiveKit configuration (audio transport)
 LIVEKIT_ENABLED = os.getenv('LIVEKIT_ENABLED', 'false').lower() == 'true'
@@ -739,6 +740,54 @@ class AgentProcessor:
 agent_processor = AgentProcessor()
 
 
+def _parse_session_conversation_history(session_data: dict | None) -> list:
+    if not session_data:
+        return []
+    raw_history = session_data.get('conversation_history')
+    if not raw_history:
+        return []
+    if isinstance(raw_history, list):
+        return raw_history
+    if isinstance(raw_history, str):
+        try:
+            return json.loads(raw_history)
+        except Exception:
+            return []
+    return []
+
+
+def _append_session_conversation_history(session_id: str, session_record: dict | None, user_text: str | None, assistant_text: str | None):
+    if not session_id or not session_record:
+        return
+    if not user_text and not assistant_text:
+        return
+    history = _parse_session_conversation_history(session_record)
+    timestamp = int(time.time())
+    if user_text:
+        history.append({
+            "role": "user",
+            "content": user_text,
+            "timestamp": timestamp
+        })
+    if assistant_text:
+        history.append({
+            "role": "assistant",
+            "content": assistant_text,
+            "timestamp": timestamp
+        })
+    if CALL_CENTER_MAX_CONVERSATION_MESSAGES > 0 and len(history) > CALL_CENTER_MAX_CONVERSATION_MESSAGES:
+        history = history[-CALL_CENTER_MAX_CONVERSATION_MESSAGES:]
+    try:
+        if redis_manager.is_available():
+            update_session(session_id, {"conversation_history": json.dumps(history)})
+        else:
+            session_record["conversation_history"] = history
+            if session_id in active_sessions:
+                active_sessions[session_id]["conversation_history"] = history
+    except Exception as e:
+        print(f"⚠️ Unable to update session conversation history: {e}")
+
+
 def build_customer_profile_from_session(session_data: dict | None) -> dict | None:
     """
     Build a comprehensive customer profile for the call center popup.
@@ -791,6 +840,10 @@ def build_customer_profile_from_session(session_data: dict | None) -> dict | Non
                     })
         except Exception as e:
             print(f"⚠️ Unable to load customer profile for call center: {e}")
+
+    session_history = _parse_session_conversation_history(session_data)
+    if session_history:
+        profile["conversation_history"] = session_history[-CALL_CENTER_MAX_CONVERSATION_MESSAGES:]
     
     # Retrieve conversation history from LangGraph
     try:
@@ -798,7 +851,7 @@ def build_customer_profile_from_session(session_data: dict | None) -> dict | Non
         from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
         
         thread_id = f"user-{user_id}" if user_id else None
-        if thread_id:
+        if thread_id and not profile["conversation_history"]:
             agent = get_agent()  # Default to todo agent for history
             if agent and hasattr(agent, 'graph'):
                 config = {"configurable": {"thread_id": thread_id}}
@@ -895,7 +948,7 @@ def build_customer_profile_from_session(session_data: dict | None) -> dict | Non
                                 
                                 profile["activities"].append(activity)
                         
-                        profile["conversation_history"] = conversation[-20:]  # Last 20 messages
+                        profile["conversation_history"] = conversation[-CALL_CENTER_MAX_CONVERSATION_MESSAGES:]
                         profile["activities"] = profile["activities"][-10:]  # Last 10 activities
                         
                 except Exception as e:
@@ -3227,6 +3280,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                     agent_response = "I'm sorry, I encountered an error. Please try again."
                     transfer_marker = None
                 agent_response = _normalize_agent_response_text(agent_response)
+                _append_session_conversation_history(session_id, session, transcribed_text, agent_response)
                 sentry_capture_voice_event("agent_processing_completed", session_id, session.get('user_id'), details={"response_length": len(agent_response)})
                 if response_cancel_event.is_set():
                     print("🛑 Response cancelled before TTS generation (barge-in)", flush=True)

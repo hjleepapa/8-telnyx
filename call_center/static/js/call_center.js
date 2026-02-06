@@ -591,6 +591,9 @@ class CallCenterAgent {
         console.log('Incoming call:', session);
         
         const incomingIdentity = this.extractSessionIdentity(session);
+        const remoteIdentity = session.remote_identity;
+        const callerNumber = remoteIdentity && remoteIdentity.uri ? remoteIdentity.uri.user : null;
+        const callerName = remoteIdentity && remoteIdentity.display_name ? remoteIdentity.display_name : callerNumber;
         const hasActiveCall = this.activeCallSessionId && this.activeCallSessionId !== session.id;
         
         if (hasActiveCall && this.isReinviteForActiveCall(incomingIdentity)) {
@@ -605,7 +608,12 @@ class CallCenterAgent {
                 transferSession: session.id,
                 transferIdentity: incomingIdentity
             });
-            this.handleTransferCall(session, incomingIdentity);
+            this.handleTransferCall(session, incomingIdentity, callerName, callerNumber);
+            return;
+        }
+        
+        if (hasActiveCall && this.shouldReplacePendingSession(session, incomingIdentity, callerNumber)) {
+            this.replacePendingSession(session, incomingIdentity, callerName, callerNumber);
             return;
         }
         
@@ -613,10 +621,6 @@ class CallCenterAgent {
             this.handleParallelInviteDuringActiveCall(session, incomingIdentity);
             return;
         }
-        
-        const remoteIdentity = session.remote_identity;
-        const callerNumber = remoteIdentity.uri.user;
-        const callerName = remoteIdentity.display_name || callerNumber;
         
         // Extract call identifiers from session
         const identity = this.extractSessionIdentity(session);
@@ -744,8 +748,8 @@ class CallCenterAgent {
         return true;
     }
 
-    async handleTransferCall(session, identity) {
-        console.log('Handling transfer call - AUTO-ANSWERING:', {
+    async handleTransferCall(session, identity, callerName, callerNumber) {
+        console.log('Handling transfer call (manual answer):', {
             transferSession: session.id,
             transferIdentity: identity,
             activeSession: this.activeCallSessionId
@@ -755,27 +759,28 @@ class CallCenterAgent {
         const originalSession = this.currentSession;
         const originalCallSessionId = this.activeCallSessionId;
         
-        // Extract transfer call info
-        const remoteIdentity = session.remote_identity;
-        const callerNumber = remoteIdentity.uri.user;
-        const callerName = remoteIdentity.display_name || callerNumber;
         const callId = identity.callId || session.id;
         const callSid = identity.twilioCallSid;
         
-        // Store transfer call info
-        this.pendingTransferSession = session;
-        this.pendingTransferIdentity = identity;
-        this.pendingTransferCall = {
+        // Update current session and call to transfer call
+        this.currentSession = session;
+        this.currentCall = {
             call_id: callId,
             caller_number: callerNumber,
             caller_name: callerName,
             customer_id: callerNumber,
             direction: 'transfer'
         };
+        this.pendingTransferIdentity = identity;
+        this.activeCallSessionId = session.id;
+        this.activeCallIdentity = identity;
         
-        // Update current session and call to transfer call
-        this.currentSession = session;
-        this.currentCall = this.pendingTransferCall;
+        // Notify backend
+        fetch('/call-center/api/call/ringing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(this.currentCall)
+        });
         
         // Show customer popup for transfer call
         const customerId = callerNumber;
@@ -783,7 +788,7 @@ class CallCenterAgent {
         
         // End the original call first (if it exists)
         if (originalSession && originalCallSessionId) {
-            console.log('Ending original call before answering transfer call', {
+            console.log('Ending original call before handling transfer call', {
                 originalSessionId: originalSession.id
             });
             try {
@@ -795,50 +800,14 @@ class CallCenterAgent {
             }
         }
         
-        // Auto-answer the transfer call immediately
-        try {
-            console.log('Auto-answering transfer call...', { sessionId: session.id });
-            
-            // Wait a brief moment to ensure session is ready
-            await new Promise(resolve => setTimeout(resolve, 100));
-            
-            const stream = await this.ensureLocalAudioStream();
-            const options = this.buildSessionOptions(stream);
-            
-            await session.answer(options);
-            console.log('✅ Transfer call auto-answered successfully', session.id);
-            
-            // Update active session references
-            this.activeCallSessionId = session.id;
-            this.activeCallIdentity = identity;
-            
-            // Notify backend
-            try {
-                await fetch('/call-center/api/call/answer', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ call_id: callId })
-                });
-            } catch (fetchError) {
-                console.warn('Failed to notify backend of transfer answer:', fetchError);
-            }
-            
-            // Stop ringtone if playing
-            this.ringTone.pause();
-            this.ringTone.currentTime = 0;
-            
-            // Update UI to show call is established
-            this.onCallEstablished();
-            
-            // Attach event handlers
-            this.attachSessionEventHandlers(session, 'transfer');
-            
-            console.log('Transfer call established and ready');
-        } catch (error) {
-            console.error('Failed to auto-answer transfer call:', error);
-            // Show error to user
-            alert('Failed to auto-answer transfer call. Please try answering manually.');
-        }
+        // Update UI and allow manual answer
+        this.showIncomingCall(callerName, callerNumber);
+        
+        // Play ringtone
+        this.ringTone.play();
+        
+        // Attach event handlers
+        this.attachSessionEventHandlers(session, 'transfer');
     }
 
     handleParallelInviteDuringActiveCall(session, identity) {
@@ -850,6 +819,87 @@ class CallCenterAgent {
         });
         session.on('failed', () => console.log('Ignored parallel session failed', session.id));
         session.on('ended', () => console.log('Ignored parallel session ended', session.id));
+    }
+
+    isSessionPending(session) {
+        if (!session) {
+            return false;
+        }
+        if (typeof session.isEstablished === 'function' && session.isEstablished()) {
+            return false;
+        }
+        if (typeof session.isEnded === 'function' && session.isEnded()) {
+            return false;
+        }
+        const status = session.status;
+        if (typeof JsSIP !== 'undefined' && JsSIP.RTCSession && JsSIP.RTCSession.C) {
+            const C = JsSIP.RTCSession.C;
+            if (status === C.STATUS_CONFIRMED || status === C.STATUS_TERMINATED) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    shouldReplacePendingSession(session, identity, callerNumber) {
+        if (!this.currentSession || !this.currentCall) {
+            return false;
+        }
+        if (!this.isSessionPending(this.currentSession)) {
+            return false;
+        }
+        if (!callerNumber || !this.currentCall.caller_number) {
+            return false;
+        }
+        if (callerNumber !== this.currentCall.caller_number) {
+            return false;
+        }
+        if (this.activeCallIdentity && identity && identity.callId && this.activeCallIdentity.callId === identity.callId) {
+            return false;
+        }
+        return true;
+    }
+
+    replacePendingSession(session, identity, callerName, callerNumber) {
+        console.warn('Replacing pending incoming session with newer INVITE', {
+            oldSession: this.currentSession ? this.currentSession.id : null,
+            newSession: session.id
+        });
+        try {
+            if (this.currentSession && typeof this.currentSession.terminate === 'function') {
+                this.currentSession.terminate({
+                    status_code: 487,
+                    reason_phrase: 'Replaced by newer INVITE'
+                });
+            }
+        } catch (error) {
+            console.warn('Unable to terminate pending session', error);
+        }
+        
+        const callId = identity.callId || session.id;
+        const callSid = identity.twilioCallSid;
+        this.currentSession = session;
+        this.activeCallSessionId = session.id;
+        this.activeCallIdentity = identity;
+        this.currentCall = {
+            call_id: callId,
+            caller_number: callerNumber,
+            caller_name: callerName,
+            customer_id: callerNumber,
+            direction: 'inbound'
+        };
+        
+        // Notify backend
+        fetch('/call-center/api/call/ringing', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(this.currentCall)
+        });
+        
+        this.showIncomingCall(callerName, callerNumber);
+        this.showCustomerPopup(callerNumber, callSid, callId);
+        this.ringTone.play();
+        this.attachSessionEventHandlers(session, 'inbound');
     }
 
     async answerCall() {
@@ -1315,6 +1365,9 @@ class CallCenterAgent {
         this.answerInProgress = false;
         this.activeCallSessionId = null;
         this.activeCallIdentity = null;
+        this.pendingTransferIdentity = null;
+        this.pendingTransferSession = null;
+        this.pendingTransferCall = null;
         this.currentCustomerData = null;
         this.currentCallSid = null;
         this.currentCallId = null;
