@@ -567,7 +567,10 @@ DO NOT respond with text like "I'll create..." - ACTUALLY CALL THE TOOL!
                             if tool_call_id in tool_call_ids:
                                 result_ids.add(tool_call_id)
                                 tool_result_messages.append(j)  # Track index of tool result message
-                                print(f"🤖 Found matching tool_result for tool_call_id: {tool_call_id}", flush=True)
+                                # Avoid log spam for repeated matches
+                                if tool_call_id not in warned_tool_ids:
+                                    print(f"🤖 Found matching tool_result for tool_call_id: {tool_call_id}", flush=True)
+                                    warned_tool_ids.add(tool_call_id)
                                 
                                 # Check if we've found all results
                                 if tool_call_ids.issubset(result_ids):
