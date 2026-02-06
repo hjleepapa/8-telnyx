@@ -799,7 +799,7 @@ def build_customer_profile_from_session(session_data: dict | None) -> dict | Non
         
         thread_id = f"user-{user_id}" if user_id else None
         if thread_id:
-            agent = get_agent(user_id=user_id, agent_type="todo")  # Default to todo agent
+            agent = get_agent()  # Default to todo agent for history
             if agent and hasattr(agent, 'graph'):
                 config = {"configurable": {"thread_id": thread_id}}
                 try:
@@ -2888,6 +2888,11 @@ def init_socketio(socketio_instance: SocketIO, app):
                 if transfer_requested:
                     print(f"🔄 Transfer requested, starting transfer flow...", flush=True)
                     sys.stdout.flush()
+                    # Cancel any in-flight agent response to avoid conflicting messages
+                    try:
+                        cancel_active_response(session_id, reason="caller_transfer_request")
+                    except Exception as cancel_error:
+                        print(f"⚠️ Error canceling active response: {cancel_error}", flush=True)
                     start_transfer_flow('2001', 'support', 'User requested transfer to human agent', source="caller_intent")
                     return
 
