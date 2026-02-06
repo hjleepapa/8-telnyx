@@ -214,6 +214,12 @@
                 <label for="pinInput" class="form-label">Enter Your PIN</label>
                 <input type="password" class="form-control" id="pinInput" placeholder="Enter 4-6 digit PIN" maxlength="6">
             </div>
+            <div class="form-check mb-3">
+                <input class="form-check-input" type="checkbox" id="rememberPinCheckbox">
+                <label class="form-check-label" for="rememberPinCheckbox">
+                    Remember PIN for auto-login on this device
+                </label>
+            </div>
             <button id="authButton" class="btn btn-primary w-100" type="button">
                 <i class="fas fa-lock"></i> Authenticate
             </button>
@@ -299,6 +305,10 @@ LiveKit SFU → Browser playback
         }
 
         function attemptReauthenticate(source = 'unknown') {
+            const autoAuthEnabled = localStorage.getItem('voice_assistant_auto_auth') === 'true';
+            if (!autoAuthEnabled) {
+                return;
+            }
             const storedPin = localStorage.getItem('voice_assistant_pin');
             if (!storedPin || !socket || !socket.connected) {
                 return;
@@ -930,8 +940,10 @@ LiveKit SFU → Browser playback
                 }
 
                 const pinInput = document.getElementById('pinInput');
-                if (pinInput && pinInput.value) {
+                const rememberCheckbox = document.getElementById('rememberPinCheckbox');
+                if (pinInput && pinInput.value && rememberCheckbox && rememberCheckbox.checked) {
                     localStorage.setItem('voice_assistant_pin', pinInput.value);
+                    localStorage.setItem('voice_assistant_auto_auth', 'true');
                 }
                 if (data.user_id) {
                     localStorage.setItem('voice_assistant_user_id', data.user_id);
@@ -1378,9 +1390,17 @@ LiveKit SFU → Browser playback
         function authenticate() {
             const pinInput = document.getElementById('pinInput');
             const pin = pinInput ? pinInput.value.trim() : '';
+            const rememberCheckbox = document.getElementById('rememberPinCheckbox');
             if (!pin) {
                 showAuthStatus('Please enter your PIN.', 'error');
                 return;
+            }
+            if (rememberCheckbox && rememberCheckbox.checked) {
+                localStorage.setItem('voice_assistant_pin', pin);
+                localStorage.setItem('voice_assistant_auto_auth', 'true');
+            } else {
+                localStorage.removeItem('voice_assistant_pin');
+                localStorage.setItem('voice_assistant_auto_auth', 'false');
             }
             showAuthStatus('Authenticating...', 'info');
             socket.emit('authenticate', { pin });
@@ -1391,6 +1411,10 @@ LiveKit SFU → Browser playback
             const authButton = document.getElementById('authButton');
             if (authButton) {
                 authButton.addEventListener('click', authenticate);
+            }
+            const rememberCheckbox = document.getElementById('rememberPinCheckbox');
+            if (rememberCheckbox) {
+                rememberCheckbox.checked = localStorage.getItem('voice_assistant_auto_auth') === 'true';
             }
             // Unlock audio/VAD on first user gesture (required by browsers)
             document.addEventListener('click', () => {
