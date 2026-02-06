@@ -1008,6 +1008,9 @@ def initiate_agent_transfer(session_id: str, extension: str, department: str, re
         or 'https://convonet-anthropic.onrender.com'  # Fallback to Render service URL
     )
     freepbx_domain = os.getenv('FREEPBX_DOMAIN', '136.115.41.45')
+    fusionpbx_domain = os.getenv('FUSIONPBX_SIP_DOMAIN') or freepbx_domain
+    fusionpbx_transport = os.getenv('FUSIONPBX_SIP_TRANSPORT', 'udp').lower()
+    fusionpbx_sip_uri = os.getenv('FUSIONPBX_SIP_URI')  # e.g. sip:{extension}@pbx.example.com;transport=tcp
 
     if not (account_sid and auth_token and caller_id and base_url):
         missing = []
@@ -1038,7 +1041,10 @@ def initiate_agent_transfer(session_id: str, extension: str, department: str, re
     try:
         # Use domain/IP for Twilio (Twilio needs resolvable domain/IP)
         # FusionPBX dialplan must be configured to route external calls to extensions
-        sip_target = f"sip:{extension}@{freepbx_domain};transport=udp"
+        if fusionpbx_sip_uri:
+            sip_target = fusionpbx_sip_uri.format(extension=extension)
+        else:
+            sip_target = f"sip:{extension}@{fusionpbx_domain};transport={fusionpbx_transport}"
         print(f"📞 Creating Twilio call:")
         print(f"   To: {sip_target}")
         print(f"   From: {caller_id}")
