@@ -272,6 +272,24 @@ LiveKit SFU → Browser playback
         let assistantStoppedSpeakingAt = 0;
         let reinitInProgress = false;
 
+        async function cleanupLivekit() {
+            try {
+                if (livekitRoom) {
+                    try { livekitRoom.disconnect(); } catch (_) {}
+                }
+            } finally {
+                livekitRoom = null;
+                livekitConnected = false;
+                livekitConnecting = false;
+                livekitMicEnabled = false;
+                localAudioTrack = null;
+                livekitAudioElements.forEach((element) => {
+                    try { element.pause(); } catch (_) {}
+                });
+                livekitAudioElements.clear();
+            }
+        }
+
         function cleanupSocket() {
             if (socket) {
                 try { socket.off(); } catch (_) {}
@@ -327,11 +345,20 @@ LiveKit SFU → Browser playback
             stopAllPlayback();
             resetMicButton();
             cleanupSocket();
+            cleanupLivekit();
             setTimeout(() => {
                 initSocket();
                 attemptReauthenticate('reinitialize');
                 reinitInProgress = false;
             }, 500);
+        }
+
+        function reconnectLivekit(reason = 'unknown') {
+            if (!socket || !socket.connected) return;
+            console.warn(`🔁 Reconnecting LiveKit (${reason})`);
+            cleanupLivekit();
+            setLivekitStatus('connecting', 'LiveKit: reconnecting');
+            socket.emit('get_livekit_info');
         }
         function setAssistantSpeaking(value, reason = 'unknown') {
             if (assistantSpeaking !== value) {
@@ -1028,6 +1055,11 @@ LiveKit SFU → Browser playback
                 if (handsFreeEnabled && !isRecording) {
                     showStatus('Listening... (hands-free)', 'success');
                 }
+            });
+
+            socket.on('livekit_reconnect', (data) => {
+                const reason = data?.reason || 'unknown';
+                reconnectLivekit(reason);
             });
 
             socket.on('pending_response_available', (data) => {

@@ -2135,34 +2135,59 @@ def init_socketio(socketio_instance: SocketIO, app):
 
         print(f"🎤 Recording started: {session_id}")
         
-        # Update recording state and clear audio buffer
+        # Clear audio buffer
         if redis_manager.is_available():
-            # Clear the audio buffer completely
             redis_client = redis_manager.redis_client
             if redis_client:
                 redis_client.hset(f"session:{session_id}", "audio_buffer", "")
-                redis_client.hset(f"session:{session_id}", "is_recording", "True")
                 print(f"🔍 Debug: cleared Redis audio buffer for session: {session_id}")
             else:
-                update_session(session_id, {
-                    'is_recording': 'True',
-                    'audio_buffer': ''  # Start with empty string for base64 concatenation
-                })
+                update_session(session_id, {'audio_buffer': ''})
         else:
-            active_sessions[session_id]['is_recording'] = True
-            active_sessions[session_id]['audio_buffer'] = b''  # Start with empty bytes for binary concatenation
+            active_sessions[session_id]['audio_buffer'] = b''
             print(f"🔍 Debug: cleared in-memory audio buffer for session: {session_id}")
 
         # Enable LiveKit input recording (if enabled)
         if _livekit_active():
             try:
-                # Use current session_data or fetch fresh
                 curr_user_id = session_data.get('user_id') if session_data else session_id
                 _ensure_livekit_session(session_id, curr_user_id)
+
+                lk_session = livekit_manager.get_session(session_id)
+                participants = getattr(lk_session.room, "remote_participants", {}) if lk_session and getattr(lk_session, "room", None) else {}
+                # Wait briefly for participant to join
+                wait_attempts = 0
+                while not participants and wait_attempts < 5:
+                    try:
+                        socketio.sleep(0.2)
+                    except Exception:
+                        time.sleep(0.2)
+                    participants = getattr(lk_session.room, "remote_participants", {}) if lk_session and getattr(lk_session, "room", None) else {}
+                    wait_attempts += 1
+
+                if not participants:
+                    print(f"⚠️ LiveKit has no participants for session {session_id} - aborting recording start", flush=True)
+                    emit('error', {'message': 'LiveKit not ready. Reconnecting...'})
+                    emit('livekit_reconnect', {'reason': 'no_participants'})
+                    # Ensure recording flag is cleared
+                    if redis_manager.is_available():
+                        update_session(session_id, {'is_recording': 'False'})
+                    else:
+                        active_sessions[session_id]['is_recording'] = False
+                    return
+
                 livekit_manager.set_recording(session_id, True)
                 print(f"🎧 LiveKit input recording ACTIVATED for session {session_id}", flush=True)
             except Exception as livekit_error:
                 print(f"⚠️ Failed to activate LiveKit recording: {livekit_error}", flush=True)
+                emit('error', {'message': 'LiveKit recording failed. Please try again.'})
+                return
+
+        # Update recording state after LiveKit is ready
+        if redis_manager.is_available():
+            update_session(session_id, {'is_recording': 'True'})
+        else:
+            active_sessions[session_id]['is_recording'] = True
 
 
         # Start streaming STT session for low-latency transcription
@@ -2416,6 +2441,9 @@ def init_socketio(socketio_instance: SocketIO, app):
                     sentry_capture_voice_event("audio_buffer_retrieved", session_id, details={"storage": "livekit", "buffer_size": len(audio_buffer)})
                 else:
                     print("⚠️ LiveKit audio buffer empty", flush=True)
+                    emit('error', {'message': 'No LiveKit audio received. Reconnecting...'})
+                    emit('livekit_reconnect', {'reason': 'empty_audio'})
+                    return
             except Exception as livekit_pop_error:
                 print(f"⚠️ Failed to pop LiveKit audio buffer: {livekit_pop_error}", flush=True)
                 audio_buffer = None
@@ -2502,7 +2530,7 @@ def init_socketio(socketio_instance: SocketIO, app):
             sentry_capture_voice_event("audio_too_short", session_id, details={"buffer_size": len(audio_buffer), "threshold": min_audio_length})
             emit('transcription', {
                 'success': False,
-                'message': f'Audio too short ({len(audio_buffer)} bytes). Please speak longer. Try saying "Create a todo task to buy groceries" and hold the button much longer.'
+                'message': f'Audio too short ({len(audio_buffer)} bytes). Please speak a bit longer and try again.'
             })
             return
         
@@ -3482,6 +3510,10 @@ def init_socketio(socketio_instance: SocketIO, app):
                         active_response_controls.pop(session_id, None)
                     return
                 
+                # Use a consistent threshold for pending response storage
+                AUDIO_SIZE_THRESHOLD = 500000  # 500KB base64 (~375KB binary)
+                pending_audio = audio_base64 if audio_base64 and len(audio_base64) <= AUDIO_SIZE_THRESHOLD else ""
+
                 if not session_still_exists:
                     print(f"⚠️ Session {session_id} no longer exists (client may have disconnected)", flush=True)
                     
@@ -3490,14 +3522,17 @@ def init_socketio(socketio_instance: SocketIO, app):
                         try:
                             pending_response = {
                                 'text': agent_response,
-                                'audio': audio_base64,
+                                'audio': pending_audio,
                                 'created_at': time.time(),
                                 'original_session_id': session_id
                             }
                             if redis_manager.is_available():
                                 import json
                                 redis_key = f"pending_response:{user_id}"
-                                redis_manager.redis_client.setex(redis_key, 300, json.dumps(pending_response))  # 5 min TTL
+                                    try:
+                                        redis_manager.redis_client.setex(redis_key, 300, json.dumps(pending_response))  # 5 min TTL
+                                    except Exception as redis_error:
+                                        print(f"⚠️ Error storing pending response (session gone): {redis_error}", flush=True)
                                 print(f"💾 Stored pending response for user_id {user_id} (will be sent on reconnect)", flush=True)
                                 sentry_capture_voice_event("pending_response_stored", session_id, user_id, details={"reason": "session_gone_during_tts"})
                             else:
@@ -3545,14 +3580,17 @@ def init_socketio(socketio_instance: SocketIO, app):
                                     import json
                                     pending_response = {
                                         'text': agent_response,
-                                        'audio': audio_base64,
+                                        'audio': pending_audio,
                                         'is_streaming': is_streaming if 'is_streaming' in locals() else False,
                                         'created_at': time.time(),
                                         'original_session_id': session_id
                                     }
                                     redis_key = f"pending_response:{user_id}"
                                     if redis_manager.is_available():
-                                        redis_manager.redis_client.setex(redis_key, 300, json.dumps(pending_response))
+                                        try:
+                                            redis_manager.redis_client.setex(redis_key, 300, json.dumps(pending_response))
+                                        except Exception as redis_error:
+                                            print(f"⚠️ Error storing pending response (no room): {redis_error}", flush=True)
                                         print(f"💾 Stored pending response for user_id {user_id} (client not in room)", flush=True)
                                         sentry_capture_voice_event("pending_response_stored_no_room", session_id, user_id, details={"reason": "client_not_in_room"})
                                     else:
@@ -3575,14 +3613,17 @@ def init_socketio(socketio_instance: SocketIO, app):
                                     import json
                                     pending_response = {
                                         'text': agent_response,
-                                        'audio': audio_base64,
+                                        'audio': pending_audio,
                                         'is_streaming': is_streaming if 'is_streaming' in locals() else False,
                                         'created_at': time.time(),
                                         'original_session_id': session_id
                                     }
                                     redis_key = f"pending_response:{user_id}"
                                     if redis_manager.is_available():
-                                        redis_manager.redis_client.setex(redis_key, 300, json.dumps(pending_response))
+                                        try:
+                                            redis_manager.redis_client.setex(redis_key, 300, json.dumps(pending_response))
+                                        except Exception as redis_error:
+                                            print(f"⚠️ Error storing pending response backup: {redis_error}", flush=True)
                                         print(f"💾 Stored pending response as backup for user_id {user_id} (will clear if delivery confirmed)", flush=True)
                                 except Exception as store_error:
                                     print(f"⚠️ Error storing pending response backup: {store_error}", flush=True)
@@ -3617,15 +3658,18 @@ def init_socketio(socketio_instance: SocketIO, app):
                                         import json
                                         pending_response = {
                                             'text': agent_response,
-                                            'audio': audio_base64,
+                                            'audio': '',  # Don't store huge audio in Redis
                                             'is_streaming': is_streaming if 'is_streaming' in locals() else False,
                                             'created_at': time.time(),
                                             'original_session_id': session_id
                                         }
                                         redis_key = f"pending_response:{user_id}"
                                         if redis_manager.is_available():
-                                            redis_manager.redis_client.setex(redis_key, 300, json.dumps(pending_response))
-                                            print(f"💾 Stored pending response for user_id {user_id} (using HTTP fallback)", flush=True)
+                                            try:
+                                                redis_manager.redis_client.setex(redis_key, 300, json.dumps(pending_response))
+                                                print(f"💾 Stored pending response for user_id {user_id} (using HTTP fallback)", flush=True)
+                                            except Exception as redis_error:
+                                                print(f"⚠️ Error storing pending response (HTTP fallback): {redis_error}", flush=True)
                                             # Emit partial response so client knows to poll
                                             emit_socketio.emit('agent_response', {
                                                 'success': True,
