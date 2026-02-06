@@ -70,6 +70,7 @@ class AgentMonitor:
     def __init__(self):
         self.redis = get_redis_manager()
         self.max_interactions = 1000  # Keep last 1000 interactions
+        self._memory_recent: List[AgentInteraction] = []
         
         # Check Redis availability
         if self.redis and self.redis.redis_client:
@@ -118,6 +119,11 @@ class AgentMonitor:
             print(f"📊 AgentMonitor: Data size: {len(interaction_data)} bytes", flush=True)
             self.redis.set(interaction_key, interaction_data, expire=86400 * 7)  # 7 days
             print(f"📊 AgentMonitor: Stored in Redis", flush=True)
+
+            # Also keep an in-memory fallback for recent interactions
+            self._memory_recent.insert(0, interaction)
+            if len(self._memory_recent) > self.max_interactions:
+                self._memory_recent = self._memory_recent[:self.max_interactions]
             
             # Add to recent interactions list
             recent_key = "agent_interactions:recent"
@@ -182,11 +188,21 @@ class AgentMonitor:
                     interactions.append(interaction)
             
             print(f"📊 AgentMonitor: Retrieved {len(interactions)} interactions", flush=True)
+            if interactions:
+                return interactions
+
+            # Fallback to in-memory cache if Redis list is empty
+            if self._memory_recent:
+                print(f"📊 AgentMonitor: Using in-memory fallback ({len(self._memory_recent)} interactions)", flush=True)
+                return self._memory_recent[:limit]
+
             return interactions
         except Exception as e:
             print(f"❌ AgentMonitor: Error getting recent interactions: {e}", flush=True)
             import traceback
             traceback.print_exc()
+            if self._memory_recent:
+                return self._memory_recent[:limit]
             return []
     
     def get_interactions_by_provider(self, provider: str, limit: int = 50) -> List[AgentInteraction]:

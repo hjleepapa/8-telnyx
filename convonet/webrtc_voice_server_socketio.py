@@ -1513,21 +1513,24 @@ def init_socketio(socketio_instance: SocketIO, app):
         
         try:
             if redis_manager.is_available():
-                success = delete_session(session_id)
-                if success:
-                    print(f"✅ Session deleted from Redis: {session_id}")
-                    sentry_capture_redis_operation("delete_session", session_id, True)
-                else:
-                    print(f"❌ Failed to delete session from Redis: {session_id}")
-                    sentry_capture_redis_operation("delete_session", session_id, False, "Redis delete_session returned False")
+                # Keep session for a short grace period to avoid "Session not found" after reconnects
+                update_session(session_id, {
+                    'disconnected_at': str(time.time()),
+                    'connected': 'False'
+                })
+                # Shorten TTL to 10 minutes for cleanup, but do not delete immediately
+                redis_manager.redis_client.expire(f"session:{session_id}", 600)
+                print(f"🕒 Session marked disconnected (grace TTL 10m): {session_id}")
+                sentry_capture_redis_operation("mark_session_disconnected", session_id, True)
             else:
+                # In-memory fallback: mark disconnected, keep data for potential reconnects
                 if session_id in active_sessions:
-                    del active_sessions[session_id]
-                    print(f"✅ Session deleted from memory: {session_id}")
-                    sentry_capture_voice_event("session_deleted_memory", session_id)
+                    active_sessions[session_id]['connected'] = False
+                    active_sessions[session_id]['disconnected_at'] = time.time()
+                    print(f"🕒 Session marked disconnected in memory: {session_id}")
         except Exception as e:
-            print(f"❌ Error deleting session: {e}")
-            sentry_capture_redis_operation("delete_session", session_id, False, str(e))
+            print(f"❌ Error marking session disconnected: {e}")
+            sentry_capture_redis_operation("mark_session_disconnected", session_id, False, str(e))
         
         # Note: If there's a pending response being processed for this user_id,
         # it will be stored when TTS completes and session is found to be gone
