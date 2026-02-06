@@ -270,6 +270,69 @@ LiveKit SFU → Browser playback
         let handsFreeEnabled = true;
         let assistantSpeaking = false;
         let assistantStoppedSpeakingAt = 0;
+        let reinitInProgress = false;
+
+        function cleanupSocket() {
+            if (socket) {
+                try { socket.off(); } catch (_) {}
+                try { socket.disconnect(); } catch (_) {}
+            }
+            socket = null;
+        }
+
+        function attemptReauthenticate(source = 'unknown') {
+            const storedPin = localStorage.getItem('voice_assistant_pin');
+            if (!storedPin || !socket || !socket.connected) {
+                return;
+            }
+            console.log(`🔐 Attempting auto-auth (${source})`);
+            showAuthStatus('Re-authenticating...', 'info');
+            socket.emit('authenticate', { pin: storedPin });
+        }
+
+        async function fetchPendingResponse(userId) {
+            try {
+                const response = await fetch(`/convonet_todo/webrtc/pending-response?user_id=${encodeURIComponent(userId)}`, { cache: 'no-store' });
+                if (!response.ok) {
+                    console.warn('⚠️ Pending response fetch failed:', response.status);
+                    return;
+                }
+                const data = await response.json();
+                if (!data.success || !data.pending) {
+                    return;
+                }
+                if (data.text) {
+                    addTranscript('agent', data.text, true);
+                }
+                // Only play fallback audio if LiveKit playback isn't active
+                if (data.audio) {
+                    const shouldFallback = !LIVEKIT_ENABLED || !livekitConnected || livekitPlaybackBlocked || livekitAudioElements.size === 0;
+                    if (shouldFallback) {
+                        playAudioResponse(data.audio);
+                    }
+                }
+                setAssistantSpeaking(true, 'pending_response');
+                assistantStartedSpeakingAt = Date.now();
+                resetMicButton();
+            } catch (error) {
+                console.error('❌ Error fetching pending response:', error);
+            }
+        }
+
+        function reinitializeSession(reason = 'unknown') {
+            if (reinitInProgress) return;
+            reinitInProgress = true;
+            console.warn(`🔁 Reinitializing session (${reason})`);
+            showStatus('Reconnecting session... Please wait.', 'warning');
+            stopAllPlayback();
+            resetMicButton();
+            cleanupSocket();
+            setTimeout(() => {
+                initSocket();
+                attemptReauthenticate('reinitialize');
+                reinitInProgress = false;
+            }, 500);
+        }
         function setAssistantSpeaking(value, reason = 'unknown') {
             if (assistantSpeaking !== value) {
                 console.log(`🎙️ assistantSpeaking: ${assistantSpeaking} -> ${value} (reason: ${reason})`);
@@ -825,6 +888,7 @@ LiveKit SFU → Browser playback
 
             socket.on('connect', () => {
                 showAuthStatus('Connected. Please authenticate.', 'success');
+                attemptReauthenticate('connect');
             });
 
             socket.on('connect_error', (error) => {
@@ -948,7 +1012,29 @@ LiveKit SFU → Browser playback
                     }, Math.min(estimatedDuration, 5000));
                 }
                 
+                if (data && data.pending) {
+                    const pendingUserId = data.user_id || localStorage.getItem('voice_assistant_user_id');
+                    if (pendingUserId) {
+                        fetchPendingResponse(pendingUserId);
+                    }
+                }
+
                 resetMicButton();
+            });
+
+            socket.on('agent_response_complete', () => {
+                // Fallback to ensure UI resets even if agent_response not received
+                resetMicButton();
+                if (handsFreeEnabled && !isRecording) {
+                    showStatus('Listening... (hands-free)', 'success');
+                }
+            });
+
+            socket.on('pending_response_available', (data) => {
+                const pendingUserId = data?.user_id || localStorage.getItem('voice_assistant_user_id');
+                if (pendingUserId) {
+                    fetchPendingResponse(pendingUserId);
+                }
             });
 
             socket.on('welcome_greeting', (data) => {
@@ -993,6 +1079,10 @@ LiveKit SFU → Browser playback
             socket.on('error', (data) => {
                 if (data && data.message) {
                     showStatus(data.message, 'error');
+                    if (data.message.toLowerCase().includes('session not found')) {
+                        reinitializeSession('session_not_found');
+                        return;
+                    }
                 }
                 resetMicButton();
             });
