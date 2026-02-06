@@ -273,7 +273,8 @@ LiveKit SFU → Browser playback
         let livekitConnecting = false;
         let livekitMicEnabled = false;
         let localAudioTrack = null;
-        let handsFreeEnabled = true;
+        // Default to manual push-to-talk to avoid latency issues
+        let handsFreeEnabled = false;
         let assistantSpeaking = false;
         let assistantStoppedSpeakingAt = 0;
         let reinitInProgress = false;
@@ -411,7 +412,8 @@ LiveKit SFU → Browser playback
         const VAD_RECORDING_GRACE_PERIOD = 2000;  // 2 second grace period after recording starts
         let assistantStartedSpeakingAt = 0;
         let recordingStartedAt = 0;  // Track when recording started for grace period
-        handsFreeEnabled = LIVEKIT_ENABLED;
+        // Keep hands-free off by default; allow manual click to speak/stop
+        handsFreeEnabled = false;
         const LIVEKIT_DEBUG = window.location.search.includes('livekitDebug=1');
 
         function emitLivekitClientState(state) {
@@ -845,6 +847,9 @@ LiveKit SFU → Browser playback
                         showStatus('Microphone permission denied. Use Click to speak.', 'error');
                         enableMicButton();
                     }
+                } else {
+                    enableMicButton();
+                    showStatus('Manual mode enabled. Click to speak/stop.', 'success');
                 }
             } catch (error) {
                 console.error('❌ LiveKit connection error:', error);
@@ -1272,6 +1277,7 @@ LiveKit SFU → Browser playback
         }
 
         function startHandsFreeMode() {
+            if (!handsFreeEnabled) return;
             disableMicButtonForHandsFree();
             startVadLoop();
             showStatus('Hands-free mode enabled. Start speaking.', 'success');
