@@ -2879,12 +2879,22 @@ def set_user_llm_provider():
 def get_stt_providers():
     """Get list of available STT providers."""
     try:
-        # Currently we support Deepgram
+        # Currently we support Deepgram, ElevenLabs, and Cartesia
         providers = [
             {
                 "id": "deepgram",
                 "name": "Deepgram",
                 "available": bool(os.getenv('DEEPGRAM_API_KEY'))
+            },
+            {
+                "id": "elevenlabs",
+                "name": "ElevenLabs",
+                "available": bool(os.getenv('ELEVENLABS_API_KEY'))
+            },
+            {
+                "id": "cartesia",
+                "name": "Cartesia",
+                "available": bool(os.getenv('CARTESIA_API_KEY'))
             }
         ]
         return jsonify({
@@ -2936,7 +2946,7 @@ def set_user_stt_provider():
             return jsonify({'success': False, 'error': 'Provider is required'}), 400
             
         provider = provider.lower()
-        if provider not in ['deepgram']:
+        if provider not in ['deepgram', 'elevenlabs', 'cartesia']:
             return jsonify({'success': False, 'error': 'Invalid provider'}), 400
             
         redis_manager.set(f"user:{user_id}:stt_provider", provider)
@@ -2972,6 +2982,11 @@ def get_tts_providers():
                 "id": "openai",
                 "name": "OpenAI",
                 "available": bool(os.getenv('OPENAI_API_KEY'))
+            },
+            {
+                "id": "deepgram",
+                "name": "Deepgram",
+                "available": bool(os.getenv('DEEPGRAM_API_KEY'))
             }
         ]
         return jsonify({
@@ -3023,7 +3038,7 @@ def set_user_tts_provider():
             return jsonify({'success': False, 'error': 'Provider is required'}), 400
             
         provider = provider.lower()
-        if provider not in ['elevenlabs', 'cartesia', 'openai']:
+        if provider not in ['elevenlabs', 'cartesia', 'openai', 'deepgram']:
             return jsonify({'success': False, 'error': 'Invalid provider'}), 400
             
         redis_manager.set(f"user:{user_id}:tts_provider", provider)
