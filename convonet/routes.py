@@ -2874,6 +2874,148 @@ def set_user_llm_provider():
         }), 500
 
 
+# STT Provider Management API
+@convonet_todo_bp.route('/api/stt-providers', methods=['GET'])
+def get_stt_providers():
+    """Get list of available STT providers."""
+    try:
+        # Currently we support Deepgram
+        providers = ["deepgram"]
+        return jsonify({
+            'success': True,
+            'providers': providers
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@convonet_todo_bp.route('/api/stt-provider', methods=['GET'])
+def get_user_stt_provider():
+    """Get user's current STT provider preference."""
+    try:
+        user_id = request.args.get('user_id', 'default')
+        
+        try:
+            provider = redis_manager.get(f"user:{user_id}:stt_provider")
+        except Exception as redis_error:
+            print(f"⚠️ Redis error getting STT provider: {redis_error}")
+            provider = None
+        
+        if not provider:
+            provider = "deepgram"
+            
+        return jsonify({
+            'success': True,
+            'provider': provider
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@convonet_todo_bp.route('/api/stt-provider', methods=['POST'])
+def set_user_stt_provider():
+    """Set user's STT provider preference."""
+    try:
+        data = request.json
+        user_id = data.get('user_id', 'default')
+        provider = data.get('provider')
+        
+        if not provider:
+            return jsonify({'success': False, 'error': 'Provider is required'}), 400
+            
+        provider = provider.lower()
+        if provider not in ['deepgram']:
+            return jsonify({'success': False, 'error': 'Invalid provider'}), 400
+            
+        redis_manager.set(f"user:{user_id}:stt_provider", provider)
+        return jsonify({
+            'success': True,
+            'message': f'STT provider set to {provider}'
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+# TTS Provider Management API
+@convonet_todo_bp.route('/api/tts-providers', methods=['GET'])
+def get_tts_providers():
+    """Get list of available TTS providers."""
+    try:
+        # We support several providers
+        providers = ["elevenlabs", "cartesia", "openai"]
+        return jsonify({
+            'success': True,
+            'providers': providers
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@convonet_todo_bp.route('/api/tts-provider', methods=['GET'])
+def get_user_tts_provider():
+    """Get user's current TTS provider preference."""
+    try:
+        user_id = request.args.get('user_id', 'default')
+        
+        try:
+            provider = redis_manager.get(f"user:{user_id}:tts_provider")
+        except Exception as redis_error:
+            print(f"⚠️ Redis error getting TTS provider: {redis_error}")
+            provider = None
+        
+        if not provider:
+            provider = "elevenlabs"
+            
+        return jsonify({
+            'success': True,
+            'provider': provider
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@convonet_todo_bp.route('/api/tts-provider', methods=['POST'])
+def set_user_tts_provider():
+    """Set user's TTS provider preference."""
+    try:
+        data = request.json
+        user_id = data.get('user_id', 'default')
+        provider = data.get('provider')
+        
+        if not provider:
+            return jsonify({'success': False, 'error': 'Provider is required'}), 400
+            
+        provider = provider.lower()
+        if provider not in ['elevenlabs', 'cartesia', 'openai']:
+            return jsonify({'success': False, 'error': 'Invalid provider'}), 400
+            
+        redis_manager.set(f"user:{user_id}:tts_provider", provider)
+        return jsonify({
+            'success': True,
+            'message': f'TTS provider set to {provider}'
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 # Route to check Deepgram status
 @convonet_todo_bp.route('/webrtc/pending-response', methods=['GET'])
 def get_pending_response():
