@@ -2855,6 +2855,9 @@ def init_socketio(socketio_instance: SocketIO, app):
                 voice_id = None
                 language = "en"
                 use_elevenlabs = False
+                use_livekit_audio = _livekit_active()
+                is_streaming = False
+                audio_base64 = ""
                 session_record = None
                 if redis_manager.is_available():
                     print(f"📦 Redis is available, getting session from Redis...", flush=True)
@@ -3463,7 +3466,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                             # Short response - use original approach
                             print(f"🔊 Short response ({len(agent_response)} chars), using non-streaming TTS", flush=True)
                             audio_bytes = None
-                            use_livekit_audio = _livekit_active()
+                            # use_livekit_audio is already initialized at the start of process_audio_async
                             livekit_audio_sent = False
                             if response_cancel_event.is_set():
                                 print("🛑 Response cancelled before short TTS generation (barge-in)", flush=True)
