@@ -38,7 +38,7 @@ class CartesiaService:
         # Default settings
         self.model_id = "sonic-english"  # Default TTS model
         self.voice_id = "a0e99841-438c-4a64-b67c-3cbc96c22b02"  # Example voice (Barbershop Man)
-        self.stt_model = "shur-english-general" # Default STT model (assumed based on reference, verify if needed)
+        self.stt_model = "ink-whisper" # Default STT model (Cartesia Ink)
         self.stt_version = "2024-02-29"
 
     def is_available(self) -> bool:
@@ -117,54 +117,38 @@ class CartesiaService:
         try:
             voice_id = voice_id or self.voice_id
             
-            # Use the SDK's streaming method
+            # Use the SDK's streaming method correctly
+            # Note: Recent SDK versions use 'voice' instead of 'voice_id' and require it as a dict
             ws = self.client.tts.websocket()
             
             # Generate audio
             output = ws.send(
                 model_id=self.model_id,
                 transcript=text,
-                voice_id=voice_id,
-                stream=True,
+                voice={"mode": "id", "id": voice_id},
                 output_format={
                     "container": "raw",
-                    "encoding": "pcm_f32le", # Cartesia default is often f32le, we might need to convert or ensure we handle it
+                    "encoding": "pcm_s16le", # PCM 16-bit little-endian
                     "sample_rate": 44100
-                }
+                },
+                stream=True
             )
             
             for chunk in output:
-                # Chunk is dictionary response from websocket
-                # We need to extract the audio data
+                # Chunk is a dictionary response from websocket
                 if "audio" in chunk:
-                    # Audio provided as raw bytes or base64? SDK usually handles it.
-                    # Looking at SDK docs (generalized), it usually yields bytes directly if configured?
-                    # Let's inspect typical SDK usage from reference if available.
-                    # Reference used: `chunk_iter = self.client.tts.bytes(**params)` which returns bytes.
-                    pass 
+                    yield chunk["audio"]
             
-            # Re-reading reference implementation:
-            # chunk_iter = self.client.tts.bytes(**params)
-            # for chunk in chunk_iter: audio_file.write(chunk)
-            
-            # So we should use client.tts.bytes for simplicity if it supports streaming generator
-            
-            chunk_iter = self.client.tts.bytes(
-                model_id=self.model_id,
-                transcript=text,
-                voice={"mode": "id", "id": voice_id},
-                output_format={
-                    "container": "raw", 
-                    "encoding": "pcm_s16le", # Request s16le for easier compatibility with our backend
-                    "sample_rate": 44100
-                }
-            )
-            
-            for chunk in chunk_iter:
-                yield chunk
+            # Close the websocket connection
+            try:
+                ws.close()
+            except:
+                pass
                 
         except Exception as e:
             logger.error(f"❌ Cartesia TTS streaming error: {e}")
+            import traceback
+            traceback.print_exc()
 
 _cartesia_service = None
 

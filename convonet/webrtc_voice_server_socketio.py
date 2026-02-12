@@ -217,21 +217,51 @@ def _strip_markdown_for_tts(text: str) -> str:
     
     return text
 
-def _synthesize_deepgram_linear16(text: str, voice: str = "aura-asteria-en", sample_rate: int = 48000) -> Optional[bytes]:
+def _synthesize_audio_linear16(text: str, provider: str = "deepgram", voice_id: Optional[str] = None, sample_rate: int = 48000) -> Optional[bytes]:
+    """Synthesize speech to linear16 PCM using the specified provider."""
+    # Strip markdown formatting
+    clean_text = _strip_markdown_for_tts(text)
+    
+    if provider == "cartesia":
+        try:
+            cartesia = get_cartesia_service()
+            if cartesia and cartesia.is_available():
+                # Cartesia synthesize_stream returns a generator
+                audio_generator = cartesia.synthesize_stream(clean_text, voice_id=voice_id)
+                # For linear16, we need to ensure the service is configured for it
+                # CartesiaService.synthesize_stream uses pcm_s16le by default in my previous check
+                return b"".join([chunk for chunk in audio_generator])
+        except Exception as e:
+            print(f"⚠️ Cartesia linear16 synthesis failed: {e}", flush=True)
+            # Fallback to deepgram below
+
+    if provider == "elevenlabs":
+        try:
+            elevenlabs = get_elevenlabs_service()
+            if elevenlabs and elevenlabs.is_available():
+                # ElevenLabs usually returns MP3, so we might need to decode it if used for LiveKit PCM
+                # For now, if it's ElevenLabs, we might still fallback to Deepgram for LiveKit
+                # unless we have a decoder.
+                pass
+        except Exception as e:
+            print(f"⚠️ ElevenLabs linear16 synthesis failed: {e}", flush=True)
+
+    # Default/Fallback to Deepgram
     deepgram_tts = get_deepgram_tts_service()
     if not deepgram_tts:
         return None
-    
-    # Strip markdown formatting to avoid TTS reading "star star" etc.
-    clean_text = _strip_markdown_for_tts(text)
-    
+        
     return deepgram_tts.synthesize_speech(
         clean_text,
-        voice=voice,
+        voice="aura-asteria-en", # Default Deepgram voice
         encoding="linear16",
         sample_rate=sample_rate,
         container="none"
     )
+
+def _synthesize_deepgram_linear16(text: str, voice: str = "aura-asteria-en", sample_rate: int = 48000) -> Optional[bytes]:
+    """Legacy wrapper for Deepgram-only synthesis."""
+    return _synthesize_audio_linear16(text, provider="deepgram", voice_id=voice, sample_rate=sample_rate)
 
 def _encode_linear16_wav_base64(
     pcm_bytes: bytes,
@@ -2810,6 +2840,13 @@ def init_socketio(socketio_instance: SocketIO, app):
         buffer_size = len(audio_buffer) if audio_buffer else 0
         print(f"🚀 process_audio_async STARTED for session: {session_id}, buffer size: {buffer_size}", flush=True)
         
+        processing_start_time = time.time()
+        latency_data = {
+            'stt_latency_ms': 0,
+            'tts_latency_ms': 0,
+            'ttfa_recorded': False
+        }
+        
         # Throttling: Ignore tiny buffers
         if buffer_size < 10000 and not transcribed_text_override:
             print(f"⚠️ Audio buffer too small ({buffer_size} bytes), skipping processing", flush=True)
@@ -2868,6 +2905,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                 use_livekit_audio = _livekit_active()
                 is_streaming = False
                 audio_base64 = ""
+                stt_provider = "deepgram" # Default
                 session_record = None
                 if redis_manager.is_available():
                     print(f"📦 Redis is available, getting session from Redis...", flush=True)
@@ -2892,33 +2930,46 @@ def init_socketio(socketio_instance: SocketIO, app):
                 print(f"🎧 Processing audio: {len(audio_buffer)} bytes")
                 sentry_capture_voice_event("audio_processing_started", session_id, session.get('user_id'), details={"buffer_size": len(audio_buffer)})
                 
+                # Get provider preferences
+                user_id = session.get('user_id')
+                stt_provider = _get_stt_provider_for_user(user_id)
+                tts_provider = _get_tts_provider_for_user(user_id)
+                
+                # Streaming TTS (low-latency connection) currently only supports Deepgram.
+                # For others, we use the provider-agnostic chunk-based streaming in the main thread.
+                if tts_provider != "deepgram" and use_streaming_tts:
+                    print(f"⚠️ Switching to chunk-based TTS for {tts_provider} (Deepgram low-latency stream disabled)", flush=True)
+                    use_streaming_tts = False
+                
+                print(f"🎤 using STT provider: {stt_provider}, TTS provider: {tts_provider} for session {session_id}", flush=True)
+
                 # Step 1: Transcribe audio (skip if streaming STT already provided text)
                 if transcribed_text_override:
                     transcribed_text = transcribed_text_override
                 else:
-                    socketio.emit('status', {'message': 'Transcribing with Deepgram...'}, namespace='/voice', room=session_id)
-                    sentry_capture_voice_event("transcription_started", session_id, session.get('user_id'), details={"method": "deepgram"})
+                    socketio.emit('status', {'message': f'Transcribing with {stt_provider.capitalize()}...'}, namespace='/voice', room=session_id)
+                    sentry_capture_voice_event("transcription_started", session_id, session.get('user_id'), details={"method": stt_provider})
                     
-                    # Use Deepgram for transcription (WebRTC-optimized solution)
-                    print(f"🎧 Deepgram: Processing audio buffer: {len(audio_buffer) if audio_buffer else 0} bytes")
+                    # Use selected provider for transcription
+                    print(f"🎧 {stt_provider.capitalize()}: Processing audio buffer: {len(audio_buffer) if audio_buffer else 0} bytes")
                     
-                    # Use Deepgram integration with fixed English language (no auto-detection)
-                    # STT should be forced to English to avoid mis-detecting other languages
-                    import sys
-                    print(f"🔧 About to call transcribe_audio_with_deepgram_webrtc with language='en'...", flush=True)
-                    sys.stdout.flush()
                     try:
-                        # Force English transcription only (disable auto-detection)
-                        transcribed_text = transcribe_audio_with_deepgram_webrtc(audio_buffer, language="en")
-                        print(f"✅ transcribe_audio_with_deepgram_webrtc returned: {transcribed_text[:50] if transcribed_text else 'None'}...", flush=True)
-                        sys.stdout.flush()
+                        stt_start_time = time.time()
+                        if stt_provider == "cartesia":
+                            cartesia = get_cartesia_service()
+                            transcribed_text = cartesia.transcribe_audio_buffer(audio_buffer, language="en")
+                        else:
+                            # Default to Deepgram with fixed English language (no auto-detection)
+                            transcribed_text = transcribe_audio_with_deepgram_webrtc(audio_buffer, language="en")
+                        
+                        latency_data['stt_latency_ms'] = (time.time() - stt_start_time) * 1000
+                        print(f"✅ Transcription result ({stt_provider}): {transcribed_text[:50] if transcribed_text else 'None'} (Lat: {latency_data['stt_latency_ms']:.0f}ms)", flush=True)
                     except Exception as e:
-                        print(f"❌ Deepgram integration failed: {e}", flush=True)
-                        sys.stdout.flush()
+                        print(f"❌ {stt_provider.capitalize()} integration failed: {e}", flush=True)
                         import traceback
                         traceback.print_exc()
-                        socketio.emit('error', {'message': 'Deepgram service not available. Please check configuration.'}, namespace='/voice', room=session_id)
-                        sentry_capture_voice_event("transcription_failed", session_id, session.get('user_id'), details={"method": "deepgram", "error": str(e)})
+                        socketio.emit('error', {'message': f'{stt_provider.capitalize()} service failed. Please check configuration.'}, namespace='/voice', room=session_id)
+                        sentry_capture_voice_event("transcription_failed", session_id, session.get('user_id'), details={"method": stt_provider, "error": str(e)})
                         return
                 
                 # Send transcription to client immediately (for both Batch and Streaming paths)
@@ -3010,15 +3061,42 @@ def init_socketio(socketio_instance: SocketIO, app):
 
                     transfer_message = f"I'm transferring you to {department}. Extension {target_extension}."
                     try:
-                        # Generate TTS audio using Deepgram
+                        # Get user TTS preference
+                        current_user_id = session.get('user_id')
+                        current_tts_provider = _get_tts_provider_for_user(current_user_id)
+                        
+                        # Generate TTS audio using selected provider
                         if _livekit_active():
-                            audio_bytes = _synthesize_deepgram_linear16(transfer_message)
+                            audio_bytes = _synthesize_audio_linear16(transfer_message, provider=current_tts_provider)
+                            if audio_bytes and not latency_data['ttfa_recorded']:
+                                latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                latency_data['ttfa_recorded'] = True
                         else:
-                            deepgram_tts = get_deepgram_tts_service()
-                            audio_bytes = deepgram_tts.synthesize_speech(transfer_message, voice="aura-asteria-en")
+                            if current_tts_provider == "cartesia":
+                                cartesia = get_cartesia_service()
+                                audio_generator = cartesia.synthesize_stream(transfer_message)
+                                # Capture TTFA on first chunk
+                                audio_bytes = b""
+                                for chunk in audio_generator:
+                                    if not latency_data['ttfa_recorded']:
+                                        latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                        latency_data['ttfa_recorded'] = True
+                                    audio_bytes += chunk
+                            elif current_tts_provider == "elevenlabs":
+                                elevenlabs = get_elevenlabs_service()
+                                audio_bytes = elevenlabs.synthesize(transfer_message)
+                                if audio_bytes and not latency_data['ttfa_recorded']:
+                                    latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                    latency_data['ttfa_recorded'] = True
+                            else:
+                                deepgram_tts = get_deepgram_tts_service()
+                                audio_bytes = deepgram_tts.synthesize_speech(transfer_message, voice="aura-asteria-en")
+                                if audio_bytes and not latency_data['ttfa_recorded']:
+                                    latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                    latency_data['ttfa_recorded'] = True
                         
                         if not audio_bytes:
-                            raise Exception("Deepgram TTS failed to generate audio")
+                            raise Exception(f"{current_tts_provider.capitalize()} TTS failed to generate audio")
 
                         if _livekit_active():
                             _send_livekit_pcm(session_id, audio_bytes, sample_rate=48000, channels=1)
@@ -3068,28 +3146,60 @@ def init_socketio(socketio_instance: SocketIO, app):
                 if not use_streaming_tts:
                     try:
                         ack_text = "One moment while I check that."
+                        # Use selected TTS provider for acknowledgement
+                        current_user_id = session.get('user_id')
+                        current_tts_provider = _get_tts_provider_for_user(current_user_id)
+                        
                         if _livekit_active():
-                            ack_audio = _synthesize_deepgram_linear16(ack_text)
+                            ack_audio = _synthesize_audio_linear16(ack_text, provider=current_tts_provider)
+                            if ack_audio and not latency_data['ttfa_recorded']:
+                                latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                latency_data['ttfa_recorded'] = True
                             if ack_audio:
                                 _send_livekit_pcm(session_id, ack_audio, sample_rate=48000, channels=1)
-                                print("📤 Emitted LiveKit acknowledgement audio", flush=True)
+                                print(f"📤 Emitted LiveKit acknowledgement audio ({current_tts_provider})", flush=True)
                         else:
-                            deepgram_tts = get_deepgram_tts_service()
-                            if deepgram_tts:
-                                ack_audio = deepgram_tts.synthesize_speech(ack_text, voice="aura-asteria-en")
-                                if ack_audio:
-                                    ack_base64 = base64.b64encode(ack_audio).decode('utf-8')
-                                    emit_socketio = socketio if socketio else (socketio_instance_global if 'socketio_instance_global' in globals() else None)
-                                    if emit_socketio:
-                                        emit_socketio.emit('audio_chunk', {
-                                            'success': True,
-                                            'chunk_index': 0,
-                                            'total_chunks': 1,
-                                            'audio': ack_base64,
-                                            'is_final': True,
-                                            'is_ack': True
-                                        }, namespace='/voice', room=session_id)
-                                        print("📤 Emitted acknowledgement audio chunk", flush=True)
+                            ack_audio = None
+                            if current_tts_provider == "cartesia":
+                                cartesia = get_cartesia_service()
+                                if cartesia and cartesia.is_available():
+                                    audio_gen = cartesia.synthesize_stream(ack_text)
+                                    # Capture TTFA
+                                    ack_audio = b""
+                                    for c in audio_gen:
+                                        if not latency_data['ttfa_recorded']:
+                                            latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                            latency_data['ttfa_recorded'] = True
+                                        ack_audio += c
+                            elif current_tts_provider == "elevenlabs":
+                                elevenlabs = get_elevenlabs_service()
+                                if elevenlabs and elevenlabs.is_available():
+                                    ack_audio = elevenlabs.synthesize(ack_text)
+                                    if ack_audio and not latency_data['ttfa_recorded']:
+                                        latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                        latency_data['ttfa_recorded'] = True
+                            
+                            if not ack_audio:
+                                deepgram_tts = get_deepgram_tts_service()
+                                if deepgram_tts:
+                                    ack_audio = deepgram_tts.synthesize_speech(ack_text, voice="aura-asteria-en")
+                                    if ack_audio and not latency_data['ttfa_recorded']:
+                                        latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                        latency_data['ttfa_recorded'] = True
+                            
+                            if ack_audio:
+                                ack_base64 = base64.b64encode(ack_audio).decode('utf-8')
+                                emit_socketio = socketio if socketio else (socketio_instance_global if 'socketio_instance_global' in globals() else None)
+                                if emit_socketio:
+                                    emit_socketio.emit('audio_chunk', {
+                                        'success': True,
+                                        'chunk_index': 0,
+                                        'total_chunks': 1,
+                                        'audio': ack_base64,
+                                        'is_final': True,
+                                        'is_ack': True
+                                    }, namespace='/voice', room=session_id)
+                                    print(f"📤 Emitted acknowledgement audio chunk ({current_tts_provider})", flush=True)
                     except Exception as ack_error:
                         print(f"⚠️ Ack audio generation failed: {ack_error}", flush=True)
                 
@@ -3218,28 +3328,62 @@ def init_socketio(socketio_instance: SocketIO, app):
                         if streaming_tts:
                             streaming_tts.send_text(filler_text + " ")
                             return
+                        
+                        # Use selected TTS provider for filler
+                        current_user_id = session.get('user_id')
+                        current_tts_provider = _get_tts_provider_for_user(current_user_id)
+                        
                         if _livekit_active():
-                            filler_audio = _synthesize_deepgram_linear16(filler_text)
+                            filler_audio = _synthesize_audio_linear16(filler_text, provider=current_tts_provider)
+                            if filler_audio and not latency_data['ttfa_recorded']:
+                                latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                latency_data['ttfa_recorded'] = True
                             if filler_audio:
                                 _send_livekit_pcm(session_id, filler_audio, sample_rate=48000, channels=1)
                                 return
-                        deepgram_tts = get_deepgram_tts_service()
-                        if deepgram_tts:
-                            filler_audio = deepgram_tts.synthesize_speech(filler_text, voice="aura-asteria-en")
-                            if filler_audio:
-                                filler_base64 = base64.b64encode(filler_audio).decode('utf-8')
-                                emit_socketio = socketio if socketio else (socketio_instance_global if 'socketio_instance_global' in globals() else None)
-                                if emit_socketio:
-                                    emit_socketio.emit('audio_chunk', {
-                                        'success': True,
-                                        'chunk_index': 0,
-                                        'total_chunks': 1,
-                                        'audio': filler_base64,
-                                        'is_final': True,
-                                        'is_filler': True
-                                    }, namespace='/voice', room=session_id)
+                        
+                        filler_audio = None
+                        if current_tts_provider == "cartesia":
+                            cartesia = get_cartesia_service()
+                            if cartesia and cartesia.is_available():
+                                audio_gen = cartesia.synthesize_stream(filler_text)
+                                # Capture TTFA
+                                filler_audio = b""
+                                for c in audio_gen:
+                                    if not latency_data['ttfa_recorded']:
+                                        latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                        latency_data['ttfa_recorded'] = True
+                                    filler_audio += c
+                        elif current_tts_provider == "elevenlabs":
+                            elevenlabs = get_elevenlabs_service()
+                            if elevenlabs and elevenlabs.is_available():
+                                filler_audio = elevenlabs.synthesize(filler_text)
+                                if filler_audio and not latency_data['ttfa_recorded']:
+                                    latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                    latency_data['ttfa_recorded'] = True
+                        
+                        if not filler_audio:
+                            deepgram_tts = get_deepgram_tts_service()
+                            if deepgram_tts:
+                                filler_audio = deepgram_tts.synthesize_speech(filler_text, voice="aura-asteria-en")
+                                if filler_audio and not latency_data['ttfa_recorded']:
+                                    latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                    latency_data['ttfa_recorded'] = True
+                        
+                        if filler_audio:
+                            filler_base64 = base64.b64encode(filler_audio).decode('utf-8')
+                            emit_socketio = socketio if socketio else (socketio_instance_global if 'socketio_instance_global' in globals() else None)
+                            if emit_socketio:
+                                emit_socketio.emit('audio_chunk', {
+                                    'success': True,
+                                    'chunk_index': 0,
+                                    'total_chunks': 1,
+                                    'audio': filler_base64,
+                                    'is_final': True,
+                                    'is_filler': True
+                                }, namespace='/voice', room=session_id)
                     except Exception as filler_error:
-                        print(f"⚠️ Filler TTS failed: {filler_error}", flush=True)
+                        print(f"⚠️ Filler TTS failed ({current_tts_provider}): {filler_error}", flush=True)
                 
                 try:
                     print(f"🚀 Submitting agent task to persistent background thread...", flush=True)
@@ -3261,9 +3405,9 @@ def init_socketio(socketio_instance: SocketIO, app):
                                     session['user_id'],
                                     session['user_name'],
                                     socketio=socketio_instance,
-                                    session_id=session_id,
                                     text_chunk_callback=text_chunk_callback,
-                                    tool_call_callback=tool_call_callback
+                                    tool_call_callback=tool_call_callback,
+                                    latency_data=latency_data
                                 ),
                                 timeout=timeout_seconds
                             )
@@ -3297,42 +3441,57 @@ def init_socketio(socketio_instance: SocketIO, app):
                                 print(f"⏭️ Skipping early TTS: final response already ready", flush=True)
                                 return
 
-                            print(f"🎵 Starting early TTS generation for first sentence...", flush=True)
+                            print(f"🎵 Starting early TTS generation for first sentence ({tts_provider})...", flush=True)
                             # Status is now emitted on main thread before starting this task
                             
                             # Use TTS settings prepared earlier
                             chunk_audio = None
 
-                            # Prefer Deepgram for early TTS (typically faster) to reduce time-to-first-audio
+                            # Generation audio based on selected provider
                             if _livekit_active():
-                                chunk_audio = _synthesize_deepgram_linear16(first_sentence)
+                                chunk_audio = _synthesize_audio_linear16(first_sentence, provider=tts_provider, voice_id=voice_id)
+                                if chunk_audio and not latency_data['ttfa_recorded']:
+                                    latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                    latency_data['ttfa_recorded'] = True
                             else:
-                                deepgram_tts_service = get_deepgram_tts_service()
-                                if deepgram_tts_service:
-                                    chunk_audio = deepgram_tts_service.synthesize_speech(first_sentence, voice="aura-asteria-en")
-
-                            if not chunk_audio and tts_provider == "cartesia":
-                                try:
-                                    cartesia_service = get_cartesia_service()
-                                    if cartesia_service and cartesia_service.is_available():
-                                        # Synthesize first sentence
-                                        # Cartesia returns a generator, we process all chunks for this sentence
-                                        audio_generator = cartesia_service.synthesize_stream(first_sentence)
-                                        chunk_audio = b"".join([chunk for chunk in audio_generator])
-                                except Exception as e:
-                                    print(f"⚠️ Early Cartesia TTS failed: {e}", flush=True)
-                            
-                            if not chunk_audio and tts_provider == "elevenlabs":
-                                try:
-                                    elevenlabs_service = get_elevenlabs_service()
-                                    if elevenlabs_service and elevenlabs_service.is_available():
-                                        # For early TTS, use basic emotion (will refine later with full response)
-                                        chunk_audio = elevenlabs_service.synthesize(
-                                            text=first_sentence,
-                                            voice_id=voice_id
-                                        )
-                                except Exception as e:
-                                    print(f"⚠️ Early ElevenLabs TTS failed: {e}", flush=True)
+                                if tts_provider == "cartesia":
+                                    try:
+                                        cartesia_service = get_cartesia_service()
+                                        if cartesia_service and cartesia_service.is_available():
+                                            # Synthesize first sentence
+                                            audio_generator = cartesia_service.synthesize_stream(first_sentence, voice_id=voice_id)
+                                            chunk_audio = b""
+                                            for chunk in audio_generator:
+                                                if not latency_data['ttfa_recorded']:
+                                                    latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                                    latency_data['ttfa_recorded'] = True
+                                                chunk_audio += chunk
+                                    except Exception as e:
+                                        print(f"⚠️ Early Cartesia TTS failed: {e}", flush=True)
+                                
+                                if not chunk_audio and tts_provider == "elevenlabs":
+                                    try:
+                                        elevenlabs_service = get_elevenlabs_service()
+                                        if elevenlabs_service and elevenlabs_service.is_available():
+                                            # For early TTS, use basic emotion
+                                            chunk_audio = elevenlabs_service.synthesize(
+                                                text=first_sentence,
+                                                voice_id=voice_id
+                                            )
+                                            if chunk_audio and not latency_data['ttfa_recorded']:
+                                                latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                                latency_data['ttfa_recorded'] = True
+                                    except Exception as e:
+                                        print(f"⚠️ Early ElevenLabs TTS failed: {e}", flush=True)
+                                
+                                if not chunk_audio:
+                                    # Fallback to Deepgram
+                                    deepgram_tts_service = get_deepgram_tts_service()
+                                    if deepgram_tts_service:
+                                        chunk_audio = deepgram_tts_service.synthesize_speech(first_sentence, voice="aura-asteria-en")
+                                        if chunk_audio and not latency_data['ttfa_recorded']:
+                                            latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                            latency_data['ttfa_recorded'] = True
                             
                             if chunk_audio:
                                 if _livekit_active():
@@ -3485,10 +3644,13 @@ def init_socketio(socketio_instance: SocketIO, app):
                                 return
                         
                             if use_livekit_audio:
-                                use_elevenlabs = False
-
-                            if use_elevenlabs:
-                                try:
+                                audio_bytes = _synthesize_audio_linear16(agent_response, provider=tts_provider, voice_id=voice_id)
+                            else:
+                                if tts_provider == "cartesia":
+                                    cartesia = get_cartesia_service()
+                                    audio_generator = cartesia.synthesize_stream(agent_response, voice_id=voice_id)
+                                    audio_bytes = b"".join([chunk for chunk in audio_generator])
+                                elif tts_provider == "elevenlabs":
                                     elevenlabs = get_elevenlabs_service()
                                     if emotion_enabled and emotion:
                                         audio_bytes = elevenlabs.synthesize_with_emotion(
@@ -3496,34 +3658,14 @@ def init_socketio(socketio_instance: SocketIO, app):
                                             emotion=emotion,
                                             voice_id=voice_id
                                         )
-                                    elif language != "en":
-                                        audio_bytes = elevenlabs.synthesize_multilingual(
-                                            text=agent_response,
-                                            language=language,
-                                            voice_id=voice_id
-                                        )
                                     else:
                                         audio_bytes = elevenlabs.synthesize(
                                             text=agent_response,
                                             voice_id=voice_id
                                         )
-                                except Exception as e:
-                                    print(f"⚠️ ElevenLabs TTS failed, falling back to Deepgram: {e}", flush=True)
-                                    use_elevenlabs = False
-                        
-                            if not audio_bytes:
-                                deepgram_tts = get_deepgram_tts_service()
-                                if use_livekit_audio:
-                                    audio_bytes = deepgram_tts.synthesize_speech(
-                                        agent_response,
-                                        voice="aura-asteria-en",
-                                        encoding="linear16",
-                                        sample_rate=48000,
-                                        container="none"
-                                    )
                                 else:
+                                    deepgram_tts = get_deepgram_tts_service()
                                     audio_bytes = deepgram_tts.synthesize_speech(agent_response, voice="aura-asteria-en")
-                                tts_provider = "deepgram"
                         
                             if not audio_bytes:
                                 raise Exception(f"{tts_provider.capitalize()} TTS failed to generate audio")
@@ -3611,6 +3753,10 @@ def init_socketio(socketio_instance: SocketIO, app):
                                                     text=text_chunk,
                                                     voice_id=voice_id
                                                 )
+                                            
+                                            if chunk_audio and not latency_data['ttfa_recorded']:
+                                                latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                                latency_data['ttfa_recorded'] = True
                                         except Exception as e:
                                             print(f"⚠️ ElevenLabs chunk {chunk_idx+1}/{len(text_chunks)} failed: {e}", flush=True)
                                             chunk_audio = None
@@ -3618,16 +3764,22 @@ def init_socketio(socketio_instance: SocketIO, app):
                                         try:
                                             # Cartesia returns generator, consume it all for the chunk
                                             audio_gen = cartesia_service.synthesize_stream(text_chunk)
-                                            chunk_audio = b"".join([c for c in audio_gen])
+                                            chunk_audio = b""
+                                            for c in audio_gen:
+                                                if not latency_data['ttfa_recorded']:
+                                                    latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                                    latency_data['ttfa_recorded'] = True
+                                                chunk_audio += c
                                         except Exception as e:
                                             print(f"⚠️ Cartesia chunk {chunk_idx+1}/{len(text_chunks)} failed: {e}", flush=True)
                                             chunk_audio = None
                         
                                     if not chunk_audio:
-                                        if use_livekit_audio:
-                                            chunk_audio = _synthesize_deepgram_linear16(text_chunk)
-                                        elif deepgram_tts_service:
-                                            chunk_audio = deepgram_tts_service.synthesize_speech(text_chunk, voice="aura-asteria-en")
+                                        # Use selected TTS provider for fallback/linear16
+                                        chunk_audio = _synthesize_audio_linear16(text_chunk, provider=tts_provider, voice_id=voice_id)
+                                        if chunk_audio and not latency_data['ttfa_recorded']:
+                                            latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                            latency_data['ttfa_recorded'] = True
                         
                                     if chunk_audio:
                                         if use_livekit_audio:
@@ -4002,11 +4154,12 @@ async def process_with_agent(
     text: str, 
     user_id: str, 
     user_name: str,
-    socketio=None,
-    session_id: str | None = None,
-    text_chunk_callback: Optional[callable] = None,  # Optional callback for text chunks (for early TTS)
-    tool_call_callback: Optional[callable] = None,   # Optional callback when tool calls are detected
-) -> str:
+    socketio: Optional[SocketIO] = None, 
+    session_id: Optional[str] = None,
+    text_chunk_callback: Optional[Callable[[str], None]] = None,
+    tool_call_callback: Optional[Callable[[str], None]] = None,
+    latency_data: Optional[dict] = None
+) -> Tuple[str, Optional[str]]:
     """Process user input with the agent"""
     try:
         # Capture agent processing start in Sentry
@@ -4052,7 +4205,9 @@ async def process_with_agent(
             metadata={
                 "source": "voice",
                 "stt_provider": stt_provider,
-                "tts_provider": tts_provider
+                "tts_provider": tts_provider,
+                "stt_latency_ms": latency_data.get('stt_latency_ms', 0) if latency_data else 0,
+                "tts_latency_ms": latency_data.get('tts_latency_ms', 0) if latency_data else 0
             }
         )
         

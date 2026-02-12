@@ -587,8 +587,8 @@
                                 <span class="meta-badge provider-${provider}">${provider.toUpperCase()}</span>
                                 <span class="meta-badge status-${status}">${status.toUpperCase()}</span>
                                 ${interaction.model ? `<span class="meta-badge">${interaction.model}</span>` : ''}
-                                ${interaction.metadata?.stt_provider ? `<span class="meta-badge" style="background: #e0f2fe; color: #0369a1;">🎤 STT: ${interaction.metadata.stt_provider.toUpperCase()}</span>` : ''}
-                                ${interaction.metadata?.tts_provider ? `<span class="meta-badge" style="background: #fdf2f8; color: #be185d;">🔊 TTS: ${interaction.metadata.tts_provider.toUpperCase()}</span>` : ''}
+                                ${interaction.metadata?.stt_provider ? `<span class="meta-badge" style="background: #e0f2fe; color: #0369a1;">🎤 STT: ${interaction.metadata.stt_provider.toUpperCase()} ${interaction.metadata.stt_latency_ms ? `(${Math.round(interaction.metadata.stt_latency_ms)}ms)` : ''}</span>` : ''}
+                                ${interaction.metadata?.tts_provider ? `<span class="meta-badge" style="background: #fdf2f8; color: #be185d;">🔊 TTS: ${interaction.metadata.tts_provider.toUpperCase()} ${interaction.metadata.tts_latency_ms ? `(${Math.round(interaction.metadata.tts_latency_ms)}ms)` : ''}</span>` : ''}
                                 ${toolCallsCount > 0 ? `<span class="meta-badge tool-calls-badge">${toolCallsCount} tools</span>` : ''}
                                 ${interaction.duration_ms ? `<span class="meta-badge">${Math.round(interaction.duration_ms)}ms</span>` : ''}
                             </div>
