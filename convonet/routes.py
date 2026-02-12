@@ -2880,7 +2880,13 @@ def get_stt_providers():
     """Get list of available STT providers."""
     try:
         # Currently we support Deepgram
-        providers = ["deepgram"]
+        providers = [
+            {
+                "id": "deepgram",
+                "name": "Deepgram",
+                "available": bool(os.getenv('DEEPGRAM_API_KEY'))
+            }
+        ]
         return jsonify({
             'success': True,
             'providers': providers
@@ -2951,7 +2957,23 @@ def get_tts_providers():
     """Get list of available TTS providers."""
     try:
         # We support several providers
-        providers = ["elevenlabs", "cartesia", "openai"]
+        providers = [
+            {
+                "id": "elevenlabs",
+                "name": "ElevenLabs",
+                "available": bool(os.getenv('ELEVENLABS_API_KEY'))
+            },
+            {
+                "id": "cartesia",
+                "name": "Cartesia",
+                "available": bool(os.getenv('CARTESIA_API_KEY'))
+            },
+            {
+                "id": "openai",
+                "name": "OpenAI",
+                "available": bool(os.getenv('OPENAI_API_KEY'))
+            }
+        ]
         return jsonify({
             'success': True,
             'providers': providers
