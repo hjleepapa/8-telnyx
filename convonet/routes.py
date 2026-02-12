@@ -1692,6 +1692,24 @@ async def _run_agent_async(
         except Exception as e:
             print(f"⚠️ Error reading agent context from Redis: {e}", flush=True)
     
+    # Detect intent to change topics/switch agents
+    topic_change_keywords = [
+        "change the topic", "change topic", "talk about something else",
+        "switch agent", "something else", "new topic", "different topic",
+        "stop talking about", "let's talk about" # "let's talk about X" usually implies a switch
+    ]
+    has_topic_change_intent = any(keyword in prompt_text for keyword in topic_change_keywords)
+
+    # Clear sticky context if topic change detected
+    if has_topic_change_intent and stored_agent_type:
+        print(f"🔄 Topic change intent detected; clearing sticky {stored_agent_type} context for user_id {user_id}", flush=True)
+        if user_id and redis_manager.is_available():
+            try:
+                redis_manager.redis_client.delete(f"agent_type:{user_id}")
+                stored_agent_type = None
+            except Exception as e:
+                print(f"⚠️ Error clearing agent context from Redis: {e}", flush=True)
+
     # Handle sticky context for mortgage
     if stored_agent_type == "mortgage" and not has_todo_intent and not has_healthcare_intent:
         if not has_mortgage_intent:

@@ -144,6 +144,11 @@ def detect_healthcare_intent(text: str) -> bool:
         "medical claim",
         "insurance claim",
         "health coverage",
+        "health care insurance",
+        "healthcare insurance",
+        "medical insurance",
+        "insurance coverage",
+        "check my insurance",
         "why was my",  # Common pattern for denial questions
         "was denied",
         "got denied"
