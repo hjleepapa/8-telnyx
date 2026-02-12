@@ -226,11 +226,19 @@ def _synthesize_audio_linear16(text: str, provider: str = "deepgram", voice_id: 
         try:
             cartesia = get_cartesia_service()
             if cartesia and cartesia.is_available():
+                print(f"🔊 _synthesize_audio_linear16: Using Cartesia for synthesis...", flush=True)
                 # Cartesia synthesize_stream returns a generator
                 audio_generator = cartesia.synthesize_stream(clean_text, voice_id=voice_id)
                 # For linear16, we need to ensure the service is configured for it
-                # CartesiaService.synthesize_stream uses pcm_s16le by default in my previous check
-                return b"".join([chunk for chunk in audio_generator])
+                chunks = []
+                chunk_count = 0
+                for chunk in audio_generator:
+                    chunks.append(chunk)
+                    chunk_count += 1
+                    if chunk_count == 1:
+                         print(f"✅ _synthesize_audio_linear16: Received first chunk from Cartesia", flush=True)
+                print(f"✅ _synthesize_audio_linear16: Received {chunk_count} chunks from Cartesia", flush=True)
+                return b"".join(chunks)
         except Exception as e:
             print(f"⚠️ Cartesia linear16 synthesis failed: {e}", flush=True)
             # Fallback to deepgram below
@@ -3209,6 +3217,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                 print(f"✅ sentry_capture_voice_event for agent_processing_started completed", flush=True)
                 sys.stdout.flush()
                 
+                print(f"🔍 Preparing TTS settings early...", flush=True)
                 # LATENCY OPTIMIZATION: Prepare TTS settings EARLY (before agent processing)
                 # This allows us to start TTS generation as soon as first sentence arrives
                 user_id = session.get('user_id')
