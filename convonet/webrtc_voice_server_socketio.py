@@ -2848,6 +2848,13 @@ def init_socketio(socketio_instance: SocketIO, app):
                 print(f"🔍 Getting session data from Redis/memory...", flush=True)
                 sys.stdout.flush()
                 session = None
+                
+                # Initialize variables to avoid UnboundLocalError
+                emotion_enabled = False
+                emotion = None
+                voice_id = None
+                language = "en"
+                use_elevenlabs = False
                 session_record = None
                 if redis_manager.is_available():
                     print(f"📦 Redis is available, getting session from Redis...", flush=True)
@@ -3111,6 +3118,9 @@ def init_socketio(socketio_instance: SocketIO, app):
                     if tts_provider == "elevenlabs":
                         print("ℹ️ LiveKit active - disabling ElevenLabs (MP3) to keep PCM audio, using Deepgram", flush=True)
                         tts_provider = "deepgram"
+                    
+                # Set flag for ElevenLabs usage
+                use_elevenlabs = (tts_provider == "elevenlabs" and ELEVENLABS_AVAILABLE)
 
                 
                 print(f"🤖 Starting agent processing for: {transcribed_text[:100]}", flush=True)
