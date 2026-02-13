@@ -134,7 +134,7 @@ class CartesiaService:
             print(f"🔊 CartesiaService.synthesize_stream: Starting for text: {text[:50]}... (voice: {voice_id})", flush=True)
             
             # Use the SDK's sse method for streaming audio chunks
-            # Returns a generator yielding dictionaries with "audio", "context_id", etc.
+            # Returns a generator yielding ChunkEvent objects (Pydantic models)
             response_iter = self.client.tts.sse(
                 model_id=self.model_id,
                 transcript=text,
@@ -150,10 +150,13 @@ class CartesiaService:
             )
             
             chunk_count = 0
-            for output in response_iter:
-                # The SSE stream yields dictionaries. Audio data is in the "audio" key as bytes.
-                chunk = output.get("audio")
-                if chunk:
+            for chunk_event in response_iter:
+                # ChunkEvent is a Pydantic model with direct attribute access
+                # Audio data is base64-encoded in the 'audio' attribute
+                if hasattr(chunk_event, 'audio') and chunk_event.audio:
+                    # Decode base64 audio to bytes
+                    import base64
+                    chunk = base64.b64decode(chunk_event.audio)
                     chunk_count += 1
                     if chunk_count == 1:
                         print(f"✅ CartesiaService: Received first chunk ({len(chunk)} bytes)", flush=True)
