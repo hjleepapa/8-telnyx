@@ -350,8 +350,10 @@ LiveKit SFU → Browser playback
         let socket = null;
         let isRecording = false;
         let isProcessing = false;
+        let visualizerInterval = null;
         let timerInterval = null;
         let startTime = null;
+        let processingAudioObj = null; // Global object for more reliable control
 
         let livekitRoom = null;
         let livekitConnected = false;
@@ -479,18 +481,35 @@ LiveKit SFU → Browser playback
         }
 
         function startProcessingAudio() {
-            const audio = document.getElementById('processingAudio');
-            if (audio) {
-                audio.play().catch(e => console.warn('⚠️ Could not play processing audio:', e));
+            console.log('🎵 startProcessingAudio() called');
+            if (!processingAudioObj) {
+                processingAudioObj = new Audio('/static/assets/audio/processing.mp3');
+                processingAudioObj.loop = true;
             }
+
+            processingAudioObj.play()
+                .then(() => console.log('🔊 Processing audio playing successfully'))
+                .catch(e => {
+                    console.warn('⚠️ Could not play processing audio:', e);
+                    // Fallback to trying the element if object fails
+                    const audioElem = document.getElementById('processingAudio');
+                    if (audioElem) {
+                        audioElem.play().catch(err => console.error('❌ Failed audio element fallback:', err));
+                    }
+                });
             startTimer();
         }
 
         function stopProcessingAudio() {
-            const audio = document.getElementById('processingAudio');
-            if (audio) {
-                audio.pause();
-                audio.currentTime = 0;
+            console.log('🔇 stopProcessingAudio() called');
+            if (processingAudioObj) {
+                processingAudioObj.pause();
+                processingAudioObj.currentTime = 0;
+            }
+            const audioElem = document.getElementById('processingAudio');
+            if (audioElem) {
+                audioElem.pause();
+                audioElem.currentTime = 0;
             }
             stopTimer();
         }
@@ -1251,9 +1270,12 @@ LiveKit SFU → Browser playback
 
             socket.on('status', (data) => {
                 if (data && data.message) {
+                    console.log('📊 Server Status:', data.message);
                     showStatus(data.message, 'info');
-                    // Check for processing/transcribing status to start audio
-                    if (data.message.includes('Processing') || data.message.includes('Transcribing')) {
+                    // Check for processing/transcribing/generating status to start/keep audio playing
+                    if (data.message.includes('Processing') ||
+                        data.message.includes('Transcribing') ||
+                        data.message.includes('Generating')) {
                         startProcessingAudio();
                     }
                 }
@@ -1300,6 +1322,17 @@ LiveKit SFU → Browser playback
         async function startRecording(options = {}) {
             const skipMicEnable = options.skipMicEnable || false;
             const silentUI = options.silentUI || false;
+
+            // Unlock/Initialize processing audio on user interaction
+            if (!processingAudioObj) {
+                console.log('🔓 Initializing processing audio object on user interaction');
+                processingAudioObj = new Audio('/static/assets/audio/processing.mp3');
+                processingAudioObj.loop = true;
+                processingAudioObj.volume = 0.5;
+                // Pre-load it
+                processingAudioObj.load();
+            }
+
             if (!socket || !socket.connected) {
                 showStatus('Not connected.', 'error');
                 return;
