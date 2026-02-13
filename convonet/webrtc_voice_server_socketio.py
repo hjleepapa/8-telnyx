@@ -2992,7 +2992,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                 print(f"🔍 Checking if transcribed_text is empty...", flush=True)
                 sys.stdout.flush()
                 if not transcribed_text:
-                    print("❌ Deepgram transcription failed")
+                    print(f"❌ {stt_provider} transcription failed")
                     socketio.emit('error', {
                         'message': 'Transcription failed. Please try speaking more clearly or check your microphone.',
                         'details': 'The audio was captured but no speech was detected. Make sure you are speaking clearly into your microphone.'
@@ -3000,11 +3000,11 @@ def init_socketio(socketio_instance: SocketIO, app):
                     sentry_capture_voice_event("transcription_failed", session_id, session.get('user_id'), details={"method": "deepgram"})
                     return
                 
-                print(f"✅ Deepgram transcription successful: {transcribed_text}", flush=True)
+                print(f"✅ {stt_provider} transcription successful: {transcribed_text}", flush=True)
                 sys.stdout.flush()
                 print(f"📝 About to call sentry_capture_voice_event...", flush=True)
                 sys.stdout.flush()
-                sentry_capture_voice_event("transcription_completed", session_id, session.get('user_id'), details={"text_length": len(transcribed_text), "method": "deepgram"})
+                sentry_capture_voice_event("transcription_completed", session_id, session.get('user_id'), details={"text_length": len(transcribed_text), "method": stt_provider})
                 print(f"✅ sentry_capture_voice_event completed", flush=True)
                 sys.stdout.flush()
                 

@@ -114,18 +114,30 @@ class CartesiaService:
             logger.error("Cartesia SDK not initialized")
             return
 
+    def synthesize_stream(self, text: str, voice_id: Optional[str] = None) -> Generator[bytes, None, None]:
+        """
+        Stream TTS audio from Cartesia
+        
+        Args:
+            text: Text to synthesize
+            voice_id: Voice ID (optional)
+            
+        Yields:
+            Audio chunks (bytes)
+        """
+        if not self.is_available() or not self.client:
+            logger.error("Cartesia SDK not initialized")
+            return
+
         try:
             voice_id = voice_id or self.voice_id
+            print(f"🔊 CartesiaService.synthesize_stream: Starting for text: {text[:50]}... (voice: {voice_id})", flush=True)
             
-            # Use the SDK's streaming method correctly
-            # Note: Recent SDK versions use 'voice' instead of 'voice_id' and require it as a dict
-            ws = self.client.tts.websocket()
-            
-            # Generate audio
-            output = ws.send(
+            # Use the SDK's bytes method with stream=True for better stability
+            chunk_iter = self.client.tts.bytes(
                 model_id=self.model_id,
                 transcript=text,
-                voice={"mode": "id", "id": voice_id},
+                voice_id=voice_id,
                 output_format={
                     "container": "raw",
                     "encoding": "pcm_s16le", # PCM 16-bit little-endian
@@ -134,19 +146,19 @@ class CartesiaService:
                 stream=True
             )
             
-            for chunk in output:
-                # Chunk is a dictionary response from websocket
-                if "audio" in chunk:
-                    yield chunk["audio"]
-            
-            # Close the websocket connection
-            try:
-                ws.close()
-            except:
-                pass
+            chunk_count = 0
+            for chunk in chunk_iter:
+                if chunk:
+                    chunk_count += 1
+                    if chunk_count == 1:
+                        print(f"✅ CartesiaService: Received first chunk ({len(chunk)} bytes)", flush=True)
+                    yield chunk
+            print(f"✅ CartesiaService: Stream complete, total chunks: {chunk_count}", flush=True)
                 
         except Exception as e:
             logger.error(f"❌ Cartesia TTS streaming error: {e}")
+            # Fallback attempt with voice dict if voice_id fails? 
+            # Actually, let's keep it simple first.
             import traceback
             traceback.print_exc()
 
