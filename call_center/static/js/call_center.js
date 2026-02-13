@@ -44,6 +44,8 @@ class CallCenterAgent {
         this.callStartTime = null;
         this.activeCallSessionId = null;
         this.activeCallIdentity = null;
+        this.lastInviteTime = null;
+        this.lastInviteCaller = null;
 
         this.init();
     }
@@ -392,27 +394,33 @@ class CallCenterAgent {
         });
 
         session.on('ended', () => {
-            console.log('Call ended', session.id);
-            this.ringTone.pause();
-            this.ringTone.currentTime = 0;
-            this.answerInProgress = false;
+            console.log('Call ended:', session.id);
 
-            // Only trigger global cleanup if this is the session we are actually tracking as current
+            // Only stop ringtone and trigger cleanup if this is the session we are actually tracking as current
             if (this.currentSession && session.id === this.currentSession.id) {
+                console.log('Stopping ringtone and resetting state for current session:', session.id);
+                this.ringTone.pause();
+                this.ringTone.currentTime = 0;
+                this.answerInProgress = false;
                 this.onCallEnded();
+            } else {
+                console.log('Ignoring end/pause for background/alternate session:', session.id);
             }
         });
 
         session.on('failed', (e) => {
             console.error('Call failed:', session.id, e);
-            this.ringTone.pause();
-            this.ringTone.currentTime = 0;
 
             // Only show alert and trigger cleanup if this is the session we are actually tracking as current
             if (this.currentSession && session.id === this.currentSession.id) {
-                alert('Call failed: ' + (e && e.cause ? e.cause : 'Unknown error'));
+                console.log('Stopping ringtone and resetting state for current session (failed):', session.id);
+                this.ringTone.pause();
+                this.ringTone.currentTime = 0;
                 this.answerInProgress = false;
+                alert('Call failed: ' + (e && e.cause ? e.cause : 'Unknown error'));
                 this.onCallEnded();
+            } else {
+                console.log('Ignoring alert/reset for background/alternate session (failed):', session.id);
             }
         });
 
@@ -628,16 +636,24 @@ class CallCenterAgent {
                 identity: incomingIdentity
             });
             this.handleTransferCall(session, incomingIdentity, callerName, callerNumber);
+
+            // Update tracking after successful detection/handling
+            this.lastInviteTime = Date.now();
+            this.lastInviteCaller = callerNumber;
             return;
         }
 
         if (hasActiveCall && this.shouldReplacePendingSession(session, incomingIdentity, callerNumber)) {
             this.replacePendingSession(session, incomingIdentity, callerName, callerNumber);
+            this.lastInviteTime = Date.now();
+            this.lastInviteCaller = callerNumber;
             return;
         }
 
         if (hasActiveCall) {
             this.handleParallelInviteDuringActiveCall(session, incomingIdentity);
+            this.lastInviteTime = Date.now();
+            this.lastInviteCaller = callerNumber;
             return;
         }
 
@@ -688,6 +704,10 @@ class CallCenterAgent {
         }
 
         this.attachSessionEventHandlers(session, 'inbound');
+
+        // Track this invite as the last one processed
+        this.lastInviteTime = Date.now();
+        this.lastInviteCaller = callerNumber;
     }
 
     extractSessionIdentity(session) {
@@ -794,6 +814,19 @@ class CallCenterAgent {
         if (incomingCallId && currentCallId && incomingCallId === currentCallId) {
             console.log('Same Call-ID, not a transfer.');
             return false; // Same call, not a transfer
+        }
+
+        // 3. Cooldown check: If this caller sent an invite very recently, it's likely a duplicate/retry leg
+        // rather than a transfer. Transfers usually happen after some time or have different SIDs.
+        const now = Date.now();
+        const INVITE_COOLDOWN_MS = 5000; // 5 seconds
+        const normIncomingCaller = normalizeNumber(incomingCaller);
+        const normLastCaller = normalizeNumber(this.lastInviteCaller);
+
+        if (this.lastInviteTime && (now - this.lastInviteTime < INVITE_COOLDOWN_MS) &&
+            normIncomingCaller && normIncomingCaller === normLastCaller) {
+            console.log('Invite cooldown active for caller. Treating as parallel leg, not transfer:', normIncomingCaller);
+            return false;
         }
 
         // 3. Hints that it's a transfer/replacement:
