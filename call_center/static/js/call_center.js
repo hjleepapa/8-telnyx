@@ -44,32 +44,32 @@ class CallCenterAgent {
         this.callStartTime = null;
         this.activeCallSessionId = null;
         this.activeCallIdentity = null;
-        
+
         this.init();
     }
-    
+
     init() {
         // Initialize UI elements
         this.initElements();
         this.attachEventListeners();
         this.checkLoginStatus();
     }
-    
+
     initElements() {
         // Screens
         this.loginScreen = document.getElementById('loginScreen');
         this.dashboardScreen = document.getElementById('dashboardScreen');
-        
+
         // Login form
         this.loginForm = document.getElementById('loginForm');
-        
+
         // Agent info displays
         this.agentNameDisplay = document.getElementById('agentNameDisplay');
         this.agentExtension = document.getElementById('agentExtension');
         this.currentStatus = document.getElementById('currentStatus');
         this.statusTimerDisplay = document.getElementById('statusTimer');
         this.sipStatus = document.getElementById('sipStatus');
-        
+
         // Buttons
         this.logoutBtn = document.getElementById('logoutBtn');
         this.readyBtn = document.getElementById('readyBtn');
@@ -81,60 +81,60 @@ class CallCenterAgent {
         this.transferBtn = document.getElementById('transferBtn');
         this.dialCallBtn = document.getElementById('dialCallBtn');
         this.dialClearBtn = document.getElementById('dialClearBtn');
-        
+
         // Call info
         this.callInfo = document.getElementById('callInfo');
-        
+
         // Dialpad
         this.dialInput = document.getElementById('dialInput');
         this.dialButtons = document.querySelectorAll('.dial-btn');
-        
+
         // Transfer panel
         this.transferPanel = document.getElementById('transferPanel');
         this.transferNumber = document.getElementById('transferNumber');
         this.blindTransferBtn = document.getElementById('blindTransferBtn');
         this.attendedTransferBtn = document.getElementById('attendedTransferBtn');
         this.cancelTransferBtn = document.getElementById('cancelTransferBtn');
-        
+
         // Customer popup
         this.customerPopup = document.getElementById('customerPopup');
         this.customerData = document.getElementById('customerData');
         this.closeCustomerPopup = document.getElementById('closeCustomerPopup');
         this.acceptCallFromPopup = document.getElementById('acceptCallFromPopup');
-        
+
         // Customer info window (read-only, persistent during call)
         this.customerInfoWindow = document.getElementById('customerInfoWindow');
         this.customerInfoData = document.getElementById('customerInfoData');
         this.closeCustomerInfoWindow = document.getElementById('closeCustomerInfoWindow');
-        
+
         // Audio
         this.ringTone = document.getElementById('ringTone');
         this.remoteAudio = document.getElementById('remoteAudio');
     }
-    
+
     attachEventListeners() {
         // Login
         this.loginForm.addEventListener('submit', (e) => this.handleLogin(e));
-        
+
         // Logout
         this.logoutBtn.addEventListener('click', () => this.handleLogout());
-        
+
         // Agent status
         this.readyBtn.addEventListener('click', () => this.setReady());
         this.notReadyBtn.addEventListener('click', () => this.setNotReady());
-        
+
         // Call controls
         this.answerBtn.addEventListener('click', () => this.answerCall());
         this.holdBtn.addEventListener('click', () => this.holdCall());
         this.unholdBtn.addEventListener('click', () => this.unholdCall());
         this.hangupBtn.addEventListener('click', () => this.hangupCall());
         this.transferBtn.addEventListener('click', () => this.showTransferPanel());
-        
+
         // Transfer
         this.blindTransferBtn.addEventListener('click', () => this.transferCall('blind'));
         this.attendedTransferBtn.addEventListener('click', () => this.transferCall('attended'));
         this.cancelTransferBtn.addEventListener('click', () => this.hideTransferPanel());
-        
+
         // Dialpad
         this.dialButtons.forEach(btn => {
             btn.addEventListener('click', () => {
@@ -143,14 +143,14 @@ class CallCenterAgent {
                 this.updateDialCallButton();
             });
         });
-        
+
         this.dialClearBtn.addEventListener('click', () => {
             this.dialInput.value = '';
             this.updateDialCallButton();
         });
-        
+
         this.dialCallBtn.addEventListener('click', () => this.makeCall());
-        
+
         // Customer popup
         this.closeCustomerPopup.addEventListener('click', () => this.hideCustomerPopup());
         this.acceptCallFromPopup.addEventListener('click', () => {
@@ -159,31 +159,31 @@ class CallCenterAgent {
             this.showCustomerInfoWindow();
             this.answerCall();
         });
-        
+
         // Customer info window
         if (this.closeCustomerInfoWindow) {
             this.closeCustomerInfoWindow.addEventListener('click', () => this.hideCustomerInfoWindow());
         }
-        
+
         // Initialize drag and resize functionality
         this.initModalDragAndResize();
     }
-    
+
     async handleLogin(e) {
         e.preventDefault();
-        
+
         const formData = new FormData(this.loginForm);
         const data = Object.fromEntries(formData.entries());
-        
+
         try {
             const response = await fetch('/call-center/api/agent/login', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(data)
             });
-            
+
             const result = await response.json();
-            
+
             if (result.success) {
                 this.agent = result.agent;
                 this.initSIPClient(data.sip_username, data.sip_password, data.sip_domain);
@@ -196,24 +196,24 @@ class CallCenterAgent {
             alert('Login failed. Please try again.');
         }
     }
-    
+
     async handleLogout() {
         if (!confirm('Are you sure you want to logout?')) {
             return;
         }
-        
+
         try {
             // Disconnect SIP
             if (this.sipUser) {
                 await this.sipUser.stop();
             }
-            
+
             // Logout from backend
             await fetch('/call-center/api/agent/logout', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' }
             });
-            
+
             this.agent = null;
             this.showLogin();
             this.stopStatusTimer();
@@ -221,16 +221,16 @@ class CallCenterAgent {
             console.error('Logout error:', error);
         }
     }
-    
+
     async setReady() {
         try {
             const response = await fetch('/call-center/api/agent/ready', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' }
             });
-            
+
             const result = await response.json();
-            
+
             if (result.success) {
                 this.updateAgentStatus('ready');
             }
@@ -238,20 +238,20 @@ class CallCenterAgent {
             console.error('Set ready error:', error);
         }
     }
-    
+
     async setNotReady() {
         const reason = prompt('Reason for not ready:', 'Break');
         if (!reason) return;
-        
+
         try {
             const response = await fetch('/call-center/api/agent/not-ready', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ reason })
             });
-            
+
             const result = await response.json();
-            
+
             if (result.success) {
                 this.updateAgentStatus('not-ready');
             }
@@ -259,7 +259,7 @@ class CallCenterAgent {
             console.error('Set not ready error:', error);
         }
     }
-    
+
     sanitizeDomain(domain) {
         let cleanDomain = (domain || '').trim();
         cleanDomain = cleanDomain.replace(/^wss?:\/\//, '');
@@ -268,23 +268,23 @@ class CallCenterAgent {
         cleanDomain = cleanDomain.replace(/^[^0-9a-zA-Z.]+/, '');
         return cleanDomain;
     }
-    
+
     initSIPClient(username, password, domain) {
         console.log(`Initializing SIP client for ${username}@${domain}`);
-        
+
         const cleanDomain = this.sanitizeDomain(domain);
-        
+
         // Get port from config (default to 7443 if not set)
         const wssPort = window.SIP_CONFIG ? window.SIP_CONFIG.wss_port : 7443;
         const wsUrl = `wss://${cleanDomain}:${wssPort}`;
         console.log(`Connecting to WebSocket: ${wsUrl}`);
-        
+
         const socket = new JsSIP.WebSocketInterface(wsUrl);
 
         if (JsSIP && JsSIP.debug && typeof JsSIP.debug.enable === 'function') {
             JsSIP.debug.enable('JsSIP:*');
         }
-        
+
         const configuration = {
             sockets: [socket],
             uri: `sip:${username}@${cleanDomain}`,
@@ -293,42 +293,42 @@ class CallCenterAgent {
             register: true,
             sessionDescriptionHandlerFactoryOptions: this.sessionDescriptionHandlerFactoryOptions
         };
-        
+
         console.log('Using ICE servers:', this.iceServers);
         console.log('SIP UA configuration rtcConfiguration:', configuration.sessionDescriptionHandlerFactoryOptions);
-        
+
         this.sipUser = new JsSIP.UA(configuration);
-        
+
         // Event handlers
         this.sipUser.on('connected', (e) => {
             console.log('✓ SIP connected');
             this.updateSIPStatus(true);
         });
-        
+
         this.sipUser.on('disconnected', (e) => {
             console.log('✗ SIP disconnected');
             this.updateSIPStatus(false);
         });
-        
+
         this.sipUser.on('registered', (e) => {
             console.log('✓ SIP registered');
             this.updateSIPStatus(true);
         });
-        
+
         this.sipUser.on('unregistered', (e) => {
             console.log('SIP unregistered');
         });
-        
+
         this.sipUser.on('registrationFailed', (e) => {
             console.error('✗ SIP registration failed:', e);
             this.updateSIPStatus(false);
             alert('Failed to register with SIP server. Please check your credentials.');
         });
-        
+
         this.sipUser.on('newRTCSession', (event) => {
             console.log('New RTC session');
             const session = event.session;
-            
+
             if (session.direction === 'incoming') {
                 this.handleIncomingCall(session);
             } else {
@@ -345,7 +345,7 @@ class CallCenterAgent {
                 this.pendingDialNumber = null;
             }
         });
-        
+
         // Start the User Agent
         try {
             this.sipUser.start();
@@ -356,7 +356,7 @@ class CallCenterAgent {
             alert('Failed to connect to SIP server: ' + error.message);
         }
     }
-    
+
     attachSessionEventHandlers(session, direction = 'inbound', dialedNumber = null) {
         this.currentSession = session;
         this.activeCallSessionId = session ? session.id : null;
@@ -365,50 +365,58 @@ class CallCenterAgent {
 
         this.setupRemoteAudio(session);
         this.observePeerConnection(session.connection);
-        
+
         session.on('progress', () => {
             console.log('Call progressing...');
             if (direction === 'outbound' && dialedNumber) {
                 this.showOutgoingCall(dialedNumber);
             }
         });
-        
+
         session.on('accepted', () => {
             console.log('Call accepted');
             this.ringTone.pause();
             this.ringTone.currentTime = 0;
             this.answerInProgress = false;
         });
-        
+
         session.on('confirmed', () => {
             console.log('Call confirmed');
             this.answerInProgress = false;
             this.onCallEstablished();
         });
-        
+
         session.on('ended', () => {
-            console.log('Call ended');
+            console.log('Call ended', session.id);
             this.ringTone.pause();
             this.ringTone.currentTime = 0;
             this.answerInProgress = false;
-            this.onCallEnded();
+
+            // Only trigger global cleanup if this is the session we are actually tracking as current
+            if (this.currentSession && session.id === this.currentSession.id) {
+                this.onCallEnded();
+            }
         });
-        
+
         session.on('failed', (e) => {
-            console.error('Call failed:', e);
+            console.error('Call failed:', session.id, e);
             this.ringTone.pause();
             this.ringTone.currentTime = 0;
-            alert('Call failed: ' + (e && e.cause ? e.cause : 'Unknown error'));
-            this.answerInProgress = false;
-            this.onCallEnded();
+
+            // Only show alert and trigger cleanup if this is the session we are actually tracking as current
+            if (this.currentSession && session.id === this.currentSession.id) {
+                alert('Call failed: ' + (e && e.cause ? e.cause : 'Unknown error'));
+                this.answerInProgress = false;
+                this.onCallEnded();
+            }
         });
-        
+
         session.on('peerconnection', (data) => {
             this.setupRemoteAudio(session, data.peerconnection);
             this.observePeerConnection(data.peerconnection);
         });
     }
-    
+
     enforceNonTrickle(session) {
         if (!session) {
             return;
@@ -470,9 +478,9 @@ class CallCenterAgent {
     setupRemoteAudio(session, peerConnectionOverride = null) {
         const applyRemoteTracks = (pc) => {
             if (!pc) return;
-            
+
             const remoteStream = new MediaStream();
-            
+
             pc.addEventListener('track', (event) => {
                 event.streams.forEach((stream) => {
                     stream.getTracks().forEach((track) => {
@@ -483,9 +491,9 @@ class CallCenterAgent {
                     });
                 });
                 this.remoteAudio.srcObject = remoteStream;
-                this.remoteAudio.play().catch(() => {});
+                this.remoteAudio.play().catch(() => { });
             });
-            
+
             pc.getReceivers().forEach((receiver) => {
                 if (receiver.track) {
                     const alreadyAdded = remoteStream.getTracks().some((existingTrack) => existingTrack.id === receiver.track.id);
@@ -494,11 +502,11 @@ class CallCenterAgent {
                     }
                 }
             });
-            
+
             this.remoteAudio.srcObject = remoteStream;
-            this.remoteAudio.play().catch(() => {});
+            this.remoteAudio.play().catch(() => { });
         };
-        
+
         const pc = peerConnectionOverride || session.connection;
         if (pc) {
             applyRemoteTracks(pc);
@@ -565,16 +573,16 @@ class CallCenterAgent {
             console.log('Peer connection state changed:', pc.connectionState);
         });
     }
-    
+
     async ensureLocalAudioStream() {
         if (this.audioAccessDenied) {
             throw new Error('Microphone access previously denied');
         }
-        
+
         if (this.localStream && this.localStream.active) {
             return this.localStream;
         }
-        
+
         try {
             this.localStream = await navigator.mediaDevices.getUserMedia({
                 audio: true,
@@ -588,50 +596,50 @@ class CallCenterAgent {
             throw error;
         }
     }
-    
+
     handleIncomingCall(session) {
         console.log('Incoming call:', session);
-        
+
         const incomingIdentity = this.extractSessionIdentity(session);
         const remoteIdentity = session.remote_identity;
         const callerNumber = remoteIdentity && remoteIdentity.uri ? remoteIdentity.uri.user : null;
         const callerName = remoteIdentity && remoteIdentity.display_name ? remoteIdentity.display_name : callerNumber;
         const hasActiveCall = this.activeCallSessionId && this.activeCallSessionId !== session.id;
-        
+
         if (hasActiveCall && this.isReinviteForActiveCall(incomingIdentity)) {
             this.handleReinviteSession(session, incomingIdentity);
             return;
         }
-        
-        // Check if this is a transfer call (has Twilio Call SID and we have an active call)
+
+        // Check if this is a transfer/replacement call
         if (hasActiveCall && this.isTransferCall(session, incomingIdentity)) {
-            console.log('Detected transfer call during active call. Handling transfer...', {
+            console.log('🔄 Detected transfer/replacement call during active call. Replacing current session...', {
                 activeSession: this.activeCallSessionId,
-                transferSession: session.id,
-                transferIdentity: incomingIdentity
+                newSession: session.id,
+                identity: incomingIdentity
             });
             this.handleTransferCall(session, incomingIdentity, callerName, callerNumber);
             return;
         }
-        
+
         if (hasActiveCall && this.shouldReplacePendingSession(session, incomingIdentity, callerNumber)) {
             this.replacePendingSession(session, incomingIdentity, callerName, callerNumber);
             return;
         }
-        
+
         if (hasActiveCall) {
             this.handleParallelInviteDuringActiveCall(session, incomingIdentity);
             return;
         }
-        
+
         // Extract call identifiers from session
         const identity = this.extractSessionIdentity(session);
         const callId = identity.callId || session.id; // Use identity.callId if available, fallback to session.id
         const callSid = identity.twilioCallSid;
-        
+
         // Mock customer data (in production, fetch from CRM)
         const customerId = callerNumber;
-        
+
         this.currentSession = session;
         this.activeCallSessionId = session.id;
         this.currentCall = {
@@ -642,24 +650,24 @@ class CallCenterAgent {
             direction: 'inbound'
         };
         this.activeCallIdentity = incomingIdentity;
-        
+
         // Notify backend
         fetch('/call-center/api/call/ringing', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(this.currentCall)
         });
-        
+
         // Update UI
         this.showIncomingCall(callerName, callerNumber);
         this.enableAnswerControls();
-        
+
         // Show customer popup with call identifiers
         this.showCustomerPopup(customerId, callSid, callId);
-        
+
         // Play ringtone
         this.ringTone.play();
-        
+
         this.attachSessionEventHandlers(session, 'inbound');
     }
 
@@ -742,29 +750,32 @@ class CallCenterAgent {
     }
 
     isTransferCall(session, identity) {
-        // A transfer call is identified by:
-        // 1. We have an active call (required for transfer)
-        // 2. Has X-Twilio-CallSid header (from Twilio)
-        // 3. It's a new call (different Call-ID than active call)
-        
-        // Must have an active call for it to be a transfer
-        if (!this.activeCallSessionId || !this.activeCallIdentity) {
+        // A transfer/replacement call is identified by:
+        // 1. We have an active or pending call
+        if (!this.activeCallSessionId) {
             return false;
         }
-        
-        // Must have Twilio Call SID (from extractSessionIdentity)
-        if (!identity || !identity.twilioCallSid) {
-            return false;
-        }
-        
-        // Must be a different call than the active one
-        if (identity.callId && this.activeCallIdentity.callId && 
-            identity.callId === this.activeCallIdentity.callId) {
+
+        // 2. It's a different call (different Call-ID)
+        const currentCallId = this.activeCallIdentity ? this.activeCallIdentity.callId : null;
+        if (identity && identity.callId && currentCallId && identity.callId === currentCallId) {
             return false; // Same call, not a transfer
         }
-        
-        // If we have an active call and this is a Twilio call with different Call-ID, it's likely a transfer
-        return true;
+
+        // 3. Hints that it's a transfer/replacement:
+        // - Has Twilio Call SID (specific to our Twilio integration)
+        if (identity && identity.twilioCallSid) {
+            return true;
+        }
+
+        // - Is from the same caller (common for call replacement/re-dialing)
+        const remoteIdentity = session.remote_identity;
+        const callerNumber = remoteIdentity && remoteIdentity.uri ? remoteIdentity.uri.user : null;
+        if (callerNumber && this.currentCall && callerNumber === this.currentCall.caller_number) {
+            return true;
+        }
+
+        return false;
     }
 
     async handleTransferCall(session, identity, callerName, callerNumber) {
@@ -773,14 +784,14 @@ class CallCenterAgent {
             transferIdentity: identity,
             activeSession: this.activeCallSessionId
         });
-        
+
         // Store the original call session before replacing it
         const originalSession = this.currentSession;
         const originalCallSessionId = this.activeCallSessionId;
-        
+
         const callId = identity.callId || session.id;
         const callSid = identity.twilioCallSid;
-        
+
         // Update current session and call to transfer call
         this.currentSession = session;
         this.currentCall = {
@@ -793,18 +804,18 @@ class CallCenterAgent {
         this.pendingTransferIdentity = identity;
         this.activeCallSessionId = session.id;
         this.activeCallIdentity = identity;
-        
+
         // Notify backend
         fetch('/call-center/api/call/ringing', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(this.currentCall)
         });
-        
+
         // Show customer popup for transfer call
         const customerId = callerNumber;
         this.showCustomerPopup(customerId, callSid, callId);
-        
+
         // End the original call first (if it exists)
         if (originalSession && originalCallSessionId) {
             console.log('Ending original call before handling transfer call', {
@@ -818,14 +829,14 @@ class CallCenterAgent {
                 console.warn('Error ending original call:', endError);
             }
         }
-        
+
         // Update UI and allow manual answer
         this.showIncomingCall(callerName, callerNumber);
         this.enableAnswerControls();
-        
+
         // Play ringtone
         this.ringTone.play();
-        
+
         // Attach event handlers
         this.attachSessionEventHandlers(session, 'transfer');
     }
@@ -898,7 +909,7 @@ class CallCenterAgent {
         } catch (error) {
             console.warn('Unable to terminate pending session', error);
         }
-        
+
         const callId = identity.callId || session.id;
         const callSid = identity.twilioCallSid;
         this.currentSession = session;
@@ -911,14 +922,14 @@ class CallCenterAgent {
             customer_id: callerNumber,
             direction: 'inbound'
         };
-        
+
         // Notify backend
         fetch('/call-center/api/call/ringing', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(this.currentCall)
         });
-        
+
         this.showIncomingCall(callerName, callerNumber);
         this.enableAnswerControls();
         this.showCustomerPopup(callerNumber, callSid, callId);
@@ -976,7 +987,7 @@ class CallCenterAgent {
 
         try {
             console.log('Attempting to answer call', { sessionId: session.id, status });
-            
+
             // If this is a transfer call and we have an original call, end it first
             if (this.originalCallBeforeTransfer && this.originalCallBeforeTransfer.session) {
                 const originalSession = this.originalCallBeforeTransfer.session;
@@ -994,23 +1005,23 @@ class CallCenterAgent {
                 // Clear the original call reference
                 this.originalCallBeforeTransfer = null;
             }
-            
+
             const stream = await this.ensureLocalAudioStream();
-            
+
             await session.answer(this.buildSessionOptions(stream));
             console.log('Answer sent for session', session.id);
-            
+
             // Update active session to the answered call
             this.activeCallSessionId = session.id;
             this.activeCallIdentity = this.pendingTransferIdentity || this.extractSessionIdentity(session);
-            
+
             // Notify backend
             await fetch('/call-center/api/call/answer', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ call_id: this.currentCall.call_id })
             });
-            
+
             this.ringTone.pause();
             this.ringTone.currentTime = 0;
         } catch (error) {
@@ -1025,13 +1036,13 @@ class CallCenterAgent {
             }
         }
     }
-    
+
     async hangupCall() {
         if (!this.currentSession) return;
-        
+
         try {
             this.currentSession.terminate();
-            
+
             // Notify backend if we still have call metadata
             if (this.currentCall && this.currentCall.call_id) {
                 await fetch('/call-center/api/call/drop', {
@@ -1044,64 +1055,64 @@ class CallCenterAgent {
             console.error('Hangup call error:', error);
         }
     }
-    
+
     async holdCall() {
         if (!this.currentSession) return;
-        
+
         try {
             this.currentSession.hold();
-            
+
             // Notify backend
             await fetch('/call-center/api/call/hold', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ call_id: this.currentCall.call_id })
             });
-            
+
             this.holdBtn.style.display = 'none';
             this.unholdBtn.style.display = 'block';
         } catch (error) {
             console.error('Hold call error:', error);
         }
     }
-    
+
     async unholdCall() {
         if (!this.currentSession) return;
-        
+
         try {
             this.currentSession.unhold();
-            
+
             // Notify backend
             await fetch('/call-center/api/call/unhold', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ call_id: this.currentCall.call_id })
             });
-            
+
             this.holdBtn.style.display = 'block';
             this.unholdBtn.style.display = 'none';
         } catch (error) {
             console.error('Unhold call error:', error);
         }
     }
-    
+
     async makeCall() {
         const number = this.dialInput.value;
         if (!number || !this.sipUser) {
             console.error('Cannot make call: number missing or SIP user not initialized');
             return;
         }
-        
+
         try {
             const cleanDomain = this.sanitizeDomain(this.agent.sip_domain);
             const target = `sip:${number}@${cleanDomain}`;
             const stream = await this.ensureLocalAudioStream();
             const options = this.buildSessionOptions(stream);
             this.pendingDialNumber = number;
-            
+
             const session = this.sipUser.call(target, options);
             this.currentSession = session;
-            
+
             this.dialInput.value = '';
             this.updateDialCallButton();
         } catch (error) {
@@ -1113,23 +1124,23 @@ class CallCenterAgent {
             alert(message);
         }
     }
-    
+
     showTransferPanel() {
         this.transferPanel.style.display = 'block';
     }
-    
+
     hideTransferPanel() {
         this.transferPanel.style.display = 'none';
         this.transferNumber.value = '';
     }
-    
+
     async transferCall(type) {
         const transferTo = this.transferNumber.value;
         if (!transferTo) {
             alert('Please enter transfer destination');
             return;
         }
-        
+
         try {
             // Notify backend
             await fetch('/call-center/api/call/transfer', {
@@ -1141,14 +1152,14 @@ class CallCenterAgent {
                     transfer_type: type
                 })
             });
-            
+
             // Perform SIP REFER for blind transfer
             if (type === 'blind' && this.currentSession) {
                 const cleanDomain = this.sanitizeDomain(this.agent.sip_domain);
                 const referTo = `sip:${transferTo}@${cleanDomain}`;
                 this.currentSession.refer(referTo);
             }
-            
+
             this.hideTransferPanel();
             alert(`Call ${type} transferred to ${transferTo}`);
         } catch (error) {
@@ -1156,11 +1167,11 @@ class CallCenterAgent {
             alert('Transfer failed');
         }
     }
-    
+
     async showCustomerPopup(customerId, callSid = null, callId = null) {
         this.customerPopup.classList.add('active');
         this.customerData.innerHTML = '<div class="customer-info loading"><i class="fas fa-spinner fa-spin"></i> Loading customer data...</div>';
-        
+
         try {
             // Build query parameters
             const params = new URLSearchParams();
@@ -1176,12 +1187,12 @@ class CallCenterAgent {
             if (customerId) {
                 params.append('customer_id', customerId);
             }
-            
+
             const response = await fetch(`/call-center/api/customer/data?${params.toString()}`);
             const customer = await response.json();
-            
+
             this.displayCustomerData(customer, this.customerData);
-            
+
             // Store customer data for info window
             this.currentCustomerData = customer;
             this.currentCallSid = callSid;
@@ -1191,7 +1202,7 @@ class CallCenterAgent {
             this.customerData.innerHTML = '<div class="customer-info"><p>Failed to load customer data</p></div>';
         }
     }
-    
+
     displayCustomerData(customer, containerElement) {
         // Build conversation history HTML
         let conversationHtml = '';
@@ -1206,15 +1217,15 @@ class CallCenterAgent {
             });
             conversationHtml += '</div></div>';
         }
-        
+
         // Build activities HTML
         let activitiesHtml = '';
         if (customer.activities && customer.activities.length > 0) {
             activitiesHtml = '<div class="activities-section"><h4>Recent Activities</h4><div class="activities-list">';
             customer.activities.forEach(activity => {
-                const activityIcon = activity.activity_type === 'calendar_event' ? '📅' : 
-                                   activity.activity_type === 'todo' ? '✅' : 
-                                   activity.activity_type === 'mortgage' ? '🏠' : '🔧';
+                const activityIcon = activity.activity_type === 'calendar_event' ? '📅' :
+                    activity.activity_type === 'todo' ? '✅' :
+                        activity.activity_type === 'mortgage' ? '🏠' : '🔧';
                 activitiesHtml += `<div class="activity-item">
                     <span class="activity-icon">${activityIcon}</span>
                     <div class="activity-content">
@@ -1225,7 +1236,7 @@ class CallCenterAgent {
             });
             activitiesHtml += '</div></div>';
         }
-        
+
         const html = `
             <div class="customer-info">
                 <div class="customer-field">
@@ -1272,24 +1283,24 @@ class CallCenterAgent {
                 ${activitiesHtml}
             </div>
         `;
-        
+
         containerElement.innerHTML = html;
     }
-    
+
     escapeHtml(text) {
         if (!text) return '';
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
     }
-    
+
     hideCustomerPopup() {
         this.customerPopup.classList.remove('active');
         if (this.currentCall && this.currentCall.call_id) {
             this.showCustomerInfoWindow();
         }
     }
-    
+
     showIncomingCall(callerName, callerNumber) {
         this.callInfo.innerHTML = `
             <div class="active-call ringing">
@@ -1307,7 +1318,7 @@ class CallCenterAgent {
                 </div>
             </div>
         `;
-        
+
         this.answerBtn.disabled = false;
         this.hangupBtn.disabled = false;
         this.answerInProgress = false;
@@ -1315,7 +1326,7 @@ class CallCenterAgent {
             this.acceptCallFromPopup.disabled = false;
         }
     }
-    
+
     showOutgoingCall(number) {
         this.callInfo.innerHTML = `
             <div class="active-call">
@@ -1330,23 +1341,23 @@ class CallCenterAgent {
                 </div>
             </div>
         `;
-        
+
         this.hangupBtn.disabled = false;
     }
-    
+
     onCallEstablished() {
         console.log('Call established');
-        
+
         this.callStartTime = Date.now();
         this.startCallDurationTimer();
-        
+
         this.answerBtn.disabled = true;
         this.holdBtn.disabled = false;
         this.transferBtn.disabled = false;
         this.hangupBtn.disabled = false;
-        
+
         this.updateAgentStatus('on-call');
-        
+
         // Update call info
         const callerName = this.currentCall.caller_name || this.currentCall.caller_number;
         this.callInfo.innerHTML = `
@@ -1363,25 +1374,25 @@ class CallCenterAgent {
                 <div class="call-duration" id="callDuration">00:00:00</div>
             </div>
         `;
-        
+
         // Ensure history window is visible after accept unless user closed it
         if (this.customerInfoPinned || (this.customerPopup && !this.customerPopup.classList.contains('active'))) {
             this.showCustomerInfoWindow();
         }
     }
-    
+
     onCallEnded() {
         console.log('Call ended');
-        
+
         this.stopCallDurationTimer();
-        
+
         this.callInfo.innerHTML = `
             <div class="no-call">
                 <i class="fas fa-phone-slash"></i>
                 <p>No active call</p>
             </div>
         `;
-        
+
         this.answerBtn.disabled = true;
         this.holdBtn.disabled = true;
         this.unholdBtn.disabled = true;
@@ -1390,10 +1401,10 @@ class CallCenterAgent {
         if (this.acceptCallFromPopup) {
             this.acceptCallFromPopup.disabled = false;
         }
-        
+
         // Close customer info window when call ends
         this.hideCustomerInfoWindow();
-        
+
         this.currentCall = null;
         this.currentSession = null;
         this.pendingDialNumber = null;
@@ -1406,31 +1417,31 @@ class CallCenterAgent {
         this.currentCustomerData = null;
         this.currentCallSid = null;
         this.currentCallId = null;
-        
+
         this.setReady();
     }
-    
+
     startCallDurationTimer() {
         this.callDurationTimer = setInterval(() => {
             const duration = Math.floor((Date.now() - this.callStartTime) / 1000);
             const hours = Math.floor(duration / 3600).toString().padStart(2, '0');
             const minutes = Math.floor((duration % 3600) / 60).toString().padStart(2, '0');
             const seconds = (duration % 60).toString().padStart(2, '0');
-            
+
             const durationEl = document.getElementById('callDuration');
             if (durationEl) {
                 durationEl.textContent = `${hours}:${minutes}:${seconds}`;
             }
         }, 1000);
     }
-    
+
     stopCallDurationTimer() {
         if (this.callDurationTimer) {
             clearInterval(this.callDurationTimer);
             this.callDurationTimer = null;
         }
     }
-    
+
     updateAgentStatus(status) {
         const statusMap = {
             'logged-out': 'Logged Out',
@@ -1439,10 +1450,10 @@ class CallCenterAgent {
             'not-ready': 'Not Ready',
             'on-call': 'On Call'
         };
-        
+
         this.currentStatus.textContent = statusMap[status] || status;
         this.currentStatus.className = 'status-badge ' + status;
-        
+
         // Enable/disable buttons based on status
         if (status === 'ready') {
             this.readyBtn.disabled = true;
@@ -1456,47 +1467,47 @@ class CallCenterAgent {
             this.readyBtn.disabled = false;
             this.notReadyBtn.disabled = false;
         }
-        
+
         // Restart status timer
         this.statusStartTime = Date.now();
         this.startStatusTimer();
     }
-    
+
     startStatusTimer() {
         this.stopStatusTimer();
-        
+
         this.statusTimer = setInterval(() => {
             const duration = Math.floor((Date.now() - this.statusStartTime) / 1000);
             const hours = Math.floor(duration / 3600).toString().padStart(2, '0');
             const minutes = Math.floor((duration % 3600) / 60).toString().padStart(2, '0');
             const seconds = (duration % 60).toString().padStart(2, '0');
-            
+
             this.statusTimerDisplay.textContent = `${hours}:${minutes}:${seconds}`;
         }, 1000);
     }
-    
+
     stopStatusTimer() {
         if (this.statusTimer) {
             clearInterval(this.statusTimer);
             this.statusTimer = null;
         }
     }
-    
+
     async showCustomerInfoWindow() {
         if (!this.customerInfoWindow) {
             console.warn('Customer info window element not found');
             return;
         }
-        
+
         this.customerInfoWindow.classList.add('active');
-        
+
         // If we have stored customer data, display it
         if (this.currentCustomerData) {
             this.displayCustomerData(this.currentCustomerData, this.customerInfoData);
         } else {
             // Otherwise, fetch it
             this.customerInfoData.innerHTML = '<div class="customer-info loading"><i class="fas fa-spinner fa-spin"></i> Loading customer data...</div>';
-            
+
             try {
                 const params = new URLSearchParams();
                 if (this.agent && this.agent.sip_extension) {
@@ -1508,10 +1519,10 @@ class CallCenterAgent {
                 if (this.currentCallId) {
                     params.append('call_id', this.currentCallId);
                 }
-                
+
                 const response = await fetch(`/call-center/api/customer/data?${params.toString()}`);
                 const customer = await response.json();
-                
+
                 this.displayCustomerData(customer, this.customerInfoData);
                 this.currentCustomerData = customer;
             } catch (error) {
@@ -1520,59 +1531,59 @@ class CallCenterAgent {
             }
         }
     }
-    
+
     hideCustomerInfoWindow() {
         if (this.customerInfoWindow) {
             this.customerInfoWindow.classList.remove('active');
         }
         this.customerInfoPinned = false;
     }
-    
+
     initModalDragAndResize() {
         // Make modals draggable
         const modals = [this.customerPopup, this.customerInfoWindow].filter(m => m);
-        
+
         modals.forEach(modal => {
             const header = modal.querySelector('.modal-header');
             if (!header) return;
-            
+
             let isDragging = false;
             let currentX = 0;
             let currentY = 0;
             let initialX = 0;
             let initialY = 0;
-            
+
             header.addEventListener('mousedown', (e) => {
                 if (e.target.classList.contains('close-modal')) return;
-                
+
                 isDragging = true;
                 initialX = e.clientX - currentX;
                 initialY = e.clientY - currentY;
-                
+
                 const rect = modal.getBoundingClientRect();
                 currentX = rect.left;
                 currentY = rect.top;
             });
-            
+
             document.addEventListener('mousemove', (e) => {
                 if (!isDragging) return;
-                
+
                 e.preventDefault();
                 currentX = e.clientX - initialX;
                 currentY = e.clientY - initialY;
-                
+
                 modal.style.left = currentX + 'px';
                 modal.style.top = currentY + 'px';
                 modal.style.right = 'auto';
                 modal.style.bottom = 'auto';
             });
-            
+
             document.addEventListener('mouseup', () => {
                 isDragging = false;
             });
         });
     }
-    
+
     updateSIPStatus(connected) {
         if (connected) {
             this.sipStatus.innerHTML = '<i class="fas fa-circle"></i><span>Connected</span>';
@@ -1582,35 +1593,35 @@ class CallCenterAgent {
             this.sipStatus.classList.remove('connected');
         }
     }
-    
+
     updateDialCallButton() {
         this.dialCallBtn.disabled = !this.dialInput.value || this.currentCall !== null;
     }
-    
+
     showDashboard() {
         this.loginScreen.classList.remove('active');
         this.dashboardScreen.classList.add('active');
-        
+
         this.agentNameDisplay.textContent = this.agent.name;
         this.agentExtension.textContent = `Ext: ${this.agent.sip_extension}`;
-        
+
         this.updateAgentStatus('logged-in');
-        
+
         this.readyBtn.disabled = false;
         this.notReadyBtn.disabled = false;
     }
-    
+
     showLogin() {
         this.dashboardScreen.classList.remove('active');
         this.loginScreen.classList.add('active');
         this.loginForm.reset();
     }
-    
+
     async checkLoginStatus() {
         try {
             const response = await fetch('/call-center/api/agent/status');
             const result = await response.json();
-            
+
             if (result.logged_in) {
                 this.agent = result.agent;
                 this.showDashboard();
