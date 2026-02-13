@@ -28,7 +28,7 @@ class GeminiStreamingHandler:
     def __init__(
         self,
         api_key: str,
-        model: str = "gemini-2.5-flash",
+        model: str = "gemini-2.0-flash",
         tools: Optional[List[BaseTool]] = None,
         system_prompt: Optional[str] = None,
         on_text_chunk: Optional[Callable[[str], None]] = None,

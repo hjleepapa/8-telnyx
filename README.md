@@ -108,7 +108,7 @@ Convonet supports **three major LLM providers** with seamless switching capabili
 | Provider | Model | Default Model | Best For |
 |----------|-------|---------------|----------|
 | **Claude (Anthropic)** | Claude Sonnet 4 | `claude-sonnet-4-20250514` | Best tool calling, complex reasoning |
-| **Gemini (Google)** | Gemini 2.5 Flash | `gemini-2.5-flash` | Cost-effective, fast responses |
+| **Gemini (Google)** | Gemini 2.0 Flash | `gemini-2.0-flash` | Cost-effective, fast responses |
 | **OpenAI** | GPT-4o | `gpt-4o` | General purpose, high accuracy |
 
 ### Configuration
@@ -126,13 +126,13 @@ ANTHROPIC_MODEL=claude-sonnet-4-20250514  # Optional
 
 ```bash
 GOOGLE_API_KEY=your-google-api-key
-GOOGLE_MODEL=gemini-2.5-flash  # Optional, defaults to gemini-2.5-flash
+GOOGLE_MODEL=gemini-2.0-flash  # Optional, defaults to gemini-2.0-flash
 ```
 
 **Available Gemini Models**:
-- `gemini-2.5-flash` - **Default**: Best price-performance, well-rounded capabilities
-- `gemini-3-pro-preview` - Most powerful, best for multimodal and agentic tasks
-- `gemini-2.0-flash` - Fast and efficient
+- `gemini-2.0-flash` - **Default**: Best price-performance, well-rounded capabilities
+- `gemini-1.5-pro` - Most powerful, best for multimodal and agentic tasks
+- `gemini-1.5-flash` - High-speed, cost-efficient
 - `gemini-2.0-flash-lite` - Cost-efficient, 1M token context window
 
 **Recommended for**: Cost-effective operations, fast responses, high-volume usage

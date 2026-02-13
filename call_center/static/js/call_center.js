@@ -326,8 +326,13 @@ class CallCenterAgent {
         });
 
         this.sipUser.on('newRTCSession', (event) => {
-            console.log('New RTC session');
             const session = event.session;
+            console.log('New RTC session:', {
+                id: session.id,
+                direction: session.direction,
+                remote_identity: session.remote_identity ? session.remote_identity.uri.user : 'unknown',
+                call_id: session.request ? session.request.call_id : 'n/a'
+            });
 
             if (session.direction === 'incoming') {
                 this.handleIncomingCall(session);
@@ -598,7 +603,11 @@ class CallCenterAgent {
     }
 
     handleIncomingCall(session) {
-        console.log('Incoming call:', session);
+        console.log('Incoming call start:', {
+            sessionId: session.id,
+            direction: session.direction,
+            state: session.state
+        });
 
         const incomingIdentity = this.extractSessionIdentity(session);
         const remoteIdentity = session.remote_identity;
@@ -665,8 +674,18 @@ class CallCenterAgent {
         // Show customer popup with call identifiers
         this.showCustomerPopup(customerId, callSid, callId);
 
-        // Play ringtone
-        this.ringTone.play();
+        // Play ringtone with safety
+        try {
+            console.log('Attempting to play ringtone...');
+            const playPromise = this.ringTone.play();
+            if (playPromise !== undefined) {
+                playPromise.catch(error => {
+                    console.warn('Ringtone play prevented or failed:', error);
+                });
+            }
+        } catch (error) {
+            console.warn('Error calling ringTone.play():', error);
+        }
 
         this.attachSessionEventHandlers(session, 'inbound');
     }
@@ -756,22 +775,51 @@ class CallCenterAgent {
             return false;
         }
 
+        const normalizeNumber = (num) => {
+            if (!num) return null;
+            // Remove everything except digits
+            return num.toString().replace(/\D/g, '').slice(-10); // Match last 10 digits
+        };
+
         // 2. It's a different call (different Call-ID)
         const currentCallId = this.activeCallIdentity ? this.activeCallIdentity.callId : null;
-        if (identity && identity.callId && currentCallId && identity.callId === currentCallId) {
+        const incomingCallId = identity ? identity.callId : null;
+
+        console.log('Checking for transfer:', {
+            incomingCallId: incomingCallId,
+            currentCallId: currentCallId,
+            activeSession: this.activeCallSessionId
+        });
+
+        if (incomingCallId && currentCallId && incomingCallId === currentCallId) {
+            console.log('Same Call-ID, not a transfer.');
             return false; // Same call, not a transfer
         }
 
         // 3. Hints that it's a transfer/replacement:
         // - Has Twilio Call SID (specific to our Twilio integration)
         if (identity && identity.twilioCallSid) {
+            console.log('Detected transfer by Twilio Call SID:', identity.twilioCallSid);
             return true;
         }
 
         // - Is from the same caller (common for call replacement/re-dialing)
         const remoteIdentity = session.remote_identity;
-        const callerNumber = remoteIdentity && remoteIdentity.uri ? remoteIdentity.uri.user : null;
-        if (callerNumber && this.currentCall && callerNumber === this.currentCall.caller_number) {
+        const incomingCaller = remoteIdentity && remoteIdentity.uri ? remoteIdentity.uri.user : null;
+        const activeCaller = this.currentCall ? this.currentCall.caller_number : null;
+
+        const normIncoming = normalizeNumber(incomingCaller);
+        const normActive = normalizeNumber(activeCaller);
+
+        console.log('Comparing caller numbers for transfer detection:', {
+            incoming: incomingCaller,
+            active: activeCaller,
+            normIncoming: normIncoming,
+            normActive: normActive
+        });
+
+        if (normIncoming && normActive && normIncoming === normActive) {
+            console.log('Detected transfer by normalized caller number match.');
             return true;
         }
 
@@ -834,8 +882,18 @@ class CallCenterAgent {
         this.showIncomingCall(callerName, callerNumber);
         this.enableAnswerControls();
 
-        // Play ringtone
-        this.ringTone.play();
+        // Play ringtone with safety
+        try {
+            console.log('Attempting to play ringtone (transfer)...');
+            const playPromise = this.ringTone.play();
+            if (playPromise !== undefined) {
+                playPromise.catch(error => {
+                    console.warn('Ringtone play prevented or failed (transfer):', error);
+                });
+            }
+        } catch (error) {
+            console.warn('Error calling ringTone.play() (transfer):', error);
+        }
 
         // Attach event handlers
         this.attachSessionEventHandlers(session, 'transfer');
