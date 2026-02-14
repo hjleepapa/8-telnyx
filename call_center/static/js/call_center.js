@@ -10,6 +10,9 @@ class CallCenterAgent {
         this.currentCall = null;
         this.currentSession = null;
         this.pendingDialNumber = null;
+        this.pendingTransferSession = null;
+        this.pendingTransferCall = null;
+        this.pendingTransferIdentity = null;
         this.localStream = null;
         this.audioAccessDenied = false;
         this.answerInProgress = false;
@@ -882,16 +885,20 @@ class CallCenterAgent {
             activeSession: this.activeCallSessionId
         });
 
-        // Store the original call session before replacing it
+        // CRITICAL FIX: Store the transfer call as PENDING instead of immediately replacing the active call
+        // This ensures the INVITE is properly acknowledged before terminating the first call
+        
+        // Store the original call session for later termination
         const originalSession = this.currentSession;
         const originalCallSessionId = this.activeCallSessionId;
+        const originalCall = { ...this.currentCall };
 
         const callId = identity.callId || session.id;
         const callSid = identity.twilioCallSid;
 
-        // Update current session and call to transfer call
-        this.currentSession = session;
-        this.currentCall = {
+        // Store transfer call as pending (do NOT set as currentSession yet)
+        this.pendingTransferSession = session;
+        this.pendingTransferCall = {
             call_id: callId,
             caller_number: callerNumber,
             caller_name: callerName,
@@ -899,53 +906,162 @@ class CallCenterAgent {
             direction: 'transfer'
         };
         this.pendingTransferIdentity = identity;
-        this.activeCallSessionId = session.id;
-        this.activeCallIdentity = identity;
 
-        // Notify backend
+        console.log('Transfer call held as PENDING:', {
+            pendingSessionId: session.id,
+            pendingCallId: callId,
+            originalSessionId: originalSession?.id
+        });
+
+        // Notify backend about pending transfer
         fetch('/call-center/api/call/ringing', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(this.currentCall)
+            body: JSON.stringify(this.pendingTransferCall)
         });
 
         // Show customer popup for transfer call
         const customerId = callerNumber;
         this.showCustomerPopup(customerId, callSid, callId);
 
-        // End the original call first (if it exists)
-        if (originalSession && originalCallSessionId) {
-            console.log('Ending original call before handling transfer call', {
-                originalSessionId: originalSession.id
+        // Show transfer prompt UI (instead of replacing immediately)
+        this.showTransferPrompt(
+            session,
+            originalSession,
+            callerName,
+            callerNumber,
+            () => this.acceptTransferCall(session, originalSession),
+            () => this.rejectTransferCall(session)
+        );
+
+        // Attach event handlers to pending session
+        this.attachSessionEventHandlers(session, 'pending-transfer');
+    }
+
+    showTransferPrompt(newSession, oldSession, callerName, callerNumber, onAccept, onReject) {
+        // Create a transfer prompt showing the current call and new incoming call
+        console.log('Showing transfer prompt:', { newCaller: callerName, oldCallActive: !!oldSession });
+        
+        // Update the customer popup to show the transfer notification
+        const transferNotification = document.createElement('div');
+        transferNotification.className = 'transfer-notification';
+        transferNotification.innerHTML = `
+            <div class="transfer-alert">
+                <h3>Call Transfer Incoming</h3>
+                <p><strong>${callerName}</strong> (${callerNumber}) is calling</p>
+                <div class="transfer-buttons">
+                    <button class="accept-transfer-btn" id="acceptTransferBtn">Accept Transfer</button>
+                    <button class="reject-transfer-btn" id="rejectTransferBtn">Reject</button>
+                </div>
+            </div>
+        `;
+        
+        // Append to customer popup if it exists
+        if (this.customerPopup) {
+            this.customerPopup.classList.add('active');
+            const existingAlert = this.customerPopup.querySelector('.transfer-notification');
+            if (existingAlert) existingAlert.remove();
+            this.customerPopup.insertBefore(transferNotification, this.customerPopup.firstChild);
+        }
+        
+        // Attach button handlers
+        const acceptBtn = document.getElementById('acceptTransferBtn');
+        const rejectBtn = document.getElementById('rejectTransferBtn');
+        
+        if (acceptBtn) {
+            acceptBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                transferNotification.remove();
+                onAccept();
+            }, { once: true });
+        }
+        
+        if (rejectBtn) {
+            rejectBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                transferNotification.remove();
+                onReject();
+            }, { once: true });
+        }
+    }
+
+    acceptTransferCall(newSession, oldSession) {
+        console.log('Accepting transfer call:', {
+            newSessionId: newSession?.id,
+            oldSessionId: oldSession?.id
+        });
+
+        if (!newSession) {
+            console.error('New session is null, cannot accept transfer');
+            return;
+        }
+
+        // Now we can safely replace the current session with the pending transfer
+        this.currentSession = newSession;
+        this.currentCall = this.pendingTransferCall;
+        this.activeCallSessionId = newSession.id;
+        this.activeCallIdentity = this.pendingTransferIdentity;
+
+        // Terminate the old call NOW (after new call is set as current)
+        if (oldSession) {
+            console.log('Terminating original call after transfer acceptance:', {
+                oldSessionId: oldSession.id
             });
             try {
-                if (typeof originalSession.terminate === 'function') {
-                    originalSession.terminate();
+                if (typeof oldSession.terminate === 'function') {
+                    oldSession.terminate();
                 }
-            } catch (endError) {
-                console.warn('Error ending original call:', endError);
+            } catch (terminateError) {
+                console.warn('Error terminating old call:', terminateError);
             }
         }
 
-        // Update UI and allow manual answer
-        this.showIncomingCall(callerName, callerNumber);
+        // Update UI
+        this.showIncomingCall(this.pendingTransferCall.caller_name, this.pendingTransferCall.caller_number);
         this.enableAnswerControls();
 
-        // Play ringtone with safety
+        // Play ringtone
         try {
-            console.log('Attempting to play ringtone (transfer)...');
+            console.log('Playing ringtone for accepted transfer call...');
             const playPromise = this.ringTone.play();
             if (playPromise !== undefined) {
                 playPromise.catch(error => {
-                    console.warn('Ringtone play prevented or failed (transfer):', error);
+                    console.warn('Ringtone play prevented or failed (transfer accept):', error);
                 });
             }
         } catch (error) {
-            console.warn('Error calling ringTone.play() (transfer):', error);
+            console.warn('Error playing ringtone:', error);
         }
 
-        // Attach event handlers
-        this.attachSessionEventHandlers(session, 'transfer');
+        // Clear pending transfer data
+        this.pendingTransferSession = null;
+        this.pendingTransferCall = null;
+        this.pendingTransferIdentity = null;
+    }
+
+    rejectTransferCall(session) {
+        console.log('Rejecting transfer call:', { sessionId: session?.id });
+
+        // Terminate the transfer session
+        if (session) {
+            try {
+                if (typeof session.terminate === 'function') {
+                    session.terminate();
+                }
+            } catch (error) {
+                console.warn('Error terminating rejected transfer call:', error);
+            }
+        }
+
+        // Clear pending transfer data
+        this.pendingTransferSession = null;
+        this.pendingTransferCall = null;
+        this.pendingTransferIdentity = null;
+
+        // Restore UI to show active call
+        if (this.currentCall) {
+            this.showIncomingCall(this.currentCall.caller_name, this.currentCall.caller_number);
+        }
     }
 
     handleParallelInviteDuringActiveCall(session, identity) {
