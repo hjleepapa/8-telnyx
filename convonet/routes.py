@@ -3078,7 +3078,7 @@ def set_user_tts_provider():
             return jsonify({'success': False, 'error': 'Provider is required'}), 400
             
         provider = provider.lower()
-        if provider not in ['elevenlabs', 'cartesia', 'openai', 'deepgram']:
+        if provider not in ['elevenlabs', 'cartesia', 'openai', 'deepgram', 'rime']:
             return jsonify({'success': False, 'error': 'Invalid provider'}), 400
             
         redis_manager.set(f"user:{user_id}:tts_provider", provider)
