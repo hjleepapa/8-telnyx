@@ -411,53 +411,68 @@ def _get_llm_provider_for_user(user_id: Optional[str]) -> str:
 
 def _get_stt_provider_for_user(user_id: Optional[str]) -> str:
     """Get STT provider: 'deepgram', 'cartesia', or 'elevenlabs'"""
-    # Default to deepgram (stable, proven) - Cartesia SDK API TBD
     provider = None
-    if redis_manager.is_available():
+    
+    # Try to get user's selection from Redis
+    if redis_manager.is_available() and user_id:
         try:
-            if user_id:
-                provider = redis_manager.redis_client.get(f"user:{user_id}:stt_provider")
-            if not provider:
-                provider = redis_manager.redis_client.get("user:default:stt_provider")
+            provider_data = redis_manager.redis_client.get(f"user:{user_id}:stt_provider")
+            if provider_data:
+                # Redis returns bytes, decode if needed
+                provider = provider_data.decode('utf-8') if isinstance(provider_data, bytes) else provider_data
+        except Exception as e:
+            logger.debug(f"⚠️ Could not get user STT provider: {e}")
+    
+    # Try global default if no user preference
+    if not provider and redis_manager.is_available():
+        try:
+            provider_data = redis_manager.redis_client.get("user:default:stt_provider")
+            if provider_data:
+                provider = provider_data.decode('utf-8') if isinstance(provider_data, bytes) else provider_data
         except Exception:
             pass
-            
+    
+    # Fall back to Deepgram if no preference set or provider not available
     if not provider:
         provider = "deepgram"
-        
-    # Validation
-    if provider == "deepgram" and not DEEPGRAM_AVAILABLE:
+    
+    # Validate provider is in supported list
+    if provider not in ["deepgram", "cartesia", "elevenlabs"]:
         provider = "deepgram"
-    if provider == "elevenlabs" and not ELEVENLABS_AVAILABLE:
-        provider = "deepgram"
-        
+    
     return provider
 
 def _get_tts_provider_for_user(user_id: Optional[str]) -> str:
     """Get TTS provider: 'deepgram', 'cartesia', or 'elevenlabs'"""
     provider = None
-    if redis_manager.is_available():
+    
+    # Try to get user's selection from Redis
+    if redis_manager.is_available() and user_id:
         try:
-            if user_id:
-                provider = redis_manager.redis_client.get(f"user:{user_id}:tts_provider")
-            if not provider:
-                provider = redis_manager.redis_client.get("user:default:tts_provider")
+            provider_data = redis_manager.redis_client.get(f"user:{user_id}:tts_provider")
+            if provider_data:
+                # Redis returns bytes, decode if needed
+                provider = provider_data.decode('utf-8') if isinstance(provider_data, bytes) else provider_data
+        except Exception as e:
+            logger.debug(f"⚠️ Could not get user TTS provider: {e}")
+    
+    # Try global default if no user preference
+    if not provider and redis_manager.is_available():
+        try:
+            provider_data = redis_manager.redis_client.get("user:default:tts_provider")
+            if provider_data:
+                provider = provider_data.decode('utf-8') if isinstance(provider_data, bytes) else provider_data
         except Exception:
             pass
-            
+    
+    # Fall back to Deepgram if no preference set
     if not provider:
-        # Default to ElevenLabs if available (highest quality), else Deepgram
-        if ELEVENLABS_AVAILABLE:
-            provider = "elevenlabs"
-        else:
-            provider = "deepgram"
-            
-    # Validation
-    if provider == "cartesia" and not CARTESIA_AVAILABLE:
         provider = "deepgram"
-    if provider == "elevenlabs" and not ELEVENLABS_AVAILABLE:
+    
+    # Validate provider is in supported list
+    if provider not in ["deepgram", "cartesia", "elevenlabs"]:
         provider = "deepgram"
-        
+    
     return provider
 
 def _select_voice_model(user_id: Optional[str]) -> str:
