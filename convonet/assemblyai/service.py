@@ -369,7 +369,8 @@ class AssemblyAIStreamingSTT:
         async def _run() -> str:
             await self.connect_async()
             try:
-                chunk_size = 50 * self.sample_rate * 2 // 1000  # 50ms chunks
+                # AssemblyAI requires 100-2000ms per message; 100-450ms optimal
+                chunk_size = 100 * self.sample_rate * 2 // 1000  # 100ms chunks
                 for i in range(0, len(audio_bytes), chunk_size):
                     chunk = audio_bytes[i:i + chunk_size]
                     await self.send_audio_async(chunk)

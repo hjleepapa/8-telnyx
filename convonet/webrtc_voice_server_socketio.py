@@ -3019,6 +3019,8 @@ def init_socketio(socketio_instance: SocketIO, app):
             })
             return
         
+        # Set guard BEFORE spawning to prevent duplicate processing from rapid stop_recording events
+        processing_guards[session_id] = True
         # Audio analysis moved to background task to avoid blocking event loop
         # Process audio asynchronously
         sentry_capture_voice_event("audio_processing_started", session_id, details={"buffer_size": len(audio_buffer)})

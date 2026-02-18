@@ -161,6 +161,19 @@ class InworldTTSService:
                 }
                 await websocket.send(json.dumps(close_request))
             
+            # Inworld returns PCM Float32 [-1,1]; convert to PCM 16-bit LE for LiveKit
+            if audio_data and len(audio_data) >= 4 and len(audio_data) % 4 == 0:
+                try:
+                    import numpy as np
+                    floats = np.frombuffer(audio_data, dtype=np.float32)
+                    # Only convert if values look like normalized float32 audio (not already int16)
+                    if len(floats) > 0 and np.max(np.abs(floats)) <= 1.5:
+                        int16_audio = (np.clip(floats, -1.0, 1.0) * 32767).astype(np.int16)
+                        audio_data = int16_audio.tobytes()
+                        print(f"✅ Inworld TTS: Converted Float32 to PCM16 ({len(audio_data)} bytes)", flush=True)
+                except Exception as conv_err:
+                    print(f"⚠️ Inworld Float32->PCM16 conversion failed: {conv_err}", flush=True)
+            
             print(f"✅ Inworld TTS synthesis complete: {len(audio_data)} bytes", flush=True)
             return audio_data
             
