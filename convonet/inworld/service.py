@@ -44,9 +44,11 @@ class InworldTTSService:
             buffer_char_threshold: Character threshold for automatic buffer flushing
             auto_mode: Enable auto mode for latency/quality balance
         """
-        self.api_key = api_key or os.getenv('INWORLD_API_KEY')
-        self.workspace = workspace or os.getenv('INWORLD_WORKSPACE')
-        self.character_id = character_id or os.getenv('INWORLD_CHARACTER_ID')
+        # Strip whitespace - Render.com and other platforms can add trailing newlines when pasting env vars
+        raw_key = api_key or os.getenv('INWORLD_API_KEY') or ''
+        self.api_key = raw_key.strip() if raw_key else None
+        self.workspace = (workspace or os.getenv('INWORLD_WORKSPACE') or '').strip() or None
+        self.character_id = (character_id or os.getenv('INWORLD_CHARACTER_ID') or '').strip() or None
         
         self.max_buffer_delay_ms = max_buffer_delay_ms
         self.buffer_char_threshold = buffer_char_threshold
@@ -75,6 +77,7 @@ class InworldTTSService:
             Audio bytes
         """
         if not self.api_key:
+            print("❌ Inworld TTS: INWORLD_API_KEY not set or empty. Add it in Render Dashboard > Environment.", flush=True)
             raise ValueError("INWORLD_API_KEY not set")
         
         if not WEBSOCKETS_AVAILABLE:

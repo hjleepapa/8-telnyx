@@ -295,18 +295,11 @@ def _synthesize_audio_linear16(text: str, provider: str = "deepgram", voice_id: 
             cartesia = get_cartesia_service()
             if cartesia and cartesia.is_available():
                 print(f"🔊 _synthesize_audio_linear16: Using Cartesia for synthesis...", flush=True)
-                # Cartesia synthesize_stream returns a generator
-                audio_generator = cartesia.synthesize_stream(clean_text, voice_id=voice_id)
-                # For linear16, we need to ensure the service is configured for it
-                chunks = []
-                chunk_count = 0
-                for chunk in audio_generator:
-                    chunks.append(chunk)
-                    chunk_count += 1
-                    if chunk_count == 1:
-                         print(f"✅ _synthesize_audio_linear16: Received first chunk from Cartesia", flush=True)
-                print(f"✅ _synthesize_audio_linear16: Received {chunk_count} chunks from Cartesia", flush=True)
-                return b"".join(chunks)
+                # Use REST API (non-streaming) - streaming SSE has base64 chunk corruption issues
+                audio_bytes = cartesia.synthesize_rest_api(clean_text, voice_id=voice_id, sample_rate=sample_rate)
+                if audio_bytes:
+                    print(f"✅ _synthesize_audio_linear16: Received {len(audio_bytes)} bytes from Cartesia REST", flush=True)
+                    return audio_bytes
         except Exception as e:
             print(f"⚠️ Cartesia linear16 synthesis failed: {e}", flush=True)
             # Fallback to deepgram below
@@ -3342,14 +3335,10 @@ def init_socketio(socketio_instance: SocketIO, app):
                         else:
                             if current_tts_provider == "cartesia":
                                 cartesia = get_cartesia_service()
-                                audio_generator = cartesia.synthesize_stream(transfer_message)
-                                # Capture TTFA on first chunk
-                                audio_bytes = b""
-                                for chunk in audio_generator:
-                                    if not latency_data['ttfa_recorded']:
-                                        latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
-                                        latency_data['ttfa_recorded'] = True
-                                    audio_bytes += chunk
+                                audio_bytes = cartesia.synthesize_rest_api(transfer_message, sample_rate=48000) or b""
+                                if audio_bytes and not latency_data['ttfa_recorded']:
+                                    latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                    latency_data['ttfa_recorded'] = True
                             elif current_tts_provider == "elevenlabs":
                                 elevenlabs = get_elevenlabs_service()
                                 audio_bytes = elevenlabs.synthesize(transfer_message)
@@ -3431,14 +3420,10 @@ def init_socketio(socketio_instance: SocketIO, app):
                             if current_tts_provider == "cartesia":
                                 cartesia = get_cartesia_service()
                                 if cartesia and cartesia.is_available():
-                                    audio_gen = cartesia.synthesize_stream(ack_text)
-                                    # Capture TTFA
-                                    ack_audio = b""
-                                    for c in audio_gen:
-                                        if not latency_data['ttfa_recorded']:
-                                            latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
-                                            latency_data['ttfa_recorded'] = True
-                                        ack_audio += c
+                                    ack_audio = cartesia.synthesize_rest_api(ack_text, sample_rate=48000) or b""
+                                    if ack_audio and not latency_data['ttfa_recorded']:
+                                        latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                        latency_data['ttfa_recorded'] = True
                             elif current_tts_provider == "elevenlabs":
                                 elevenlabs = get_elevenlabs_service()
                                 if elevenlabs and elevenlabs.is_available():
@@ -3615,14 +3600,10 @@ def init_socketio(socketio_instance: SocketIO, app):
                         if current_tts_provider == "cartesia":
                             cartesia = get_cartesia_service()
                             if cartesia and cartesia.is_available():
-                                audio_gen = cartesia.synthesize_stream(filler_text)
-                                # Capture TTFA
-                                filler_audio = b""
-                                for c in audio_gen:
-                                    if not latency_data['ttfa_recorded']:
-                                        latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
-                                        latency_data['ttfa_recorded'] = True
-                                    filler_audio += c
+                                filler_audio = cartesia.synthesize_rest_api(filler_text, sample_rate=48000) or b""
+                                if filler_audio and not latency_data['ttfa_recorded']:
+                                    latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                    latency_data['ttfa_recorded'] = True
                         elif current_tts_provider == "elevenlabs":
                             elevenlabs = get_elevenlabs_service()
                             if elevenlabs and elevenlabs.is_available():
@@ -3727,14 +3708,10 @@ def init_socketio(socketio_instance: SocketIO, app):
                                     try:
                                         cartesia_service = get_cartesia_service()
                                         if cartesia_service and cartesia_service.is_available():
-                                            # Synthesize first sentence
-                                            audio_generator = cartesia_service.synthesize_stream(first_sentence, voice_id=voice_id)
-                                            chunk_audio = b""
-                                            for chunk in audio_generator:
-                                                if not latency_data['ttfa_recorded']:
-                                                    latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
-                                                    latency_data['ttfa_recorded'] = True
-                                                chunk_audio += chunk
+                                            chunk_audio = cartesia_service.synthesize_rest_api(first_sentence, voice_id=voice_id, sample_rate=48000)
+                                            if chunk_audio and not latency_data['ttfa_recorded']:
+                                                latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                                latency_data['ttfa_recorded'] = True
                                     except Exception as e:
                                         print(f"⚠️ Early Cartesia TTS failed: {e}", flush=True)
                                 
@@ -3917,8 +3894,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                             else:
                                 if tts_provider == "cartesia":
                                     cartesia = get_cartesia_service()
-                                    audio_generator = cartesia.synthesize_stream(agent_response, voice_id=voice_id)
-                                    audio_bytes = b"".join([chunk for chunk in audio_generator])
+                                    audio_bytes = cartesia.synthesize_rest_api(agent_response, voice_id=voice_id, sample_rate=48000) or b""
                                 elif tts_provider == "elevenlabs":
                                     elevenlabs = get_elevenlabs_service()
                                     if emotion_enabled and emotion:
@@ -4031,14 +4007,10 @@ def init_socketio(socketio_instance: SocketIO, app):
                                             chunk_audio = None
                                     elif tts_provider == "cartesia" and cartesia_service:
                                         try:
-                                            # Cartesia returns generator, consume it all for the chunk
-                                            audio_gen = cartesia_service.synthesize_stream(text_chunk)
-                                            chunk_audio = b""
-                                            for c in audio_gen:
-                                                if not latency_data['ttfa_recorded']:
-                                                    latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
-                                                    latency_data['ttfa_recorded'] = True
-                                                chunk_audio += c
+                                            chunk_audio = cartesia_service.synthesize_rest_api(text_chunk, voice_id=voice_id, sample_rate=48000) or b""
+                                            if chunk_audio and not latency_data['ttfa_recorded']:
+                                                latency_data['tts_latency_ms'] = (time.time() - processing_start_time) * 1000
+                                                latency_data['ttfa_recorded'] = True
                                         except Exception as e:
                                             print(f"⚠️ Cartesia chunk {chunk_idx+1}/{len(text_chunks)} failed: {e}", flush=True)
                                             chunk_audio = None
