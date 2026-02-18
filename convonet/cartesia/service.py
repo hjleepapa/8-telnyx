@@ -228,7 +228,7 @@ class CartesiaService:
                         yield chunk
                     except Exception as decode_err:
                         # Skip corrupted chunks (e.g. 169 chars = 4k+1 invalid) to keep stream alive
-                        logger.warning(f"⚠️ Cartesia TTS: Skipping chunk (decode error: {decode_err})", flush=True)
+                        logger.warning("⚠️ Cartesia TTS: Skipping chunk (decode error: %s)", decode_err)
             
             logger.info(f"✅ Cartesia TTS stream complete: {chunk_count} chunks")
                 

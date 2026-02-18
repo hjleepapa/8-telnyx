@@ -86,9 +86,10 @@ class InworldTTSService:
         try:
             print(f"🎵 Inworld TTS: Connecting to WebSocket (context: {context_id})...", flush=True)
             
-            # Add authorization header
+            # Inworld TTS uses Basic auth: Authorization: Basic <base64(key:secret)>
+            # The "Basic" value from Inworld Portal is the pre-encoded base64 string
             headers = {
-                "Authorization": f"Bearer {self.api_key}",
+                "Authorization": f"Basic {self.api_key}",
                 "Content-Type": "application/json"
             }
             
