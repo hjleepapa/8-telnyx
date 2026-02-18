@@ -14,6 +14,7 @@ from typing import Optional, Callable, Dict, Any
 from queue import Queue
 from datetime import datetime
 import base64
+from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
@@ -155,35 +156,42 @@ class CartesiaStreamingSTT:
     async def _async_streaming_loop(self):
         """Async WebSocket streaming to Cartesia"""
         try:
-            # Connect to Cartesia WebSocket endpoint with API key as query parameter
-            websocket_url = f"wss://api.cartesia.ai/stt/websocket?api_key={self.api_key}"
+            # Connect to Cartesia WebSocket endpoint with URL-encoded API key
+            encoded_key = quote(self.api_key, safe='')
+            websocket_url = f"wss://api.cartesia.ai/stt/websocket?api_key={encoded_key}"
             
-            async with websockets.connect(websocket_url) as websocket:
-                self.websocket = websocket
-                
-                # Send initialization message with model and language
-                init_message = {
-                    "type": "init",
-                    "model": self.stt_model,
-                    "language": self.language_code,
-                    "sample_rate": 16000,  # Request 16kHz for optimal STT
-                    "encoding": "pcm_s16le",
-                }
-                
-                await websocket.send(json.dumps(init_message))
-                logger.info("📤 Sent Cartesia init message")
-                
-                # Confirm ready
-                self.ready_event.set()
-                
-                # Start receiving messages in background
-                receive_task = asyncio.create_task(self._receive_messages(websocket))
-                
-                # Send audio chunks from queue
-                send_task = asyncio.create_task(self._send_audio_chunks(websocket))
-                
-                # Wait for tasks
-                await asyncio.gather(receive_task, send_task)
+            logger.debug(f"🔗 Connecting to Cartesia WebSocket: {websocket_url[:50]}...")
+            
+            try:
+                async with websockets.connect(websocket_url) as websocket:
+                    self.websocket = websocket
+                    
+                    # Send initialization message with model and language
+                    init_message = {
+                        "type": "init",
+                        "model": self.stt_model,
+                        "language": self.language_code,
+                        "sample_rate": 16000,  # Request 16kHz for optimal STT
+                        "encoding": "pcm_s16le",
+                    }
+                    
+                    await websocket.send(json.dumps(init_message))
+                    logger.info("📤 Sent Cartesia init message")
+                    
+                    # Confirm ready
+                    self.ready_event.set()
+                    
+                    # Start receiving messages in background
+                    receive_task = asyncio.create_task(self._receive_messages(websocket))
+                    
+                    # Send audio chunks from queue
+                    send_task = asyncio.create_task(self._send_audio_chunks(websocket))
+                    
+                    # Wait for tasks
+                    await asyncio.gather(receive_task, send_task)
+            except Exception as ws_error:
+                logger.error(f"❌ WebSocket connection error: {type(ws_error).__name__}: {ws_error}")
+                raise
                 
         except Exception as e:
             logger.error(f"❌ WebSocket error: {e}")
