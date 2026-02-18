@@ -156,11 +156,14 @@ class CartesiaStreamingSTT:
         """Async WebSocket streaming to Cartesia"""
         try:
             # Connect to Cartesia WebSocket endpoint
-            # Note: Replace with actual Cartesia streaming WebSocket URL
-            # Cartesia typically uses: wss://api.cartesia.ai/stt/websocket
             websocket_url = "wss://api.cartesia.ai/stt/websocket"
             
-            async with websockets.connect(websocket_url) as websocket:
+            # CRITICAL: Add authentication headers for WebSocket
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+            }
+            
+            async with websockets.connect(websocket_url, extra_headers=headers) as websocket:
                 self.websocket = websocket
                 
                 # Send initialization message with model and language
