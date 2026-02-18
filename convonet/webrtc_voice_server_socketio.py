@@ -2877,7 +2877,8 @@ def init_socketio(socketio_instance: SocketIO, app):
             print(f"❌ Error updating recording state: {e}")
             sentry_capture_redis_operation("update_recording_state", session_id, False, str(e))
 
-        # If streaming STT is active, stop the stream and return (skip batch transcription)
+        # If streaming STT is active, stop the stream. For Cartesia (placeholder mode),
+        # we must NOT return early - we need batch transcription since it produces no transcript.
         if STREAMING_STT_ENABLED and session_id in streaming_sessions:
             try:
                 # Unregister LiveKit callback if active
@@ -2891,22 +2892,24 @@ def init_socketio(socketio_instance: SocketIO, app):
                 
                 # Stop the appropriate streaming session
                 if stt_provider == "cartesia":
-                    # Cartesia cleanup
+                    # Cartesia cleanup - placeholder mode produces no transcript, so we fall through to batch
                     remove_cartesia_streaming_session(session_id)
                     print(f"🛑 Cartesia Streaming STT session stopped for {session_id}", flush=True)
                 else:
-                    # Deepgram or generic cleanup
+                    # Deepgram: streaming produced transcript via on_final_transcript, skip batch
                     streaming_session.stop()
                     print(f"🛑 Streaming STT session stopped for {session_id} ({stt_provider})", flush=True)
+                    if session_id in streaming_sessions:
+                        del streaming_sessions[session_id]
+                    emit('recording_stopped', {'success': True, 'streaming': True})
+                    return
                 
-                # Remove from sessions dict
+                # Cartesia: remove from sessions and fall through to batch transcription
                 if session_id in streaming_sessions:
                     del streaming_sessions[session_id]
                     
             except Exception as stop_error:
                 print(f"⚠️ Error stopping streaming STT: {stop_error}", flush=True)
-            emit('recording_stopped', {'success': True, 'streaming': True})
-            return
         
         # Get audio buffer - prefer LiveKit input when enabled
         audio_buffer = None
@@ -3037,21 +3040,21 @@ def init_socketio(socketio_instance: SocketIO, app):
                     # Generate welcome message
                     welcome_text = f"Welcome back, {user_name}! I'm your Convonet productivity assistant. How can I help you today?"
                     
-                    # Generate TTS audio using Deepgram
-                    deepgram_tts = get_deepgram_tts_service()
-                    if _livekit_active():
-                        audio_bytes = deepgram_tts.synthesize_speech(
-                            welcome_text,
-                            voice="aura-asteria-en",
-                            encoding="linear16",
-                            sample_rate=48000,
-                            container="none"
-                        )
-                    else:
-                        audio_bytes = deepgram_tts.synthesize_speech(welcome_text, voice="aura-asteria-en")
+                    # Use user's TTS provider preference (same as agent responses)
+                    session_data = get_session(session_id) if callable(get_session) else None
+                    if not session_data and session_id in active_sessions:
+                        session_data = active_sessions[session_id]
+                    user_id = session_data.get('user_id') if session_data else None
+                    tts_provider = _get_tts_provider_for_user(user_id)
+                    audio_bytes = _synthesize_audio_linear16(
+                        welcome_text,
+                        provider=tts_provider,
+                        voice_id=None,
+                        sample_rate=48000
+                    )
                     
                     if not audio_bytes:
-                        raise Exception("Deepgram TTS failed to generate audio")
+                        raise Exception(f"{tts_provider.capitalize()} TTS failed to generate audio")
                     
                     if _livekit_active():
                         # Use the correct bridge send_pcm method via livekit_manager
