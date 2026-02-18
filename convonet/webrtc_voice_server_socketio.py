@@ -411,7 +411,7 @@ def _get_llm_provider_for_user(user_id: Optional[str]) -> str:
 
 def _get_stt_provider_for_user(user_id: Optional[str]) -> str:
     """Get STT provider: 'deepgram', 'cartesia', or 'elevenlabs'"""
-    # Default to deepgram for low latency
+    # PRIORITY 2: Default to cartesia for best latency + quality
     provider = None
     if redis_manager.is_available():
         try:
@@ -423,7 +423,7 @@ def _get_stt_provider_for_user(user_id: Optional[str]) -> str:
             pass
             
     if not provider:
-        provider = "deepgram"
+        provider = "cartesia"
         
     # Validation
     if provider == "cartesia" and not CARTESIA_AVAILABLE:
@@ -2568,27 +2568,33 @@ def init_socketio(socketio_instance: SocketIO, app):
                 # NEW: Pipe LiveKit audio directly to Cartesia streaming session
                 if _livekit_input_active():
                     def livekit_audio_callback_cartesia(pcm_bytes):
-                        if session_id in streaming_sessions:
-                            try:
-                                streaming_session = streaming_sessions[session_id]
-                                # Resample from 48kHz to 16kHz for Cartesia
-                                resampled = resample_audio(
-                                    pcm_bytes,
-                                    source_sample_rate=48000,
-                                    target_sample_rate=16000
-                                )
-                                streaming_session.send_audio_chunk(resampled)
-                            except Exception as e:
-                                print(f"⚠️ LiveKit Cartesia pipe error: {e}", flush=True)
-                    
+                    # PRIORITY 1 FIX: Check session exists AND is running before sending audio
+                    if session_id not in streaming_sessions:
+                        return  # Session not initialized yet
+                    streaming_session = streaming_sessions[session_id]
+                    # Check if session is actually active
+                    if not hasattr(streaming_session, 'active') or not streaming_session.active.is_set():
+                        return  # Session not running
+                    try:
+                        # Resample from 48kHz to 16kHz for Cartesia (scipy enabled - PRIORITY 2)
+                        resampled = resample_audio(
+                            pcm_bytes,
+                            source_sample_rate=48000,
+                            target_sample_rate=16000
+                        )
+                        streaming_session.send_audio_chunk(resampled)
+                    except Exception as e:
+                        print(f"⚠️ LiveKit Cartesia pipe error: {e}", flush=True)
                     livekit_manager.set_audio_callback(session_id, livekit_audio_callback_cartesia)
                     print(f"🔗 LiveKit audio callback (Cartesia) registered for {session_id}", flush=True)
 
             except Exception as stream_error:
                 print(f"⚠️ Failed to start Cartesia streaming STT: {stream_error}", flush=True)
         
-        # TODO: ElevenLabs streaming STT session will be initialized here
-        # (Async initialization pending - see ELEVENLABS_WEBSOCKET_INTEGRATION_CHECKLIST.md)
+        # PRIORITY 3: ElevenLabs streaming STT - Reserved for future use
+        # Currently using Cartesia as default STT provider (best latency + quality)
+        # To enable ElevenLabs STT, implement async handler similar to Cartesia above
+        # See ELEVENLABS_WEBSOCKET_INTEGRATION_CHECKLIST.md for implementation guide
         
         emit('recording_started', {'success': True})
     
