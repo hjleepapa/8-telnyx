@@ -2591,7 +2591,7 @@ VOICE OUTPUT FORMAT (CRITICAL):
 def clone_voice():
     """Clone a voice from audio samples"""
     try:
-        from convonet.elevenlabs_service import get_elevenlabs_service
+        from convonet.elevenlabs import get_elevenlabs_service
         from convonet.voice_preferences import get_voice_preferences
         import base64
         
@@ -2705,7 +2705,7 @@ def voice_preferences():
 def list_voices():
     """List available ElevenLabs voices"""
     try:
-        from convonet.elevenlabs_service import get_elevenlabs_service
+        from convonet.elevenlabs import get_elevenlabs_service
         
         elevenlabs = get_elevenlabs_service()
         if not elevenlabs.is_available():
@@ -3134,7 +3134,7 @@ def get_pending_response():
 def whisper_status():
     """Check Deepgram status"""
     try:
-        from deepgram_webrtc_integration import get_deepgram_webrtc_info
+        from convonet.deepgram import get_deepgram_webrtc_info
         info = get_deepgram_webrtc_info()
         return jsonify({
             'success': True,

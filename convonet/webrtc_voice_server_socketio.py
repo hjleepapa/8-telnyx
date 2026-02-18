@@ -33,8 +33,7 @@ from langchain_core.messages import HumanMessage
 from twilio.rest import Client
 
 # Deepgram WebRTC integration
-from deepgram_webrtc_integration import transcribe_audio_with_deepgram_webrtc, get_deepgram_webrtc_info
-from deepgram_service import get_deepgram_service
+from convonet.deepgram import transcribe_audio_with_deepgram_webrtc, get_deepgram_webrtc_info, get_deepgram_service
 
 # Deepgram streaming SDK (async)
 try:
@@ -63,21 +62,36 @@ except Exception as e:
 
 # ElevenLabs integration
 try:
-    from convonet.elevenlabs_service import get_elevenlabs_service, EmotionType
+    from convonet.elevenlabs import (
+        get_elevenlabs_service,
+        EmotionType,
+        create_streaming_stt_session_sync,
+        get_streaming_stt_session,
+        remove_streaming_stt_session
+    )
     from convonet.voice_preferences import get_voice_preferences
     from convonet.emotion_detection import get_emotion_detector
     ELEVENLABS_AVAILABLE = True
+    ELEVENLABS_STREAMING_AVAILABLE = True
 except ImportError as e:
     print(f"⚠️ ElevenLabs not available: {e}")
     ELEVENLABS_AVAILABLE = False
+    ELEVENLABS_STREAMING_AVAILABLE = False
 
 # Cartesia integration
 try:
-    from convonet.cartesia_service import get_cartesia_service
+    from convonet.cartesia import (
+        get_cartesia_service,
+        get_cartesia_streaming_session,
+        remove_cartesia_streaming_session,
+        CartesiaStreamingSTT
+    )
     CARTESIA_AVAILABLE = True
+    CARTESIA_STREAMING_AVAILABLE = True
 except ImportError as e:
     print(f"⚠️ Cartesia not available: {e}")
     CARTESIA_AVAILABLE = False
+    CARTESIA_STREAMING_AVAILABLE = False
 
 # Import the blueprint (optional - not used in this module)
 # from convonet.routes import convonet_todo_bp
@@ -290,6 +304,67 @@ def _encode_linear16_wav_base64(
             sample_width=sample_width
         )
     return base64.b64encode(wav_bytes).decode("utf-8")
+
+# Audio resampling helper for different STT services
+def resample_audio(
+    audio_chunk: bytes,
+    source_sample_rate: int = 48000,
+    target_sample_rate: int = 16000,
+    sample_width: int = 2,
+    channels: int = 1
+) -> bytes:
+    """
+    Resample audio from one sample rate to another using scipy
+    
+    Args:
+        audio_chunk: Raw PCM bytes
+        source_sample_rate: Input sample rate (e.g., 48000)
+        target_sample_rate: Output sample rate (e.g., 16000)
+        sample_width: Bytes per sample (2 for 16-bit)
+        channels: Number of audio channels (1 for mono)
+    
+    Returns:
+        Resampled PCM bytes at target sample rate
+    """
+    if source_sample_rate == target_sample_rate:
+        return audio_chunk
+    
+    try:
+        import numpy as np
+        from scipy import signal
+        
+        # Convert bytes to numpy array
+        audio_array = np.frombuffer(audio_chunk, dtype=np.int16)
+        
+        # Calculate resampling ratio
+        ratio = target_sample_rate / source_sample_rate
+        num_samples = int(len(audio_array) * ratio)
+        
+        # Use scipy for high-quality resampling
+        resampled = signal.resample(audio_array, num_samples)
+        
+        # Convert back to int16 bytes
+        resampled_int16 = np.clip(resampled, -32768, 32767).astype(np.int16)
+        return resampled_int16.tobytes()
+    
+    except ImportError:
+        # Fallback to simple linear interpolation if scipy not available
+        print("⚠️ scipy not available, using simple audio resampling", flush=True)
+        try:
+            import numpy as np
+            audio_array = np.frombuffer(audio_chunk, dtype=np.int16)
+            ratio = target_sample_rate / source_sample_rate
+            num_samples = int(len(audio_array) * ratio)
+            
+            # Simple linear interpolation
+            indices = np.linspace(0, len(audio_array) - 1, num_samples)
+            resampled = np.interp(indices, np.arange(len(audio_array)), audio_array)
+            
+            resampled_int16 = np.clip(resampled, -32768, 32767).astype(np.int16)
+            return resampled_int16.tobytes()
+        except Exception as e:
+            print(f"❌ Audio resampling failed: {e}", flush=True)
+            return audio_chunk
 
 # Active sessions storage (fallback for when Redis is unavailable)
 active_sessions = {}
@@ -2457,6 +2532,64 @@ def init_socketio(socketio_instance: SocketIO, app):
             except Exception as stream_error:
                 print(f"⚠️ Failed to start streaming STT: {stream_error}", flush=True)
         
+        # Start Cartesia streaming STT session if selected
+        elif stt_provider == "cartesia" and STREAMING_STT_ENABLED and CARTESIA_STREAMING_AVAILABLE:
+            try:
+                # Clean up any previous streaming session
+                if session_id in streaming_sessions:
+                    remove_cartesia_streaming_session(session_id)
+                    if session_id in streaming_sessions:
+                        del streaming_sessions[session_id]
+
+                def on_final_transcript_cartesia(final_text: str):
+                    # Trigger agent processing immediately on speech final
+                    socketio.start_background_task(
+                        process_audio_async,
+                        session_id,
+                        None,
+                        transcribed_text_override=final_text,
+                        use_streaming_tts=True
+                    )
+
+                def on_user_speech_cartesia():
+                    # Barge-in: stop current response if user speaks
+                    if session_id in active_response_controls:
+                        cancel_active_response(session_id, reason="barge_in")
+
+                streaming_session = get_cartesia_streaming_session(
+                    session_id=session_id,
+                    on_final=on_final_transcript_cartesia,
+                    on_user_speech=on_user_speech_cartesia
+                )
+                streaming_session.start()
+                streaming_sessions[session_id] = streaming_session
+                print(f"✅ Cartesia Streaming STT session started for {session_id}", flush=True)
+
+                # NEW: Pipe LiveKit audio directly to Cartesia streaming session
+                if _livekit_input_active():
+                    def livekit_audio_callback_cartesia(pcm_bytes):
+                        if session_id in streaming_sessions:
+                            try:
+                                streaming_session = streaming_sessions[session_id]
+                                # Resample from 48kHz to 16kHz for Cartesia
+                                resampled = resample_audio(
+                                    pcm_bytes,
+                                    source_sample_rate=48000,
+                                    target_sample_rate=16000
+                                )
+                                streaming_session.send_audio_chunk(resampled)
+                            except Exception as e:
+                                print(f"⚠️ LiveKit Cartesia pipe error: {e}", flush=True)
+                    
+                    livekit_manager.set_audio_callback(session_id, livekit_audio_callback_cartesia)
+                    print(f"🔗 LiveKit audio callback (Cartesia) registered for {session_id}", flush=True)
+
+            except Exception as stream_error:
+                print(f"⚠️ Failed to start Cartesia streaming STT: {stream_error}", flush=True)
+        
+        # TODO: ElevenLabs streaming STT session will be initialized here
+        # (Async initialization pending - see ELEVENLABS_WEBSOCKET_INTEGRATION_CHECKLIST.md)
+        
         emit('recording_started', {'success': True})
     
     
@@ -2497,11 +2630,29 @@ def init_socketio(socketio_instance: SocketIO, app):
                 control["last_barge_in"] = now
                 cancel_active_response(session_id, reason="barge_in_audio_chunk")
 
-        # Stream chunk to Deepgram STT for low-latency transcription
+        # Stream chunk to STT service for low-latency transcription
         streaming_session = streaming_sessions.get(session_id)
         if streaming_session:
             try:
-                streaming_session.send_audio(audio_chunk)
+                # Check which STT provider is active
+                stt_provider = _get_stt_provider_for_user(session_data.get('user_id') if session_data else None)
+                
+                if stt_provider == "deepgram":
+                    # Deepgram expects raw WebRTC audio at 48kHz
+                    streaming_session.send_audio(audio_chunk)
+                    
+                elif stt_provider == "cartesia":
+                    # Cartesia expects 16kHz PCM, resample from WebRTC 48kHz
+                    resampled_audio = resample_audio(
+                        audio_chunk,
+                        source_sample_rate=48000,
+                        target_sample_rate=16000
+                    )
+                    streaming_session.send_audio_chunk(resampled_audio)
+                else:
+                    # Unknown provider, try generic send_audio (backward compatibility)
+                    streaming_session.send_audio(audio_chunk)
+                    
             except Exception as stream_error:
                 print(f"⚠️ Streaming STT send error: {stream_error}", flush=True)
         
@@ -2655,9 +2806,24 @@ def init_socketio(socketio_instance: SocketIO, app):
                     livekit_manager.set_audio_callback(session_id, None)
                     print(f"🔗 LiveKit audio callback unregistered for {session_id}", flush=True)
 
-                streaming_sessions[session_id].stop()
-                del streaming_sessions[session_id]
-                print(f"🛑 Streaming STT session stopped for {session_id}", flush=True)
+                # Get the active streaming session
+                streaming_session = streaming_sessions[session_id]
+                stt_provider = _get_stt_provider_for_user(session_data.get('user_id') if session_data else None)
+                
+                # Stop the appropriate streaming session
+                if stt_provider == "cartesia":
+                    # Cartesia cleanup
+                    remove_cartesia_streaming_session(session_id)
+                    print(f"🛑 Cartesia Streaming STT session stopped for {session_id}", flush=True)
+                else:
+                    # Deepgram or generic cleanup
+                    streaming_session.stop()
+                    print(f"🛑 Streaming STT session stopped for {session_id} ({stt_provider})", flush=True)
+                
+                # Remove from sessions dict
+                if session_id in streaming_sessions:
+                    del streaming_sessions[session_id]
+                    
             except Exception as stop_error:
                 print(f"⚠️ Error stopping streaming STT: {stop_error}", flush=True)
             emit('recording_stopped', {'success': True, 'streaming': True})

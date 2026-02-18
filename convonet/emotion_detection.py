@@ -6,7 +6,7 @@ Detects emotion from user input and agent response for voice synthesis
 import logging
 from typing import Optional
 from enum import Enum
-from convonet.elevenlabs_service import EmotionType
+from convonet.elevenlabs import EmotionType
 
 logger = logging.getLogger(__name__)
 

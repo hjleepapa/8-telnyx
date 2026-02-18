@@ -1,7 +1,7 @@
 import os
 import logging
 from typing import Dict, Any, Optional
-from deepgram_service import get_deepgram_service
+from .service import get_deepgram_service
 
 logger = logging.getLogger(__name__)
 
