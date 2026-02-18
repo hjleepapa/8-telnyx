@@ -248,15 +248,15 @@ def _synthesize_audio_linear16(text: str, provider: str = "deepgram", voice_id: 
     if provider == "rime":
         try:
             if RIME_AVAILABLE:
-                logger.info(f"🎵 _synthesize_audio_linear16: Using Rime for synthesis (speaker: {voice_id or 'astra'})...")
+                print(f"🎵 _synthesize_audio_linear16: Using Rime for synthesis (speaker: {voice_id or 'astra'})...", flush=True)
                 speaker = voice_id or "astra"
                 rime_service = get_rime_service(speaker=speaker)
                 audio_data = rime_service.synthesize(clean_text, speaker=speaker)
-                logger.info(f"✅ _synthesize_audio_linear16: Received {len(audio_data)} bytes from Rime")
+                print(f"✅ _synthesize_audio_linear16: Received {len(audio_data)} bytes from Rime", flush=True)
                 # Note: Rime returns WAV format, may need conversion for LiveKit PCM
                 return audio_data
         except Exception as e:
-            logger.error(f"❌ Rime synthesis failed: {e}")
+            print(f"❌ Rime synthesis failed: {e}", flush=True)
             # Fallback to deepgram below
 
     if provider == "cartesia":
