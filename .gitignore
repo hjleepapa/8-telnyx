@@ -19,3 +19,6 @@ recordings/
 *.mp3
 *.m4a
 
+# Node
+node_modules/
+
