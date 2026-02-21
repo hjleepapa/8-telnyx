@@ -426,6 +426,10 @@ BARge_IN_MIN_INTERVAL_SEC = 0.25
 # Global guards for sessions to throttle overlapping agent runs
 processing_guards = {}
 
+# Voice response timing: session_id -> t0 (when user clicked stop)
+_voice_response_timing = {}
+_first_audio_sent = set()  # session_ids that have had first audio sent (for timing log)
+
 # Processing music (hold music) while transcribing/agent processing
 _processing_music_control = {}  # session_id -> {'stop_event': Event, 'thread': Thread}
 
@@ -567,6 +571,11 @@ def _ensure_livekit_session(session_id: str, user_id: str):
 
 def _send_livekit_pcm(session_id: str, pcm_bytes: bytes, sample_rate: int = 48000, channels: int = 1):
     if _livekit_active() and pcm_bytes:
+        t0 = _voice_response_timing.get(session_id)
+        if t0 and session_id not in _first_audio_sent:
+            _first_audio_sent.add(session_id)
+            elapsed_ms = (time.time() - t0) * 1000
+            print(f"⏱️ [T+{elapsed_ms:.0f}ms] 6. FIRST AUDIO → LiveKit (user hears response)", flush=True)
         _stop_processing_music(session_id)
         print(f"📡 Bridge: Sending {len(pcm_bytes)} bytes to LiveKit for session {session_id}", flush=True)
         livekit_manager.send_pcm(session_id, pcm_bytes, sample_rate=sample_rate, channels=channels)
@@ -1002,6 +1011,8 @@ def cancel_active_response(session_id: str, reason: str = "barge_in"):
     if session_id in processing_guards:
         _stop_processing_music(session_id)
         processing_guards.pop(session_id, None)
+        _voice_response_timing.pop(session_id, None)
+        _first_audio_sent.discard(session_id)
         print(f"🧹 processing_guard CLEARED via cancel_active_response for session: {session_id}", flush=True)
         
     control = active_response_controls.get(session_id)
@@ -2913,8 +2924,8 @@ def init_socketio(socketio_instance: SocketIO, app):
     def handle_stop_recording(data=None):
         """Stop recording and process audio"""
         session_id = request.sid
-        
-        print(f"🛑 [SocketIO] stop_recording event received from {session_id}", flush=True)
+        _voice_response_timing[session_id] = time.time()
+        print(f"🛑 [SocketIO] stop_recording event received from {session_id} (T0=start)", flush=True)
         
         # If busy, wait a tiny bit for previous cancel to finish, then check again
         if processing_guards.get(session_id):
@@ -3015,6 +3026,8 @@ def init_socketio(socketio_instance: SocketIO, app):
                     time.sleep(0.35)
                 audio_buffer = livekit_manager.pop_audio_buffer(session_id)
                 if audio_buffer:
+                    t0 = _voice_response_timing.get(session_id) or time.time()
+                    print(f"⏱️ [T+{((time.time()-t0)*1000):.0f}ms] 1. Buffer captured ({len(audio_buffer)} bytes)", flush=True)
                     print(f"🎧 LiveKit audio buffer captured: {len(audio_buffer)} bytes", flush=True)
                     sentry_capture_voice_event("audio_buffer_retrieved", session_id, details={"storage": "livekit", "buffer_size": len(audio_buffer)})
                 else:
@@ -3191,7 +3204,10 @@ def init_socketio(socketio_instance: SocketIO, app):
         """Process audio in background task"""
         import sys
         buffer_size = len(audio_buffer) if audio_buffer else 0
+        t0 = _voice_response_timing.get(session_id) or time.time()
+        def _t(step): return f"⏱️ [T+{((time.time()-t0)*1000):.0f}ms] {step}"
         print(f"🚀 process_audio_async STARTED for session: {session_id}, buffer size: {buffer_size}", flush=True)
+        print(_t("2. process_audio_async entered"), flush=True)
         
         processing_start_time = time.time()
         latency_data = {
@@ -3232,6 +3248,8 @@ def init_socketio(socketio_instance: SocketIO, app):
                         }, namespace='/voice', room=session_id)
                         _stop_processing_music(session_id)
                         processing_guards.pop(session_id, None)
+                        _voice_response_timing.pop(session_id, None)
+                        _first_audio_sent.discard(session_id)
                         print(f"🧹 processing_guard CLEARED (audio too quiet) for session: {session_id}", flush=True)
                         return
         except Exception as e:
@@ -3300,6 +3318,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                 # Step 1: Transcribe audio (skip if streaming STT already provided text)
                 if transcribed_text_override:
                     transcribed_text = transcribed_text_override
+                    print(_t("3. STT skipped (streaming provided text)"), flush=True)
                 else:
                     socketio.emit('status', {'message': f'Transcribing with {stt_provider.capitalize()}...'}, namespace='/voice', room=session_id)
                     sentry_capture_voice_event("transcription_started", session_id, session.get('user_id'), details={"method": stt_provider})
@@ -3327,6 +3346,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                             transcribed_text = transcribe_audio_with_deepgram_webrtc(audio_buffer, language="en")
                         
                         latency_data['stt_latency_ms'] = (time.time() - stt_start_time) * 1000
+                        print(f"⏱️ [T+{((time.time()-t0)*1000):.0f}ms] 3. STT complete ({latency_data['stt_latency_ms']:.0f}ms)", flush=True)
                         print(f"✅ Transcription result ({stt_provider}): {transcribed_text[:50] if transcribed_text else 'None'} (Lat: {latency_data['stt_latency_ms']:.0f}ms)", flush=True)
                     except Exception as e:
                         print(f"❌ {stt_provider.capitalize()} integration failed: {e}", flush=True)
@@ -3562,6 +3582,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                 print(f"📝 About to call sentry_capture_voice_event for agent_processing_started...", flush=True)
                 sys.stdout.flush()
                 sentry_capture_voice_event("agent_processing_started", session_id, session.get('user_id'), details={"transcribed_text": transcribed_text})
+                print(_t("4. Agent/LLM processing started"), flush=True)
                 print(f"✅ sentry_capture_voice_event for agent_processing_started completed", flush=True)
                 sys.stdout.flush()
                 
@@ -3666,6 +3687,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                                 if len(first_sentence) > 20:
                                     text_accumulator['first_sentence'] = first_sentence
                                     text_accumulator['first_sentence_ready'].set()
+                                    print(f"⏱️ [T+{((time.time()-t0)*1000):.0f}ms] 5. First sentence from LLM", flush=True)
                                     print(f"🚀 FIRST SENTENCE DETECTED: {first_sentence[:80]}...", flush=True)
                 
                 filler_sent = {"sent": False}
@@ -4490,7 +4512,13 @@ def init_socketio(socketio_instance: SocketIO, app):
             finally:
                 # Clear guard and stop hold music
                 _stop_processing_music(session_id)
+                t0 = _voice_response_timing.get(session_id)
+                if t0:
+                    total_ms = (time.time() - t0) * 1000
+                    print(f"⏱️ [TOTAL] {total_ms:.0f}ms from stop → processing complete", flush=True)
                 processing_guards.pop(session_id, None)
+                _voice_response_timing.pop(session_id, None)
+                _first_audio_sent.discard(session_id)
                 print(f"🧹 processing_guard CLEARED for session: {session_id}", flush=True)
                 sys.stdout.flush()
 
