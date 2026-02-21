@@ -31,6 +31,7 @@ class ToolCallInfo:
     result: Optional[Any] = None
     error: Optional[str] = None
     duration_ms: Optional[float] = None
+    elapsed_from_stop_ms: Optional[float] = None  # Time from user stop (voice) to tool invocation
     status: str = "pending"  # success, failed, timeout
 
 
@@ -160,9 +161,11 @@ class AgentMonitor:
             data = self.redis.get(interaction_key)
             if data:
                 interaction_dict = json.loads(data)
-                # Reconstruct ToolCallInfo objects
+                # Reconstruct ToolCallInfo objects (filter to known fields for backward compat)
+                _tc_fields = {f.name for f in ToolCallInfo.__dataclass_fields__.values()}
                 tool_calls = [
-                    ToolCallInfo(**tc) for tc in interaction_dict.get('tool_calls', [])
+                    ToolCallInfo(**{k: v for k, v in tc.items() if k in _tc_fields})
+                    for tc in interaction_dict.get('tool_calls', [])
                 ]
                 interaction_dict['tool_calls'] = tool_calls
                 interaction_dict['status'] = AgentInteractionStatus(interaction_dict['status'])

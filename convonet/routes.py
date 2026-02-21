@@ -1807,6 +1807,8 @@ async def _run_agent_async(
         track_metadata = {"agent_type": agent_type}
         if metadata:
             track_metadata.update(metadata)
+        if track_metadata.get('source') == 'voice' and track_metadata.get('voice_timing') and track_metadata.get('t0'):
+            track_metadata['voice_timing']['total_ms'] = (time.time() - track_metadata['t0']) * 1000
             
         monitor.track_interaction(
             request_id=request_id,
@@ -1923,6 +1925,9 @@ async def _run_agent_async(
             process_start_time = start_time
             transfer_marker = None
             tool_calls_info = []
+            # For voice: elapsed from user stop; for text: elapsed from agent start
+            voice_t0 = (metadata or {}).get('t0')
+            t0_for_elapsed = voice_t0 if voice_t0 is not None else process_start_time
             
             # HYBRID STREAMING: Use native Gemini SDK for streaming, LangGraph for tool execution
             if is_gemini:
@@ -1985,10 +1990,12 @@ VOICE OUTPUT FORMAT (CRITICAL):
                         tool_calls_info = []
                         for tc in tool_calls_list:
                             tool_id = tc.get('id', str(uuid.uuid4()))
+                            elapsed_ms = (time_module.time() - t0_for_elapsed) * 1000
                             tool_call_info = ToolCallInfo(
                                 tool_name=tc.get('name', 'unknown'),
                                 tool_id=tool_id,
-                                arguments=tc.get('args', {})
+                                arguments=tc.get('args', {}),
+                                elapsed_from_stop_ms=elapsed_ms
                             )
                             # Populate result, status, error, and duration if available
                             if 'result' in tc:
@@ -2060,10 +2067,12 @@ VOICE OUTPUT FORMAT (CRITICAL):
                                     tool_id = getattr(tc, 'id', getattr(tc, 'tool_call_id', str(uuid.uuid4())))
                                     tool_name = getattr(tc, 'name', getattr(tc, 'functionName', 'unknown'))
                                     args = getattr(tc, 'args', getattr(tc, 'arguments', {}))
+                                    elapsed_ms = (time_module.time() - t0_for_elapsed) * 1000
                                     tool_calls_info.append(ToolCallInfo(
                                         tool_name=tool_name,
                                         tool_id=tool_id,
-                                        arguments=args if isinstance(args, dict) else {}
+                                        arguments=args if isinstance(args, dict) else {},
+                                        elapsed_from_stop_ms=elapsed_ms
                                     ))
                 
                 # Set final_response if empty
@@ -2215,10 +2224,12 @@ VOICE OUTPUT FORMAT (CRITICAL):
                                                 except Exception as callback_error:
                                                     print(f"⚠️ Error in tool_call_callback: {callback_error}", flush=True)
                                             
+                                            elapsed_ms = (time_module.time() - t0_for_elapsed) * 1000
                                             tool_calls_info.append(ToolCallInfo(
                                                 tool_name=tool_name,
                                                 tool_id=tool_id,
-                                                arguments=args if isinstance(args, dict) else {}
+                                                arguments=args if isinstance(args, dict) else {},
+                                                elapsed_from_stop_ms=elapsed_ms
                                             ))
                                     if new_tool_calls_in_update:
                                         print(f"🔧 Detected {new_tool_calls_in_update} new tool call(s) in state update #{states_processed}", flush=True)
@@ -2339,10 +2350,12 @@ VOICE OUTPUT FORMAT (CRITICAL):
                         # Check if we already have this tool call
                         existing = next((t for t in tool_calls_info if t.tool_id == tool_id), None)
                         if not existing:
+                            elapsed_ms = (time_module.time() - t0_for_elapsed) * 1000
                             tool_calls_info.append(ToolCallInfo(
                                 tool_name=tool_name,
                                 tool_id=tool_id,
-                                arguments=args if isinstance(args, dict) else {}
+                                arguments=args if isinstance(args, dict) else {},
+                                elapsed_from_stop_ms=elapsed_ms
                             ))
                     
                     # Track tool results (ToolMessage)
@@ -2374,6 +2387,9 @@ VOICE OUTPUT FORMAT (CRITICAL):
             track_metadata = {"agent_type": agent_type}
             if metadata:
                 track_metadata.update(metadata)
+            # Set voice total_ms right before tracking (for voice interactions)
+            if track_metadata.get('source') == 'voice' and track_metadata.get('voice_timing') and track_metadata.get('t0'):
+                track_metadata['voice_timing']['total_ms'] = (time_module.time() - track_metadata['t0']) * 1000
                 
             monitor.track_interaction(
                 request_id=request_id,
@@ -2464,6 +2480,8 @@ VOICE OUTPUT FORMAT (CRITICAL):
         track_metadata = {"agent_type": agent_type}
         if metadata:
             track_metadata.update(metadata)
+        if track_metadata.get('source') == 'voice' and track_metadata.get('voice_timing') and track_metadata.get('t0'):
+            track_metadata['voice_timing']['total_ms'] = (time.time() - track_metadata['t0']) * 1000
             
         monitor.track_interaction(
             request_id=request_id,

@@ -613,9 +613,41 @@
                                         ${tc.result ? `<div class="tool-call-result">✅ Result: ${escapeHtml(JSON.stringify(tc.result).substring(0, 200))}</div>` : ''}
                                         ${tc.error ? `<div class="tool-call-error">❌ Error: ${escapeHtml(tc.error)}</div>` : ''}
                                         ${tc.duration_ms ? `<div style="font-size: 11px; color: #999; margin-top: 4px;">Duration: ${Math.round(tc.duration_ms)}ms</div>` : ''}
+                                        ${(typeof tc.elapsed_from_stop_ms === 'number' && !isNaN(tc.elapsed_from_stop_ms)) ? `<div style="font-size: 11px; color: #0ea5e9; margin-top: 4px;">Elapsed from stop: T+${Math.round(tc.elapsed_from_stop_ms)}ms</div>` : ''}
                                     </div>
                                 `).join('')}
                             ` : '<p style="color: #999;">No tool calls</p>'}
+                            ${(interaction.metadata?.source === 'voice' || interaction.metadata?.stt_provider) ? (function() {
+                                const vt = interaction.metadata.voice_timing || {};
+                                const bufMs = vt.buffer_capture_ms ?? vt.buffer_ms;
+                                const procMs = vt.process_audio_async_ms ?? vt.buffer_ms;
+                                const allSteps = [
+                                    { key: 't0', event: 'User clicks stop', ms: 0 },
+                                    { key: 'buffer_capture_ms', event: 'Buffer captured', ms: bufMs },
+                                    { key: 'process_audio_async_ms', event: 'process_audio_async entered', ms: procMs },
+                                    { key: 'stt_ms', event: 'STT complete', ms: vt.stt_ms },
+                                    { key: 'agent_start_ms', event: 'Agent/LLM processing started', ms: vt.agent_start_ms },
+                                    { key: 'first_sentence_ms', event: 'First sentence from LLM', ms: vt.first_sentence_ms },
+                                    { key: 'first_audio_ms', event: 'First audio → LiveKit (user hears)', ms: vt.first_audio_ms },
+                                    { key: 'total_ms', event: 'Processing complete', ms: vt.total_ms, isTotal: true }
+                                ];
+                                const steps = allSteps.filter(s => s.ms != null || s.key === 't0').sort((a,b) => (a.ms || 0) - (b.ms || 0));
+                                const fmt = n => n >= 1000 ? n.toLocaleString() : String(n);
+                                let prevMs = 0;
+                                const hasData = steps.length > 1;
+                                if (!hasData) {
+                                    return '<h4 style="margin: 15px 0 8px;">Voice response timing</h4><p style="color: #94a3b8; font-size: 12px;">T0 = user clicks "Click to stop"</p><p style="color: #94a3b8; font-size: 12px;">STT: ' + (interaction.metadata.stt_latency_ms != null ? Math.round(interaction.metadata.stt_latency_ms) + 'ms' : 'N/A') + ' | TTS: ' + (interaction.metadata.tts_latency_ms != null ? Math.round(interaction.metadata.tts_latency_ms) + 'ms' : 'N/A') + '</p>';
+                                }
+                                const rows = steps.map((s, i) => {
+                                    const elapsed = s.key === 't0' ? 0 : Math.round(s.ms);
+                                    const delta = s.key === 't0' ? '—' : (elapsed - prevMs >= 0 ? '~' + fmt(Math.round(elapsed - prevMs)) + ' ms' : '—');
+                                    if (s.key !== 't0') prevMs = elapsed;
+                                    const stepLabel = s.key === 't0' ? 'T0' : (s.isTotal ? 'TOTAL' : String(i));
+                                    const elapsedStr = s.key === 't0' ? '0 ms' : fmt(elapsed) + ' ms';
+                                    return '<tr' + (s.isTotal ? ' style="font-weight: bold;"' : '') + '><td style="padding: 6px; border: 1px solid #e2e8f0;">' + stepLabel + '</td><td style="padding: 6px; border: 1px solid #e2e8f0;">' + s.event + '</td><td style="padding: 6px; border: 1px solid #e2e8f0;">' + elapsedStr + '</td><td style="padding: 6px; border: 1px solid #e2e8f0;">' + delta + '</td></tr>';
+                                }).join('');
+                                return '<h4 style="margin: 15px 0 8px;">Voice response timing</h4><p style="color: #94a3b8; font-size: 11px; margin-bottom: 8px;">T0 = user clicks "Click to stop"</p><table class="voice-timing-table" style="width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 15px;"><thead><tr style="background: #f1f5f9; text-align: left;"><th style="padding: 8px; border: 1px solid #e2e8f0;">Step</th><th style="padding: 8px; border: 1px solid #e2e8f0;">Event</th><th style="padding: 8px; border: 1px solid #e2e8f0;">Elapsed (T+ms)</th><th style="padding: 8px; border: 1px solid #e2e8f0;">Delta from previous</th></tr></thead><tbody>' + rows + '</tbody></table>';
+                            })() : ''}
                             ${interaction.error ? `<div style="color: #dc2626; margin-top: 15px;"><strong>Error:</strong> ${escapeHtml(interaction.error)}</div>` : ''}
                         </div>
                     </div>

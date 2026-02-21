@@ -429,6 +429,8 @@ processing_guards = {}
 # Voice response timing: session_id -> t0 (when user clicked stop)
 _voice_response_timing = {}
 _first_audio_sent = set()  # session_ids that have had first audio sent (for timing log)
+_voice_latency_data = {}  # session_id -> latency_data (for first_audio_ms update from _send_livekit_pcm)
+_voice_buffer_capture_ms = {}  # session_id -> ms (buffer captured, set in handle_stop_recording)
 
 # Processing music (hold music) while transcribing/agent processing
 _processing_music_control = {}  # session_id -> {'stop_event': Event, 'thread': Thread}
@@ -575,6 +577,9 @@ def _send_livekit_pcm(session_id: str, pcm_bytes: bytes, sample_rate: int = 4800
         if t0 and session_id not in _first_audio_sent:
             _first_audio_sent.add(session_id)
             elapsed_ms = (time.time() - t0) * 1000
+            ld = _voice_latency_data.get(session_id)
+            if ld and ld.get('voice_timing') is not None:
+                ld['voice_timing']['first_audio_ms'] = elapsed_ms
             print(f"⏱️ [T+{elapsed_ms:.0f}ms] 6. FIRST AUDIO → LiveKit (user hears response)", flush=True)
         _stop_processing_music(session_id)
         print(f"📡 Bridge: Sending {len(pcm_bytes)} bytes to LiveKit for session {session_id}", flush=True)
@@ -619,6 +624,9 @@ def _start_processing_music(session_id: str):
     def _stream_loop():
         try:
             print(f"🎵 Starting processing music for {session_id}", flush=True)
+            # Brief delay so LiveKit session is ready before first chunk
+            if stop_event.wait(timeout=0.3):
+                return
             chunk_size = 48000 * 2  # 1 second of 48kHz mono 16-bit
             idx = 0
             while not stop_event.is_set():
@@ -3027,6 +3035,7 @@ def init_socketio(socketio_instance: SocketIO, app):
                 audio_buffer = livekit_manager.pop_audio_buffer(session_id)
                 if audio_buffer:
                     t0 = _voice_response_timing.get(session_id) or time.time()
+                    _voice_buffer_capture_ms[session_id] = (time.time() - t0) * 1000
                     print(f"⏱️ [T+{((time.time()-t0)*1000):.0f}ms] 1. Buffer captured ({len(audio_buffer)} bytes)", flush=True)
                     print(f"🎧 LiveKit audio buffer captured: {len(audio_buffer)} bytes", flush=True)
                     sentry_capture_voice_event("audio_buffer_retrieved", session_id, details={"storage": "livekit", "buffer_size": len(audio_buffer)})
@@ -3050,6 +3059,8 @@ def init_socketio(socketio_instance: SocketIO, app):
                 # Preserve base64 for Redis audio player, and decode for processing
                 audio_buffer_b64_from_client = data['audio']
                 audio_buffer = base64.b64decode(audio_buffer_b64_from_client)
+                t0 = _voice_response_timing.get(session_id) or time.time()
+                _voice_buffer_capture_ms[session_id] = (time.time() - t0) * 1000
                 print(f"🎵 Received complete WebM blob from client: {len(audio_buffer)} bytes")
                 sentry_capture_voice_event("audio_blob_received", session_id, details={"buffer_size": len(audio_buffer), "source": "client"})
 
@@ -3093,10 +3104,14 @@ def init_socketio(socketio_instance: SocketIO, app):
                         return
                     
                     audio_buffer = base64.b64decode(audio_buffer_b64)
+                    t0 = _voice_response_timing.get(session_id) or time.time()
+                    _voice_buffer_capture_ms[session_id] = (time.time() - t0) * 1000
                     print(f"🔍 Debug: decoded session audio_buffer length: {len(audio_buffer)}")
                     sentry_capture_voice_event("audio_buffer_retrieved", session_id, details={"storage": "redis", "buffer_size": len(audio_buffer)})
                 else:
                     audio_buffer = session_data['audio_buffer']
+                    t0 = _voice_response_timing.get(session_id) or time.time()
+                    _voice_buffer_capture_ms[session_id] = (time.time() - t0) * 1000
                     print(f"🔍 Debug: in-memory audio_buffer length: {len(audio_buffer)}")
                     sentry_capture_voice_event("audio_buffer_retrieved", session_id, details={"storage": "memory", "buffer_size": len(audio_buffer)})
             except Exception as e:
@@ -3210,11 +3225,23 @@ def init_socketio(socketio_instance: SocketIO, app):
         print(_t("2. process_audio_async entered"), flush=True)
         
         processing_start_time = time.time()
+        buffer_capture_ms = _voice_buffer_capture_ms.pop(session_id, None)
         latency_data = {
             'stt_latency_ms': 0,
             'tts_latency_ms': 0,
-            'ttfa_recorded': False
+            'ttfa_recorded': False,
+            't0': t0,
+            'voice_timing': {
+                'buffer_capture_ms': buffer_capture_ms,
+                'process_audio_async_ms': (processing_start_time - t0) * 1000,
+                'stt_ms': None,
+                'agent_start_ms': None,
+                'first_sentence_ms': None,
+                'first_audio_ms': None,
+                'total_ms': None
+            }
         }
+        _voice_latency_data[session_id] = latency_data
         
         # Throttling: Ignore tiny buffers
         if buffer_size < 10000 and not transcribed_text_override:
@@ -3346,6 +3373,8 @@ def init_socketio(socketio_instance: SocketIO, app):
                             transcribed_text = transcribe_audio_with_deepgram_webrtc(audio_buffer, language="en")
                         
                         latency_data['stt_latency_ms'] = (time.time() - stt_start_time) * 1000
+                        if latency_data.get('voice_timing'):
+                            latency_data['voice_timing']['stt_ms'] = (time.time() - t0) * 1000
                         print(f"⏱️ [T+{((time.time()-t0)*1000):.0f}ms] 3. STT complete ({latency_data['stt_latency_ms']:.0f}ms)", flush=True)
                         print(f"✅ Transcription result ({stt_provider}): {transcribed_text[:50] if transcribed_text else 'None'} (Lat: {latency_data['stt_latency_ms']:.0f}ms)", flush=True)
                     except Exception as e:
@@ -3687,6 +3716,8 @@ def init_socketio(socketio_instance: SocketIO, app):
                                 if len(first_sentence) > 20:
                                     text_accumulator['first_sentence'] = first_sentence
                                     text_accumulator['first_sentence_ready'].set()
+                                    if latency_data.get('voice_timing') is not None:
+                                        latency_data['voice_timing']['first_sentence_ms'] = (time.time() - t0) * 1000
                                     print(f"⏱️ [T+{((time.time()-t0)*1000):.0f}ms] 5. First sentence from LLM", flush=True)
                                     print(f"🚀 FIRST SENTENCE DETECTED: {first_sentence[:80]}...", flush=True)
                 
@@ -3763,6 +3794,8 @@ def init_socketio(socketio_instance: SocketIO, app):
                 try:
                     print(f"🚀 Submitting agent task to persistent background thread...", flush=True)
                     sys.stdout.flush()
+                    if latency_data.get('voice_timing') is not None:
+                        latency_data['voice_timing']['agent_start_ms'] = (time.time() - t0) * 1000
                     
                     # Use timeout that matches routes.py execution_timeout (15s for Claude/OpenAI, 12s for Gemini)
                     timeout_seconds = 60.0
@@ -4515,10 +4548,15 @@ def init_socketio(socketio_instance: SocketIO, app):
                 t0 = _voice_response_timing.get(session_id)
                 if t0:
                     total_ms = (time.time() - t0) * 1000
+                    ld = _voice_latency_data.get(session_id)
+                    if ld and ld.get('voice_timing') is not None:
+                        ld['voice_timing']['total_ms'] = total_ms
                     print(f"⏱️ [TOTAL] {total_ms:.0f}ms from stop → processing complete", flush=True)
                 processing_guards.pop(session_id, None)
                 _voice_response_timing.pop(session_id, None)
                 _first_audio_sent.discard(session_id)
+                _voice_latency_data.pop(session_id, None)
+                _voice_buffer_capture_ms.pop(session_id, None)
                 print(f"🧹 processing_guard CLEARED for session: {session_id}", flush=True)
                 sys.stdout.flush()
 
@@ -4580,7 +4618,9 @@ async def process_with_agent(
                 "stt_provider": stt_provider,
                 "tts_provider": tts_provider,
                 "stt_latency_ms": latency_data.get('stt_latency_ms', 0) if latency_data else 0,
-                "tts_latency_ms": latency_data.get('tts_latency_ms', 0) if latency_data else 0
+                "tts_latency_ms": latency_data.get('tts_latency_ms', 0) if latency_data else 0,
+                "t0": latency_data.get('t0') if latency_data else None,
+                "voice_timing": latency_data.get('voice_timing') if latency_data else None
             }
         )
         
