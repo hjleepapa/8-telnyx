@@ -545,10 +545,17 @@
 
             socket.on('transcription', (data) => {
                 if (data.success) {
+                    clearPartialUserTranscript();
                     addTranscript('user', data.text);
                 } else {
                     showStatus(data.message, 'error');
                     resetMicButton();
+                }
+            });
+
+            socket.on('transcript_partial', (data) => {
+                if (data && data.text !== undefined) {
+                    updatePartialUserTranscript(data.text);
                 }
             });
 
@@ -876,6 +883,29 @@
             }
 
             console.log(`📢 Status [${type}]: ${message}`);
+        }
+
+        let partialUserTranscriptEl = null;
+
+        function updatePartialUserTranscript(text) {
+            const transcriptBox = document.getElementById('transcriptBox');
+            if (!transcriptBox) return;
+            if (transcriptBox.querySelector('.text-muted')) transcriptBox.innerHTML = '';
+            if (!partialUserTranscriptEl) {
+                partialUserTranscriptEl = document.createElement('div');
+                partialUserTranscriptEl.className = 'transcript-item user';
+                partialUserTranscriptEl.innerHTML = '<div class="transcript-label">👤 You</div><div class="streaming-text"></div>';
+                transcriptBox.appendChild(partialUserTranscriptEl);
+            }
+            partialUserTranscriptEl.querySelector('.streaming-text').textContent = text;
+            transcriptBox.scrollTop = transcriptBox.scrollHeight;
+        }
+
+        function clearPartialUserTranscript() {
+            if (partialUserTranscriptEl && partialUserTranscriptEl.parentNode) {
+                partialUserTranscriptEl.parentNode.removeChild(partialUserTranscriptEl);
+                partialUserTranscriptEl = null;
+            }
         }
 
         // Add transcript item

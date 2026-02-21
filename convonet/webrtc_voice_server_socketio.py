@@ -828,11 +828,21 @@ class StreamingTTSStream:
 
 class StreamingSTTSession:
     """Deepgram streaming STT session for low-latency transcription."""
-    def __init__(self, session_id: str, socketio_instance: SocketIO, on_final_transcript, on_user_speech):
+    def __init__(
+        self,
+        session_id: str,
+        socketio_instance: SocketIO,
+        on_final_transcript,
+        on_user_speech,
+        on_partial_transcript=None,
+        use_pcm: bool = False,
+    ):
         self.session_id = session_id
         self.socketio = socketio_instance
         self.on_final_transcript = on_final_transcript
         self.on_user_speech = on_user_speech
+        self.on_partial_transcript = on_partial_transcript
+        self.use_pcm = use_pcm  # True = LiveKit PCM (linear16), False = MediaRecorder WebM (opus)
         self.loop = asyncio.new_event_loop()
         self.thread = threading.Thread(target=self._run_loop, daemon=True)
         self.audio_queue = None
@@ -876,6 +886,10 @@ class StreamingSTTSession:
                     if self.on_user_speech:
                         self.on_user_speech()
 
+                # Emit partial (interim) transcripts to client for live display
+                if not speech_final and self.on_partial_transcript:
+                    self.on_partial_transcript(transcript.strip(), is_final=False)
+
                 if is_final:
                     self.partial_segments.append(transcript.strip())
 
@@ -896,18 +910,25 @@ class StreamingSTTSession:
             self.audio_queue = asyncio.Queue()
             client = AsyncDeepgramClient(api_key=os.getenv("DEEPGRAM_API_KEY"))
 
+            # LiveKit sends raw PCM; MediaRecorder (SocketIO) sends WebM/Opus
+            connect_options = {
+                "model": STREAMING_STT_MODEL,
+                "language": "en-US",
+                "interim_results": True,
+                "vad_events": True,
+                "endpointing": str(STREAMING_STT_ENDPOINTING_MS),
+                "smart_format": True,
+            }
+            if self.use_pcm:
+                connect_options["encoding"] = "linear16"
+                connect_options["sample_rate"] = "48000"
+            else:
+                connect_options["encoding"] = "opus"
+                connect_options["sample_rate"] = "48000"
+                connect_options["container"] = "webm"
+
             async def run_connection():
-                async with client.listen.v2.connect(
-                    model=STREAMING_STT_MODEL,
-                    encoding="opus",
-                    sample_rate="48000",
-                    container="webm",
-                    language="en-US",
-                    interim_results=True,
-                    vad_events=True,
-                    endpointing=str(STREAMING_STT_ENDPOINTING_MS),
-                    smart_format=True,
-                ) as connection:
+                async with client.listen.v2.connect(**connect_options) as connection:
                     connection.on(EventType.MESSAGE, self._handle_message)
                     connection.on(EventType.ERROR, lambda error: print(f"❌ Deepgram STT error: {error}", flush=True))
                     await connection.start_listening()
@@ -2640,11 +2661,22 @@ def init_socketio(socketio_instance: SocketIO, app):
                     if session_id in active_response_controls:
                         cancel_active_response(session_id, reason="barge_in")
 
+                def on_partial_transcript(partial_text: str, is_final: bool):
+                    if partial_text:
+                        socketio.emit(
+                            "transcript_partial",
+                            {"text": partial_text, "is_final": is_final},
+                            room=session_id,
+                            namespace="/voice",
+                        )
+
                 streaming_session = StreamingSTTSession(
                     session_id=session_id,
                     socketio_instance=socketio,
                     on_final_transcript=on_final_transcript,
-                    on_user_speech=on_user_speech
+                    on_user_speech=on_user_speech,
+                    on_partial_transcript=on_partial_transcript,
+                    use_pcm=_livekit_input_active(),
                 )
                 streaming_session.start()
                 streaming_sessions[session_id] = streaming_session

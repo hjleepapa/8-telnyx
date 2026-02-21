@@ -667,6 +667,25 @@ LiveKit SFU → Browser playback
 
         let currentStreamingItem = null;
 
+        function updatePartialUserTranscript(text) {
+            const box = document.getElementById('transcriptBox');
+            if (!box) return;
+            if (box.querySelector('.text-muted')) box.innerHTML = '';
+            if (!currentStreamingItem || currentStreamingItem.dataset.role !== 'user') {
+                currentStreamingItem = document.createElement('div');
+                currentStreamingItem.className = 'transcript-item user';
+                currentStreamingItem.dataset.role = 'user';
+                currentStreamingItem.innerHTML = `
+                    <div class="transcript-label">You</div>
+                    <div class="streaming-text"></div>
+                `;
+                box.appendChild(currentStreamingItem);
+            }
+            const textDiv = currentStreamingItem.querySelector('.streaming-text');
+            textDiv.textContent = text;
+            box.scrollTop = box.scrollHeight;
+        }
+
         function addStreamingTranscript(role, text) {
             const box = document.getElementById('transcriptBox');
             if (!box) return;
@@ -1167,10 +1186,16 @@ LiveKit SFU → Browser playback
             socket.on('transcription', (data) => {
                 console.log('🎤 Transcription received:', data);
                 if (data.success) {
-                    addTranscript('user', data.text);
+                    addTranscript('user', data.text, true);  // overwrite any partial
                 } else {
                     showStatus(data.message || 'Transcription failed.', 'error');
                     resetMicButton();
+                }
+            });
+
+            socket.on('transcript_partial', (data) => {
+                if (data && data.text !== undefined) {
+                    updatePartialUserTranscript(data.text);
                 }
             });
 
