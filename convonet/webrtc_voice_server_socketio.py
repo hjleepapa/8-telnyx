@@ -1629,7 +1629,28 @@ def livekit_client_js():
     return response
 
 
-def chunk_text_by_sentences(text: str, min_chunk_size: int = 100, max_chunk_size: int = 500) -> list[str]:
+def strip_markdown_for_tts(text: str) -> str:
+    """Remove markdown that would be spoken aloud (#, *, **, URLs, etc.)."""
+    if not text:
+        return ""
+    # Remove headers (# ## ###)
+    t = re.sub(r'^#{1,6}\s*', '', text, flags=re.MULTILINE)
+    # Remove **bold** and *italic*
+    t = re.sub(r'\*\*(.+?)\*\*', r'\1', t)
+    t = re.sub(r'\*(.+?)\*', r'\1', t)
+    t = re.sub(r'__(.+?)__', r'\1', t)
+    t = re.sub(r'_(.+?)_', r'\1', t)
+    # Remove URLs
+    t = re.sub(r'https?://[^\s]+', '', t)
+    # Remove image/data patterns
+    t = re.sub(r':max_bytes\([^)]+\)[^\s]*', '', t)
+    # Collapse multiple spaces/newlines
+    t = re.sub(r'\n{3,}', '\n\n', t)
+    t = re.sub(r' {2,}', ' ', t)
+    return t.strip()
+
+
+def chunk_text_by_sentences(text: str, min_chunk_size: int = 100, max_chunk_size: int = 450) -> list[str]:
     """
     Split text into sentence-based chunks for streaming TTS.
     
@@ -3531,11 +3552,21 @@ def init_socketio(socketio_instance: SocketIO, app):
                 
                 print(f"✅ {stt_provider} transcription successful: {transcribed_text}", flush=True)
                 sys.stdout.flush()
-                print(f"📝 About to call sentry_capture_voice_event...", flush=True)
-                sys.stdout.flush()
                 sentry_capture_voice_event("transcription_completed", session_id, session.get('user_id'), details={"text_length": len(transcribed_text), "method": stt_provider})
-                print(f"✅ sentry_capture_voice_event completed", flush=True)
-                sys.stdout.flush()
+                
+                # If user said "stop" during playback, cancel and don't process (barge-in)
+                t_lower = transcribed_text.strip().lower().rstrip('.')
+                stop_phrases = ('stop', 'stopp', 'stop it', 'stop that', 'stop please', "that's enough", 'enough')
+                is_stop = t_lower in stop_phrases or (t_lower.startswith('stop') and len(t_lower) <= 10)
+                if transcribed_text and is_stop:
+                    if session_id in active_response_controls:
+                        cancel_active_response(session_id, reason="user_said_stop")
+                        _stop_processing_music(session_id)
+                        processing_guards.pop(session_id, None)
+                        _voice_response_timing.pop(session_id, None)
+                        _first_audio_sent.discard(session_id)
+                        print(f"🛑 User said stop - cancelled playback, skipping agent processing", flush=True)
+                        return
                 
                 print(f"🔍 Checking for transfer intent...", flush=True)
                 sys.stdout.flush()
@@ -4051,8 +4082,10 @@ def init_socketio(socketio_instance: SocketIO, app):
                     if text_accumulator['first_sentence_ready'].wait(timeout=10.0):
                         first_sent = text_accumulator['first_sentence']
                         if first_sent and not result_container['done']:
-                            # Run early TTS in a separate thread to not block waiting for the main result
-                            threading.Thread(target=generate_early_tts, args=(first_sent,), daemon=True).start()
+                            first_sent = strip_markdown_for_tts(first_sent)
+                            if first_sent:
+                                # Run early TTS in a separate thread to not block waiting for the main result
+                                threading.Thread(target=generate_early_tts, args=(first_sent,), daemon=True).start()
                     else:
                         print(f"⏳ First sentence not ready yet, continuing...", flush=True)
 
@@ -4141,8 +4174,10 @@ def init_socketio(socketio_instance: SocketIO, app):
                             except Exception as e:
                                 print(f"⚠️ Emotion detection failed: {e}", flush=True)
                         
-                        # Split text into chunks for streaming
-                        text_chunks = chunk_text_by_sentences(agent_response, min_chunk_size=100, max_chunk_size=400)
+                        # Strip markdown (#, *, **, URLs) before TTS - don't speak these aloud
+                        agent_response_clean = strip_markdown_for_tts(agent_response)
+                        # Split into chunks (~30 sec each, ~450 chars). Summary naturally comes first.
+                        text_chunks = chunk_text_by_sentences(agent_response_clean, min_chunk_size=80, max_chunk_size=450)
                         print(f"📝 Split response into {len(text_chunks)} chunks for streaming TTS", flush=True)
                         
                         # Check if first chunk matches early TTS sentence (skip if already generated)
