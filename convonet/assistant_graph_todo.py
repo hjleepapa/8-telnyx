@@ -158,6 +158,9 @@ class TodoAgent:
             DATABASE:
             - query_db: Execute SQL queries
             
+            WEB SEARCH (current information):
+            - web_search: Search the web for current info (weather, news, rates, research). Use when user asks about real-time data or topics not in knowledge base.
+            
             CALL TRANSFER (VOICE CALLS):
             - transfer_to_agent: Transfer call to human agent or department
             - get_available_departments: List available departments for transfer

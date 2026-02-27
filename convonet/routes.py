@@ -1380,7 +1380,8 @@ async def _get_agent_graph(
                 "upload_mortgage_document",
                 "get_mortgage_documents",
                 "get_required_documents",
-                "get_missing_documents"
+                "get_missing_documents",
+                "web_search",
             ]
             
             healthcare_tool_names = [
@@ -1405,7 +1406,8 @@ async def _get_agent_graph(
                 "get_provider_details",
                 "get_care_programs",
                 "enroll_care_program",
-                "get_preventive_care"
+                "get_preventive_care",
+                "web_search",
             ]
             
             # Helper function to get tool name
@@ -1459,11 +1461,15 @@ async def _get_agent_graph(
                 print(f"🏥 Filtered to {len(tools)} healthcare tools (from {len(_mcp_tools_cache) if _mcp_tools_cache else 0} total tools)", flush=True)
             
             else:
-                # Filter to exclude domain-specific tools (keep todo/team/calendar/transfer tools)
+                # Filter to exclude domain-specific tools (keep todo/team/calendar/transfer + shared tools)
+                shared_tool_names = ["web_search"]  # Available to all agents
                 all_domain_tools = mortgage_tool_names + healthcare_tool_names
-                filtered_tools = [t for t in tools if not (_get_tool_name(t) in all_domain_tools)]
+                filtered_tools = [
+                    t for t in tools
+                    if (_get_tool_name(t) in shared_tool_names) or (_get_tool_name(t) not in all_domain_tools)
+                ]
                 tools = filtered_tools
-                print(f"📝 Filtered to {len(tools)} todo/team tools (excluded domain-specific tools)", flush=True)
+                print(f"📝 Filtered to {len(tools)} todo/team tools (excluded domain-specific, kept shared)", flush=True)
             
             print(f"🔧 Building {agent_type} agent graph with {len(tools)} tools...", flush=True)
             sys.stdout.flush()

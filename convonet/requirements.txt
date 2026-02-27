@@ -189,3 +189,6 @@ livekit-api>=0.6.0
 
 # Deepgram SDK for WebRTC speech-to-text
 deepgram-sdk>=3.0.0
+
+# Tavily web search for AI agents
+tavily-python>=0.7.0
