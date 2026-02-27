@@ -21,7 +21,7 @@ import tempfile
 
 logger = logging.getLogger(__name__)
 
-
+# wraps raw PCM audio bytes into a valid WAV container.
 def _pcm_to_wav(pcm_bytes: bytes, sample_rate: int = 48000, channels: int = 1) -> bytes:
     """Wrap raw PCM s16le in WAV header. Required for Cartesia STT API."""
     import struct

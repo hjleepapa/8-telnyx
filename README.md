@@ -81,6 +81,7 @@ TWILIO_PHONE_NUMBER=+1234567890
 
 # Speech-to-Text (STT)
 DEEPGRAM_API_KEY=your_deepgram_api_key
+MODULATE_API_KEY=your_modulate_api_key  # Velma-2: emotion, diarization (optional)
 # Cartesia for streaming STT (optional)
 
 # Text-to-Speech (TTS)

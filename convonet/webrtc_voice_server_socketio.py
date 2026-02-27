@@ -102,6 +102,22 @@ except ImportError as e:
     ASSEMBLYAI_AVAILABLE = False
     transcribe_with_assemblyai = None
 
+# Modulate Velma-2 STT integration (emotion, diarization)
+try:
+    from convonet.modulate import (
+        transcribe_audio_with_modulate,
+        ModulateStreamingSTTSession,
+        MODULATE_STREAMING_ENABLED,
+    )
+    MODULATE_AVAILABLE = True
+    MODULATE_STREAMING_AVAILABLE = MODULATE_STREAMING_ENABLED and bool(os.getenv("MODULATE_API_KEY"))
+except ImportError as e:
+    print(f"⚠️ Modulate not available: {e}")
+    MODULATE_AVAILABLE = False
+    MODULATE_STREAMING_AVAILABLE = False
+    transcribe_audio_with_modulate = None
+    ModulateStreamingSTTSession = None
+
 # Rime TTS integration
 try:
     from convonet.rime import RimeTTSService
@@ -466,7 +482,7 @@ def _get_llm_provider_for_user(user_id: Optional[str]) -> str:
     return provider
 
 def _get_stt_provider_for_user(user_id: Optional[str]) -> str:
-    """Get STT provider: 'deepgram', 'cartesia', 'elevenlabs', or 'assemblyai'"""
+    """Get STT provider: 'deepgram', 'modulate', 'cartesia', 'elevenlabs', or 'assemblyai'"""
     provider = None
     
     # Try to get user's selection from Redis
@@ -493,7 +509,7 @@ def _get_stt_provider_for_user(user_id: Optional[str]) -> str:
         provider = "deepgram"
     
     # Validate provider is in supported list
-    if provider not in ["deepgram", "cartesia", "elevenlabs", "assemblyai"]:
+    if provider not in ["deepgram", "modulate", "cartesia", "elevenlabs", "assemblyai"]:
         provider = "deepgram"
     
     return provider
@@ -2775,6 +2791,63 @@ def init_socketio(socketio_instance: SocketIO, app):
 
             except Exception as stream_error:
                 print(f"⚠️ Failed to start Cartesia streaming STT: {stream_error}", flush=True)
+
+        # Modulate streaming STT (emotion, diarization)
+        elif stt_provider == "modulate" and STREAMING_STT_ENABLED and MODULATE_STREAMING_AVAILABLE and ModulateStreamingSTTSession:
+            try:
+                if session_id in streaming_sessions:
+                    streaming_sessions[session_id].stop()
+                    del streaming_sessions[session_id]
+
+                def on_final_transcript_modulate(final_text: str):
+                    socketio.start_background_task(
+                        process_audio_async,
+                        session_id,
+                        None,
+                        transcribed_text_override=final_text,
+                        use_streaming_tts=True
+                    )
+
+                def on_user_speech_modulate():
+                    if session_id in active_response_controls:
+                        cancel_active_response(session_id, reason="barge_in")
+
+                def on_partial_transcript_modulate(partial_text: str, is_final: bool):
+                    if partial_text:
+                        socketio.emit(
+                            "transcript_partial",
+                            {"text": partial_text, "is_final": is_final},
+                            room=session_id,
+                            namespace="/voice",
+                        )
+
+                streaming_session = ModulateStreamingSTTSession(
+                    session_id=session_id,
+                    on_final_transcript=on_final_transcript_modulate,
+                    on_user_speech=on_user_speech_modulate,
+                    on_partial_transcript=on_partial_transcript_modulate,
+                    language="en",
+                )
+                streaming_session.start()
+                streaming_sessions[session_id] = streaming_session
+                print(f"✅ Modulate Streaming STT session started for {session_id}", flush=True)
+
+                if _livekit_input_active():
+                    def livekit_audio_callback_modulate(pcm_bytes):
+                        if session_id not in streaming_sessions:
+                            return
+                        sess = streaming_sessions[session_id]
+                        if not getattr(sess, "active", None) or not sess.active.is_set():
+                            return
+                        try:
+                            sess.send_audio(pcm_bytes)
+                        except Exception as e:
+                            print(f"⚠️ LiveKit Modulate pipe error: {e}", flush=True)
+                    livekit_manager.set_audio_callback(session_id, livekit_audio_callback_modulate)
+                    print(f"🔗 LiveKit audio callback (Modulate) registered for {session_id}", flush=True)
+
+            except Exception as stream_error:
+                print(f"⚠️ Failed to start Modulate streaming STT: {stream_error}", flush=True)
         
         # PRIORITY 3: ElevenLabs streaming STT - Reserved for future use
         # Currently using Cartesia as default STT provider (best latency + quality)
@@ -2840,6 +2913,9 @@ def init_socketio(socketio_instance: SocketIO, app):
                         target_sample_rate=16000
                     )
                     streaming_session.send_audio_chunk(resampled_audio)
+                elif stt_provider == "modulate":
+                    # Modulate expects PCM 16-bit 48kHz (WebRTC standard)
+                    streaming_session.send_audio(audio_chunk)
                 else:
                     # Unknown provider, try generic send_audio (backward compatibility)
                     streaming_session.send_audio(audio_chunk)
@@ -3007,6 +3083,14 @@ def init_socketio(socketio_instance: SocketIO, app):
                     # Cartesia cleanup - placeholder mode produces no transcript, so we fall through to batch
                     remove_cartesia_streaming_session(session_id)
                     print(f"🛑 Cartesia Streaming STT session stopped for {session_id}", flush=True)
+                elif stt_provider == "modulate":
+                    # Modulate: streaming produces transcript via on_final_transcript, skip batch
+                    streaming_session.stop()
+                    print(f"🛑 Modulate Streaming STT session stopped for {session_id}", flush=True)
+                    if session_id in streaming_sessions:
+                        del streaming_sessions[session_id]
+                    emit('recording_stopped', {'success': True, 'streaming': True})
+                    return
                 else:
                     # Deepgram: streaming produced transcript via on_final_transcript, skip batch
                     streaming_session.stop()
@@ -3358,6 +3442,8 @@ def init_socketio(socketio_instance: SocketIO, app):
                         if stt_provider == "cartesia":
                             cartesia = get_cartesia_service()
                             transcribed_text = cartesia.transcribe_audio_buffer(audio_buffer, language="en")
+                        elif stt_provider == "modulate" and MODULATE_AVAILABLE and transcribe_audio_with_modulate:
+                            transcribed_text = transcribe_audio_with_modulate(audio_buffer, language="en", emotion_signal=True)
                         elif stt_provider == "assemblyai" and ASSEMBLYAI_AVAILABLE and transcribe_with_assemblyai:
                             # AssemblyAI expects 16kHz PCM; resample from typical 48kHz WebRTC
                             audio_16k = resample_audio(
