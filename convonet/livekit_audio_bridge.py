@@ -153,8 +153,12 @@ class LiveKitRoomSession:
     def close(self):
         self._closed = True
         try:
-            if self.room:
-                asyncio.run_coroutine_threadsafe(self.room.disconnect(), self.loop)
+            if self.room and self.loop and not self.loop.is_closed():
+                fut = asyncio.run_coroutine_threadsafe(self.room.disconnect(), self.loop)
+                try:
+                    fut.result(timeout=2.0)
+                except Exception:
+                    pass
         except Exception:
             pass
 

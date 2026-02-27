@@ -2677,6 +2677,12 @@ def init_socketio(socketio_instance: SocketIO, app):
 
                 if not participants:
                     print(f"⚠️ LiveKit has no participants for session {session_id} - aborting recording start", flush=True)
+                    # Remove failed session so next token request creates a fresh connection
+                    try:
+                        livekit_manager.close_session(session_id)
+                        print(f"🔌 Closed stale LiveKit session {session_id} for retry", flush=True)
+                    except Exception as e:
+                        print(f"⚠️ Error closing stale session: {e}", flush=True)
                     emit('error', {'message': 'LiveKit not ready. Reconnecting...'})
                     emit('livekit_reconnect', {'reason': 'no_participants'})
                     # Ensure recording flag is cleared
