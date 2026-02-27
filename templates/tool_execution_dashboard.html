@@ -336,6 +336,12 @@
             margin-bottom: 20px;
             font-size: 24px;
         }
+        
+        .chart-wrapper {
+            max-width: 280px;
+            max-height: 280px;
+            margin: 0 auto;
+        }
     </style>
 </head>
 <body>
@@ -380,7 +386,9 @@
         
         <div class="chart-container">
             <h2>Tool Execution Overview</h2>
-            <canvas id="toolChart"></canvas>
+            <div class="chart-wrapper">
+                <canvas id="toolChart"></canvas>
+            </div>
         </div>
         
         <div class="trackers-list">
@@ -418,8 +426,8 @@
         document.addEventListener('DOMContentLoaded', function() {
             loadStats();
             loadTrackers();
-            setInterval(loadStats, 5000); // Refresh stats every 5 seconds
-            setInterval(loadTrackers, 5000); // Refresh trackers every 5 seconds
+            setInterval(loadStats, 60000); // Refresh stats every 1 minute
+            setInterval(loadTrackers, 60000); // Refresh trackers every 1 minute
         });
         
         function filterTrackers() {
