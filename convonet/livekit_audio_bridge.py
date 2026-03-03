@@ -102,6 +102,7 @@ class LiveKitRoomSession:
         self.local_track = None # To prevent GC
         self.assistant_speaking = False # Track if assistant is talking
         self.on_speaking_change = None  # Callback(is_speaking: bool)
+        self.on_audio_frame = None      # Callback(pcm_bytes: bytes)
         self._interrupted = False  # Flag to interrupt audio playback
         self._background_tasks = set() # Track for cleanup
 
