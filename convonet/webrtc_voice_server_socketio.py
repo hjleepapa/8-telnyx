@@ -1990,7 +1990,7 @@ def init_socketio(socketio_instance: SocketIO, app):
         except Exception as e:
             print(f"❌ Error creating session: {e}")
             sentry_capture_redis_operation("create_session", session_id, False, str(e))
-            # Fallback to in-memory storage on error
+            # Fallback to in-memory storage on error - always ensure dict exists
             active_sessions[session_id] = {
                 'authenticated': False,
                 'user_id': None,
@@ -2160,8 +2160,8 @@ def init_socketio(socketio_instance: SocketIO, app):
                             
                             # Send pending response with a small delay to ensure client is ready
                             def send_pending_response_test():
-                                import eventlet
-                                eventlet.sleep(0.5)  # Small delay to ensure client is ready
+                                # Use socketio.sleep which is compatible with both eventlet and threading
+                                socketio.sleep(0.5)  # Small delay to ensure client is ready
                                 
                                 # Check if session still exists before sending
                                 current_session = get_session(session_id)
@@ -2275,9 +2275,8 @@ def init_socketio(socketio_instance: SocketIO, app):
                                         # Send immediately on authentication (don't wait for client_ready)
                                         # The client might disconnect quickly, so send ASAP
                                         def send_pending_response_immediate():
-                                            import eventlet
-                                            # Small delay to ensure authentication is complete
-                                            eventlet.sleep(0.3)
+                                            # Use socketio.sleep which is compatible with both eventlet and threading
+                                            socketio.sleep(0.3)
                                             
                                             # Check if session still exists
                                             current_session = get_session(session_id)
@@ -2312,9 +2311,8 @@ def init_socketio(socketio_instance: SocketIO, app):
                                         
                                         # Also send with a fallback delay in case client_ready is not received
                                         def send_pending_response_fallback():
-                                            import eventlet
-                                            # Fallback: send after 3 seconds if client_ready wasn't received
-                                            eventlet.sleep(3.0)
+                                            # Use socketio.sleep which is compatible with both eventlet and threading
+                                            socketio.sleep(3.0)
                                             
                                             # Check if still pending (not sent via client_ready)
                                             if session_id in getattr(socketio, '_pending_responses', {}):
@@ -2362,7 +2360,10 @@ def init_socketio(socketio_instance: SocketIO, app):
                             else:
                                 print(f"❌ Failed to update session in Redis: {user.email}")
                                 sentry_capture_redis_operation("update_session", session_id, False, "Redis update_session returned False")
-                                # Fallback to in-memory
+                                # Fallback to in-memory - ensure dict exists first
+                                if session_id not in active_sessions:
+                                    active_sessions[session_id] = {'audio_buffer': b'', 'is_recording': False}
+                                
                                 active_sessions[session_id]['authenticated'] = True
                                 active_sessions[session_id]['user_id'] = str(user.id)
                                 active_sessions[session_id]['user_name'] = user.first_name
@@ -2378,7 +2379,10 @@ def init_socketio(socketio_instance: SocketIO, app):
                     except Exception as redis_error:
                         print(f"❌ Redis error during authentication: {redis_error}")
                         sentry_capture_redis_operation("update_session", session_id, False, str(redis_error))
-                        # Fallback to in-memory storage
+                        # Fallback to in-memory storage - ensure dict exists first
+                        if session_id not in active_sessions:
+                            active_sessions[session_id] = {'audio_buffer': b'', 'is_recording': False}
+                            
                         active_sessions[session_id]['authenticated'] = True
                         active_sessions[session_id]['user_id'] = str(user.id)
                         active_sessions[session_id]['user_name'] = user.first_name

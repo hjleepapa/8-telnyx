@@ -20,6 +20,9 @@ except ImportError:
     print("⚠️ Google GenAI SDK not available. Install with: pip install google-genai")
 
 
+# Global Gemini client to prevent leaks and reuse connections
+_gemini_client = None
+
 class GeminiStreamingHandler:
     """
     Handles Gemini streaming using native SDK while maintaining LangGraph compatibility
@@ -35,6 +38,7 @@ class GeminiStreamingHandler:
         on_tool_call: Optional[Callable[[Dict[str, Any]], None]] = None,
         on_complete: Optional[Callable[[str, List[Dict]], None]] = None,
     ):
+        global _gemini_client
         self.api_key = api_key
         self.model = model
         self.tools = tools or []
@@ -46,10 +50,10 @@ class GeminiStreamingHandler:
         if not GEMINI_SDK_AVAILABLE:
             raise ImportError("Google GenAI SDK not available. Install with: pip install google-genai")
         
-        # Initialize client (use async client for streaming)
-        # Note: genai.Client should be reused, but we'll ensure proper cleanup
-        self.client = genai.Client(api_key=api_key)
-        # Don't create duplicate client - use self.client.aio if available
+        # Reuse or initialize client
+        if _gemini_client is None:
+            _gemini_client = genai.Client(api_key=api_key)
+        self.client = _gemini_client
         self._response_stream = None  # Track active stream for cleanup
     
     def _resolve_schema_refs(self, schema: Dict[str, Any], defs: Dict[str, Any] = None) -> Dict[str, Any]:
@@ -999,10 +1003,8 @@ async def stream_gemini_with_tools(
         
         return final_text, enriched_tool_calls
     finally:
-        # Cleanup: Clear handler and client references to help with garbage collection
+        # Cleanup: Clear stream reference
         if handler is not None:
-            # Clear client references
-            handler.client = None
             handler._response_stream = None
             handler = None
         

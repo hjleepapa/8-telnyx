@@ -98,7 +98,26 @@ def create_app():
         # Standard bridge uses threading for local and ASGI long-polling fallback
         async_mode = 'threading'
     print(f"🔌 SocketIO async_mode: {async_mode}")
-    socketio = SocketIO(app, cors_allowed_origins="*", async_mode=async_mode, manage_session=False)
+    
+    # Use Redis as message queue if available for session persistence/stability
+    redis_url = None
+    if os.getenv('REDIS_HOST'):
+        host = os.getenv('REDIS_HOST')
+        port = os.getenv('REDIS_PORT', '6379')
+        password = os.getenv('REDIS_PASSWORD')
+        if password:
+            redis_url = f"redis://:{password}@{host}:{port}/0"
+        else:
+            redis_url = f"redis://{host}:{port}/0"
+        print(f"📡 Using Redis message queue for SocketIO: {host}:{port}")
+
+    socketio = SocketIO(
+        app, 
+        cors_allowed_origins="*", 
+        async_mode=async_mode, 
+        manage_session=False,
+        message_queue=redis_url
+    )
 
     # --- Register Blueprints ---
     # Import and register blueprints after all extensions are fully configured.
@@ -123,6 +142,11 @@ def create_app():
     except ImportError as e:
         print(f"⚠️  Convonet audio player module not available: {e}")
     
+    # Health check route for Flask monolith
+    @app.route('/health')
+    def health_check():
+        return {"status": "healthy", "framework": "Flask"}
+        
     # Register Convonet API blueprints (authentication, teams, todos)
     try:
         from convonet.api_routes.auth_routes import auth_bp
