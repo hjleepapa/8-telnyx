@@ -1,7 +1,7 @@
 import os
 import sys
 from fastapi import FastAPI
-from a2wsgi import WSGIApp
+from a2wsgi import WSGIMiddleware
 
 # Add project root to sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -26,8 +26,8 @@ from convonet.fastapi_voice_gateway import router as voice_router
 api.include_router(voice_router, prefix="/fastapi", tags=["Voice Gateway"])
 
 # 4. Mount the entire Flask application at the root
-# a2wsgi wraps the WSGI (Flask) application so it can run inside the ASGI (FastAPI) loop.
-api.mount("/", WSGIApp(flask_app))
+# WSGIMiddleware wraps the WSGI (Flask) application so it can run inside the ASGI (FastAPI) loop.
+api.mount("/", WSGIMiddleware(flask_app))
 
 @api.on_event("startup")
 async def startup_event():
