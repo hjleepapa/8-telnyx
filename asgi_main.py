@@ -21,9 +21,17 @@ api = FastAPI(
 from convonet.fastapi_voice_gateway import router as voice_router
 api.include_router(voice_router, prefix="/fastapi", tags=["Voice Gateway"])
 
-# 4. Mount the entire Flask application at the root
-# WSGIMiddleware wraps the WSGI (Flask) application so it can run inside the ASGI (FastAPI) loop.
-api.mount("/", WSGIMiddleware(flask_app))
+# 4. Integrate Socket.IO with FastAPI
+# We use socketio.ASGIApp to provide native ASGI WebSocket support for the Flask-SocketIO server.
+from socketio import ASGIApp
+from app import socketio
+
+# Wrap the Flask app with Socket.IO's ASGI wrapper
+# This handles /socket.io automatically and falls back to Flask for other routes.
+sio_asgi_app = ASGIApp(socketio.server, WSGIMiddleware(flask_app))
+
+# Mount the hybrid app at the root
+api.mount("/", sio_asgi_app)
 
 @api.on_event("startup")
 async def startup_event():
