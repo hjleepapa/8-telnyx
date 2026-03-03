@@ -1,0 +1,82 @@
+services:
+  # Hybrid Flask+FastAPI service
+  - type: web
+    name: convonet-hybrid
+    env: python
+    region: oregon
+    # Use the specific requirements file for hybrid setup
+    buildCommand: pip install -r requirements-render.txt
+    # Start ASGI server using Uvicorn
+    startCommand: uvicorn asgi_main:api --host 0.0.0.0 --port $PORT --workers 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: FLASK_KEY
+        sync: false
+      - key: DB_URI
+        sync: false
+      - key: ANTHROPIC_API_KEY
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      # LLM Provider API Keys
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_OAUTH2_TOKEN_B64
+        sync: false
+      # Redis Configuration
+      - key: REDIS_HOST
+        sync: false
+      - key: REDIS_PORT
+        value: 6379
+      - key: REDIS_PASSWORD
+        sync: false
+      - key: REDIS_DB
+        value: 0
+      # Composio Configuration
+      - key: COMPOSIO_API_KEY
+        value: value_from_composio
+      - key: COMPOSIO_PROJECT_ID
+        value: value_from_composio
+      # Twilio Configuration
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_PHONE_NUMBER
+        sync: false
+      # Webhook URLs
+      - key: WEBHOOK_BASE_URL
+        sync: false
+      - key: WEBSOCKET_BASE_URL
+        sync: false
+      # FreePBX Configuration
+      - key: FREEPBX_DOMAIN
+        value: 136.115.41.45
+      - key: TRANSFER_TIMEOUT
+        value: 30
+      - key: SUPPORT_EXTENSION
+        value: 2000
+      - key: SALES_EXTENSION
+        value: 2000
+      - key: GENERAL_EXTENSION
+        value: 2000
+      - key: OPERATOR_EXTENSION
+        value: 2000
+      # Rate Limiting Configuration
+      - key: RATELIMIT_STORAGE_URL
+        sync: false
+      - key: RATELIMIT_DEFAULT
+        value: 10 per minute
+      # Sentry Configuration
+      - key: SENTRY_DSN
+        sync: false
+    healthCheckPath: /fastapi/health
+    autoDeploy: true

@@ -51,3 +51,6 @@ scipy>=1.11.0
 librosa>=0.10.0
 soundfile>=0.12.1
 websockets>=12.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+a2wsgi>=1.10.0
