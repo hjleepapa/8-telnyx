@@ -6,8 +6,8 @@ services:
     region: oregon
     # Use the specific requirements file for hybrid setup
     buildCommand: pip install -r requirements-render.txt
-    # Start ASGI server using Uvicorn
-    startCommand: uvicorn asgi_main:api --host 0.0.0.0 --port $PORT --workers 1
+    # Start ASGI server using Uvicorn with standard asyncio loop for compatibility
+    startCommand: uvicorn asgi_main:api --host 0.0.0.0 --port $PORT --workers 1 --loop asyncio
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.0

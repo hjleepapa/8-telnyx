@@ -6,13 +6,9 @@ from a2wsgi import WSGIMiddleware
 # Add project root to sys.path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Import the existing Flask app factory
-from app import create_app
-
-# 1. Initialize the Flask application
-# Note: In the hybrid setup, we don't start the Flask-SocketIO eventlet loop directly here.
-# Flask will handle its standard HTTP routes via the a2wsgi bridge.
-flask_app = create_app()
+# Import the existing Flask app instance from app.py
+# This avoids calling create_app() twice since app.py calls it at the top level.
+from app import app as flask_app
 
 # 2. Initialize FastAPI (The Async Master)
 api = FastAPI(

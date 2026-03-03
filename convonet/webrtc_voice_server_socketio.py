@@ -23,8 +23,9 @@ import requests
 try:
     import nest_asyncio
     nest_asyncio.apply()
-except ImportError:
-    pass  # nest_asyncio not available, may cause issues with eventlet
+except (ImportError, ValueError):
+    # nest_asyncio not available or loop type not supported (e.g. uvloop)
+    pass
 # Note: OpenAI import removed - using Claude LLM and Deepgram TTS
 from convonet.assistant_graph_todo import get_agent
 from convonet.state import AgentState
