@@ -523,7 +523,7 @@ LiveKit SFU → Browser playback
             } catch (e) {
                 console.warn('⚠️ Error stopping processing audio object:', e);
             }
-            
+
             try {
                 const audioElem = document.getElementById('processingAudio');
                 if (audioElem) {
@@ -533,7 +533,7 @@ LiveKit SFU → Browser playback
             } catch (e) {
                 console.warn('⚠️ Error stopping audio element:', e);
             }
-            
+
             stopTimer();
         }
 
@@ -1113,7 +1113,7 @@ LiveKit SFU → Browser playback
 
         function initSocket() {
             socket = io('/voice', {
-                transports: ['websocket', 'polling'],
+                transports: ['polling'],
                 reconnection: true,
                 reconnectionDelay: 1000,
                 reconnectionAttempts: 5

@@ -90,17 +90,15 @@ def create_app():
     # Initialize Socket.IO for WebRTC voice
     # Use 'eventlet' for production (Gunicorn with eventlet worker)
     # Use 'threading' for local development without gunicorn
-    # Detect if we're running under eventlet or ASGI
+    # Detect if we're running under eventlet
     import sys
     if 'eventlet' in sys.modules and hasattr(sys.modules['eventlet'], 'monkey_patch'):
         async_mode = 'eventlet'
-    elif os.environ.get('RENDER') or 'uvicorn' in sys.modules:
-        # In the hybrid FastAPI setup, we use the ASGI wrapper
-        async_mode = 'asgi'
     else:
+        # Standard bridge uses threading for local and ASGI long-polling fallback
         async_mode = 'threading'
     print(f"🔌 SocketIO async_mode: {async_mode}")
-    socketio = SocketIO(app, cors_allowed_origins="*", async_mode=async_mode, manage_session=False, logger=True, engineio_logger=True)
+    socketio = SocketIO(app, cors_allowed_origins="*", async_mode=async_mode, manage_session=False)
 
     # --- Register Blueprints ---
     # Import and register blueprints after all extensions are fully configured.

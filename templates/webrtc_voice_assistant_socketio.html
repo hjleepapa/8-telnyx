@@ -325,7 +325,7 @@
 
             try {
                 socket = io('/voice', {
-                    transports: ['websocket', 'polling'],
+                    transports: ['polling'],
                     reconnection: true,
                     reconnectionDelay: 1000,
                     reconnectionAttempts: 5
