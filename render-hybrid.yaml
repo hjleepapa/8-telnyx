@@ -16,6 +16,7 @@ services:
       - key: DB_URI
         sync: false
       - key: ANTHROPIC_API_KEY
+        sync: false
       - key: DEEPGRAM_API_KEY
         sync: false
       - key: TAVILY_API_KEY
