@@ -2,27 +2,60 @@
   "mcpServers": {
     "db": {
       "command": "python",
-      "args": ["convonet/mcps/local_servers/db_todo.py"],
+      "args": [
+        "convonet/mcps/local_servers/db_todo.py"
+      ],
       "transport": "stdio",
-      "env": {"DB_URI": "${DB_URI}", "PYTHONPATH": "."}
+      "env": {
+        "DB_URI": "${DB_URI}",
+        "PYTHONPATH": "."
+      }
     },
     "mortgage": {
       "command": "python",
-      "args": ["convonet/mcps/local_servers/db_mortgage.py"],
+      "args": [
+        "convonet/mcps/local_servers/db_mortgage.py"
+      ],
       "transport": "stdio",
-      "env": {"DB_URI": "${DB_URI}", "PYTHONPATH": "."}
+      "env": {
+        "DB_URI": "${DB_URI}",
+        "PYTHONPATH": "."
+      }
     },
     "healthcare": {
       "command": "python",
-      "args": ["convonet/mcps/local_servers/db_healthcare_payer.py"],
+      "args": [
+        "convonet/mcps/local_servers/db_healthcare_payer.py"
+      ],
       "transport": "stdio",
-      "env": {"DB_URI": "${DB_URI}", "PYTHONPATH": "."}
+      "env": {
+        "DB_URI": "${DB_URI}",
+        "PYTHONPATH": "."
+      }
     },
     "tavily": {
       "command": "python",
-      "args": ["convonet/mcps/local_servers/db_tavily.py"],
+      "args": [
+        "convonet/mcps/local_servers/db_tavily.py"
+      ],
       "transport": "stdio",
-      "env": {"TAVILY_API_KEY": "${TAVILY_API_KEY}", "PYTHONPATH": "."}
+      "env": {
+        "TAVILY_API_KEY": "${TAVILY_API_KEY}",
+        "PYTHONPATH": "."
+      }
+    },
+    "suitecrm": {
+      "command": "python",
+      "args": [
+        "convonet/mcps/local_servers/db_suitecrm.py"
+      ],
+      "transport": "stdio",
+      "env": {
+        "SUITECRM_BASE_URL": "${SUITECRM_BASE_URL}",
+        "SUITECRM_CLIENT_ID": "${SUITECRM_CLIENT_ID}",
+        "SUITECRM_CLIENT_SECRET": "${SUITECRM_CLIENT_SECRET}",
+        "PYTHONPATH": "."
+      }
     }
   }
 }
