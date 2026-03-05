@@ -2279,13 +2279,10 @@ def init_socketio(socketio_instance: SocketIO, app):
                                 sentry_capture_redis_operation("update_session", session_id, True)
                                 sentry_capture_voice_event("authentication_success", session_id, str(user.id), {"user_name": user.first_name, "storage": "redis", "re_authentication": was_already_authenticated, "is_healthcare": is_healthcare})
                                 
-                                # Set sticky healthcare context in Redis if they are a patient
+                                # Set healthcare flag in session data, but don't force sticky agent_type context immediately.
+                                # Let intent detection handle the switch to HealthcareAgent when needed.
                                 if is_healthcare:
-                                    try:
-                                        redis_manager.redis_client.setex(f"agent_type:{user.id}", 1800, "healthcare")
-                                        print(f"🏥 Set sticky healthcare context for user {user.id}")
-                                    except Exception as context_error:
-                                        print(f"⚠️ Error setting healthcare context: {context_error}")
+                                    print(f"🏥 Healthcare membership noted for user {user.id}, but keeping neutral context until intent detected.")
                                 
                                 # Check for pending responses for this user
                                 try:
@@ -3356,10 +3353,8 @@ def init_socketio(socketio_instance: SocketIO, app):
                     user_id = session_data.get('user_id') if session_data else None
                     is_healthcare = str(session_data.get('is_healthcare', 'False')).lower() == 'true' if session_data else False
                     
-                    if is_healthcare:
-                        welcome_text = f"Hello {user_name}. I'm your healthcare assistant. I can help you with appointments, triage, and managing your medical records. How are you feeling today?"
-                    else:
-                        welcome_text = f"Welcome back, {user_name}! I'm your Convonet productivity assistant. How can I help you today?"
+                    # Generate a neutral welcome message (intent-based agents will handle specific topics later)
+                    welcome_text = f"Welcome back, {user_name}! I'm your Convonet assistant. How can I help you today?"
                     
                     # Use user's TTS provider preference (same as agent responses)
                     tts_provider = _get_tts_provider_for_user(user_id)
