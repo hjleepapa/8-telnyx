@@ -4656,11 +4656,12 @@ def init_socketio(socketio_instance: SocketIO, app):
                                     try:
                                         import json
                                         pending_response = {
-                                            'text': agent_response,
+                                            'text': None,  # Don't duplicate text in HTTP fallback; client already has it from the WebSocket event
                                             'audio': '',  # Don't store huge audio in Redis
                                             'is_streaming': is_streaming if 'is_streaming' in locals() else False,
                                             'created_at': time.time(),
-                                            'original_session_id': session_id
+                                            'original_session_id': session_id,
+                                            'reason': 'large_audio_fallback'
                                         }
                                         redis_key = f"pending_response:{user_id}"
                                         if redis_manager.is_available():
