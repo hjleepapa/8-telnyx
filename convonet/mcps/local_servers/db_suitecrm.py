@@ -17,11 +17,22 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
+# Log SuiteCRM env status at startup (helps debug Render/MCP issues)
+def _log_suitecrm_env():
+    vars_needed = ["SUITECRM_BASE_URL", "SUITECRM_CLIENT_ID", "SUITECRM_CLIENT_SECRET", "SUITECRM_USERNAME", "SUITECRM_PASSWORD"]
+    missing = [v for v in vars_needed if not os.getenv(v)]
+    if missing:
+        logger.warning(f"⚠️ SuiteCRM MCP: Missing env vars: {missing}. Add to Render Dashboard > Environment.")
+    else:
+        base = os.getenv("SUITECRM_BASE_URL", "")[:30]
+        logger.info(f"✅ SuiteCRM MCP: All env vars set (base_url={base}...)")
+
 # Initialize FastMCP server
 mcp = FastMCP("SuiteCRM Healthcare MCP Server")
 
 # Initialize SuiteCRM Client
 client = SuiteCRMClient()
+_log_suitecrm_env()
 
 @mcp.tool()
 def check_patient_exists(phone: str) -> Dict[str, Any]:

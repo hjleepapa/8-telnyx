@@ -8,6 +8,7 @@ import json
 import os
 import logging
 import time
+import requests
 import sentry_sdk
 
 # Apply nest_asyncio to allow nested event loops (needed for eventlet compatibility)
@@ -763,6 +764,60 @@ def process_audio_webhook():
 # WebSocket server is now handled by a separate process
 # See websocket_server.py for the Twilio voice streaming implementation
 
+# --- Debug: SuiteCRM connectivity (for Render) ---
+@convonet_todo_bp.route('/debug/suitecrm-connection', methods=['GET'])
+def debug_suitecrm_connection():
+    """
+    Test connectivity from this server (e.g. Render) to SuiteCRM at 34.9.14.57.
+    Visit: https://your-app.onrender.com/convonet_todo/debug/suitecrm-connection
+    """
+    base_url = os.getenv("SUITECRM_BASE_URL", "http://34.9.14.57").rstrip("/")
+    result = {
+        "env_vars": {
+            "SUITECRM_BASE_URL": "SET" if os.getenv("SUITECRM_BASE_URL") else "NOT SET",
+            "SUITECRM_CLIENT_ID": "SET" if os.getenv("SUITECRM_CLIENT_ID") else "NOT SET",
+            "SUITECRM_CLIENT_SECRET": "SET" if os.getenv("SUITECRM_CLIENT_SECRET") else "NOT SET",
+            "SUITECRM_USERNAME": "SET" if os.getenv("SUITECRM_USERNAME") else "NOT SET",
+            "SUITECRM_PASSWORD": "SET" if os.getenv("SUITECRM_PASSWORD") else "NOT SET",
+        },
+        "reachable": None,
+        "auth_ok": None,
+        "error": None,
+    }
+    # 1. Test if we can reach the host
+    try:
+        r = requests.get(base_url, timeout=5)
+        result["reachable"] = True
+        result["reach_status"] = r.status_code
+    except requests.exceptions.Timeout:
+        result["reachable"] = False
+        result["error"] = "Connection timeout - SuiteCRM may be unreachable from Render (firewall/private IP?)"
+        return jsonify(result), 200
+    except requests.exceptions.ConnectionError as e:
+        result["reachable"] = False
+        result["error"] = f"Connection failed: {str(e)[:200]}"
+        return jsonify(result), 200
+    except Exception as e:
+        result["reachable"] = False
+        result["error"] = str(e)[:200]
+        return jsonify(result), 200
+    # 2. Test auth (only if env vars look set)
+    if not all(os.getenv(k) for k in ["SUITECRM_CLIENT_ID", "SUITECRM_CLIENT_SECRET", "SUITECRM_USERNAME", "SUITECRM_PASSWORD"]):
+        result["auth_ok"] = False
+        result["error"] = (result.get("error") or "") + " Missing SUITECRM_* env vars in Render Dashboard."
+        return jsonify(result), 200
+    try:
+        from convonet.services.suitecrm_client import SuiteCRMClient
+        client = SuiteCRMClient()
+        result["auth_ok"] = client.authenticate()
+        if not result["auth_ok"] and hasattr(client, "_last_auth_error"):
+            result["auth_error"] = getattr(client, "_last_auth_error", "")[:300]
+    except Exception as e:
+        result["auth_ok"] = False
+        result["auth_error"] = str(e)[:300]
+    return jsonify(result), 200
+
+
 # --- Web/API Routes ---
 @convonet_todo_bp.route('/')
 def index():
@@ -1018,14 +1073,25 @@ async def _preload_mcp_tools():
                         for env_key, env_value in server_config["env"].items():
                             if isinstance(env_value, str) and env_value.startswith("${") and env_value.endswith("}"):
                                 env_var_name = env_value[2:-1]
-                                env_var_value = os.getenv(env_var_name)
+                                env_var_value = os.getenv(env_var_name) or base_env.get(env_var_name)
                                 if env_var_value:
                                     base_env[env_key] = env_var_value
-                                    print(f"🔧 MCP config: Set {env_key}={env_var_name} from environment")
+                                    if "SUITECRM" in env_key:
+                                        print(f"🔧 MCP config: {env_key} set from environment", flush=True)
                                 else:
-                                    print(f"⚠️  MCP config: Environment variable {env_var_name} not found")
+                                    if "SUITECRM" in env_key:
+                                        print(f"⚠️  MCP config: {env_var_name} NOT SET - SuiteCRM tools will fail. Add to Render Dashboard > Environment.", flush=True)
+                                    else:
+                                        print(f"⚠️  MCP config: Environment variable {env_var_name} not found", flush=True)
                             else:
                                 base_env[env_key] = env_value
+                    # Defensive: for suitecrm, explicitly ensure SUITECRM_* from os.environ
+                    if server_name == "suitecrm":
+                        for k in ("SUITECRM_BASE_URL", "SUITECRM_CLIENT_ID", "SUITECRM_CLIENT_SECRET", "SUITECRM_USERNAME", "SUITECRM_PASSWORD"):
+                            v = os.environ.get(k)
+                            if v and (not base_env.get(k) or base_env.get(k) == "${" + k + "}"):
+                                base_env[k] = v
+                                print(f"🔧 MCP suitecrm: {k} explicitly set from os.environ", flush=True)
                     server_config["env"] = base_env
                 
                 # Initialize MCP client
@@ -1233,14 +1299,25 @@ async def _get_agent_graph(
                 for env_key, env_value in server_config["env"].items():
                     if isinstance(env_value, str) and env_value.startswith("${") and env_value.endswith("}"):
                         env_var_name = env_value[2:-1]
-                        env_var_value = os.getenv(env_var_name)
+                        env_var_value = os.getenv(env_var_name) or base_env.get(env_var_name)
                         if env_var_value:
                             base_env[env_key] = env_var_value
-                            print(f"🔧 MCP config: Set {env_key}={env_var_name} from environment")
+                            if "SUITECRM" in env_key:
+                                print(f"🔧 MCP config: {env_key} set from environment", flush=True)
                         else:
-                            print(f"⚠️  MCP config: Environment variable {env_var_name} not found")
+                            if "SUITECRM" in env_key:
+                                print(f"⚠️  MCP config: {env_var_name} NOT SET - SuiteCRM tools will fail. Add to Render Dashboard > Environment.", flush=True)
+                            else:
+                                print(f"⚠️  MCP config: Environment variable {env_var_name} not found", flush=True)
                     else:
                         base_env[env_key] = env_value
+            # Defensive: for suitecrm, explicitly ensure SUITECRM_* from os.environ (Render may set them after config load)
+            if server_name == "suitecrm":
+                for k in ("SUITECRM_BASE_URL", "SUITECRM_CLIENT_ID", "SUITECRM_CLIENT_SECRET", "SUITECRM_USERNAME", "SUITECRM_PASSWORD"):
+                    v = os.environ.get(k)
+                    if v and (not base_env.get(k) or base_env.get(k) == "${" + k + "}"):
+                        base_env[k] = v
+                        print(f"🔧 MCP suitecrm: {k} explicitly set from os.environ", flush=True)
             server_config["env"] = base_env
         
         # Initialize tools list to avoid UnboundLocalError

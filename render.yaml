@@ -76,6 +76,17 @@ services:
       # Sentry Configuration (Optional)
       - key: SENTRY_DSN
         sync: false
+      # SuiteCRM (doctor appointments)
+      - key: SUITECRM_BASE_URL
+        sync: false
+      - key: SUITECRM_CLIENT_ID
+        sync: false
+      - key: SUITECRM_CLIENT_SECRET
+        sync: false
+      - key: SUITECRM_USERNAME
+        sync: false
+      - key: SUITECRM_PASSWORD
+        sync: false
     healthCheckPath: /
     autoDeploy: true
 

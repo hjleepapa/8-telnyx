@@ -3,58 +3,115 @@ import os
 import logging
 import time
 from typing import Optional, Dict, Any, List
+from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
+# SuiteCRM docs say "Scopes haven't implemented yet" - omit scope to avoid invalid_scope errors
 class SuiteCRMClient:
     """
     SuiteCRM 8 REST API Client (V8)
     Documentation: https://docs.suitecrm.com/developer/api/version-8/
     """
     def __init__(self, base_url: Optional[str] = None):
-        # Use provided URL or default from user request
+        # Use provided URL or default (SuiteCRM at 34.9.14.57)
         self.base_url = (base_url or os.getenv("SUITECRM_BASE_URL", "http://34.9.14.57")).rstrip('/')
         self.api_url = f"{self.base_url}/Api/V8"
-        self.token_url = f"{self.base_url}/Api/access_token"
+        # Multiple token paths - SuiteCRM versions vary (7.10 vs 8.x)
+        self.token_urls = [
+            f"{self.base_url}/Api/access_token",
+            f"{self.base_url}/api/oauth/access_token",
+            f"{self.base_url}/legacy/Api/access_token",
+        ]
         
         self.client_id = os.getenv("SUITECRM_CLIENT_ID")
         self.client_secret = os.getenv("SUITECRM_CLIENT_SECRET")
+        self.username = os.getenv("SUITECRM_USERNAME")
+        self.password = os.getenv("SUITECRM_PASSWORD")
         
         self.token = None
         self.token_expires_at = 0
+        self._last_auth_error: Optional[str] = None
 
     def authenticate(self) -> bool:
         """
-        Fetch OAuth2 token using client_credentials grant type.
+        Fetch OAuth2 token using client_credentials or password grant type.
+        Tries JSON body (per SuiteCRM docs) and form-urlencoded (fallback).
+        Requires RSA keys (private.key, public.key) in SuiteCRM lib/API/OAuth2/
         """
         if self.token and time.time() < self.token_expires_at - 60:
             return True
 
-        if not self.client_id or not self.client_secret:
-            logger.error("❌ SuiteCRM credentials not configured (SUITECRM_CLIENT_ID/SECRET)")
+        if not self.client_id or not self.client_secret or self.client_id == "YOUR_CLIENT_ID":
+            missing = [k for k, v in [
+                ("SUITECRM_CLIENT_ID", self.client_id),
+                ("SUITECRM_CLIENT_SECRET", self.client_secret),
+                ("SUITECRM_USERNAME", self.username),
+                ("SUITECRM_PASSWORD", self.password),
+            ] if not v or v == "YOUR_CLIENT_ID"]
+            self._last_auth_error = f"Missing credentials: {missing}. Set SUITECRM_* in Render Dashboard > Environment."
+            logger.error(f"❌ SuiteCRM credentials not configured. Missing/empty: {missing}. Ensure these are set in Render env (or .env for local).")
             return False
 
-        payload = {
-            "grant_type": "client_credentials",
-            "client_id": self.client_id,
-            "client_secret": self.client_secret
+        # Prefer password grant if username/password provided, else client_credentials
+        if self.username and self.password:
+            payload = {
+                "grant_type": "password",
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+                "username": self.username,
+                "password": self.password,
+            }
+        else:
+            payload = {
+                "grant_type": "client_credentials",
+                "client_id": self.client_id,
+                "client_secret": self.client_secret,
+            }
+
+        auth_headers = {
+            "Content-Type": "application/vnd.api+json",
+            "Accept": "application/json",
         }
 
-        try:
-            logger.info(f"🔑 Authenticating with SuiteCRM at {self.token_url}")
-            response = requests.post(self.token_url, json=payload, timeout=10)
-            response.raise_for_status()
-            
-            data = response.json()
-            self.token = data.get("access_token")
-            expires_in = data.get("expires_in", 3600)
-            self.token_expires_at = time.time() + expires_in
-            
-            logger.info("✅ SuiteCRM authentication successful")
-            return True
-        except Exception as e:
-            logger.error(f"❌ SuiteCRM authentication failed: {e}")
-            return False
+        last_error = None
+        for token_url in self.token_urls:
+            for use_json in [True, False]:  # Try JSON first (per docs), then form
+                try:
+                    logger.info(f"🔑 Authenticating with SuiteCRM ({payload['grant_type']}) at {token_url} (json={use_json})")
+                    if use_json:
+                        resp = requests.post(token_url, json=payload, headers=auth_headers, timeout=10)
+                    else:
+                        resp = requests.post(token_url, data=payload, timeout=10)
+                    
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        self.token = data.get("access_token")
+                        expires_in = data.get("expires_in", 3600)
+                        self.token_expires_at = time.time() + expires_in
+                        logger.info("✅ SuiteCRM authentication successful")
+                        return True
+                    
+                    last_error = f"{resp.status_code}: {resp.text[:500]}"
+                    # Log full response for 500 (often RSA key issues) and 401
+                    if resp.status_code == 500:
+                        logger.error(f"❌ SuiteCRM Auth 500 - Often caused by missing RSA keys. Full response: {resp.text[:800]}")
+                        if "key" in resp.text.lower() or "path" in resp.text.lower():
+                            logger.error("💡 RSA keys may be missing. On SuiteCRM server: cd lib/API/OAuth2 && openssl genrsa -out private.key 1024 && openssl rsa -in private.key -pubout -out public.key")
+                    elif resp.status_code == 401:
+                        logger.error(f"❌ SuiteCRM Auth 401: {resp.text[:300]}")
+                    elif resp.status_code not in [404]:
+                        logger.error(f"❌ SuiteCRM Auth Failed: {last_error}")
+                        break
+                except Exception as e:
+                    last_error = str(e)
+                    logger.warning(f"⚠️ Auth attempt failed: {e}")
+                    continue
+
+        self._last_auth_error = last_error
+        logger.error(f"❌ SuiteCRM authentication failed after all attempts. Last: {last_error}")
+        logger.error("💡 Check: 1) RSA keys in SuiteCRM lib/API/OAuth2/ (private.key, public.key) 2) OAuth2 client secret matches 3) Username/password valid. See docs/SUITECRM_INTEGRATION.md")
+        return False
 
     def _get_headers(self) -> Dict[str, str]:
         return {
@@ -66,7 +123,8 @@ class SuiteCRMClient:
     def _make_request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
         """Helper to make authenticated requests with auto-retry on auth failure"""
         if not self.authenticate():
-            return {"success": False, "error": "Authentication failed"}
+            detail = getattr(self, "_last_auth_error", None) or "Check SUITECRM_* env vars in Render Dashboard"
+            return {"success": False, "error": f"Authentication failed: {detail}"}
 
         url = f"{self.api_url}/{endpoint.lstrip('/')}"
         
@@ -97,8 +155,8 @@ class SuiteCRMClient:
         """
         Search for a patient by mobile phone number in the Contacts module.
         """
-        # SuiteCRM 8 filter syntax: filter[<field>]=<value>
-        endpoint = f"module/Contacts?filter[phone_mobile]={phone}"
+        # SuiteCRM 8 filter syntax: filter[field][eq]=value (field must be array/operator format)
+        endpoint = f"module/Contacts?filter[phone_mobile][eq]={quote(phone)}"
         result = self._make_request("GET", endpoint)
         
         if result["success"]:

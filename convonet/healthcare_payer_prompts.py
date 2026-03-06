@@ -141,6 +141,7 @@ User: "I need a cardiologist"
 → STEP 2: use get_provider_details() for top results
 → STEP 3: Explain network tier if applicable (Tier 1 vs Tier 2)
 → STEP 4: use get_copay_info() to explain cost at each tier
+→ STEP 5: Proactively offer to book an appointment with one of the found providers
 
 SCENARIO 5: Patient Triage and Intake
 User: "I have a severe headache and nausea"
