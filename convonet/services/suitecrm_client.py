@@ -204,40 +204,51 @@ class SuiteCRMClient:
         """
         Schedule an appointment (Meeting) and relate it to a Contact.
         date_start should be in ISO format (YYYY-MM-DD HH:MM:SS)
+        SuiteCRM POST module only accepts attributes, id, type - not relationships.
+        So we create the Meeting first, then add the Contact relationship in a separate call.
         """
+        # Step 1: Create Meeting (attributes only - API rejects relationships)
         payload = {
             "data": {
                 "type": "Meetings",
                 "attributes": {
                     "name": subject,
                     "date_start": date_start,
-                    "duration_minutes": duration_minutes,
+                    "duration_hours": "0",
+                    "duration_minutes": str(duration_minutes),
                     "status": "Planned"
-                },
-                "relationships": {
-                    "contacts": {
-                        "data": {
-                            "type": "Contacts",
-                            "id": patient_id
-                        }
-                    }
                 }
             }
         }
-        
         result = self._make_request("POST", "module", json=payload)
-        if result["success"]:
-            meeting = result["data"].get("data", {})
-            return {
-                "success": True,
-                "meeting_id": meeting.get("id"),
-                "status": "booked"
-            }
-        return result
+        if not result["success"]:
+            return result
+
+        meeting = result["data"].get("data", {})
+        meeting_id = meeting.get("id")
+        if not meeting_id:
+            return {"success": False, "error": "Meeting created but no ID returned"}
+
+        # Step 2: Add Contact relationship (POST module/Meetings/{id}/relationships/contacts)
+        rel_payload = {"data": {"type": "Contacts", "id": patient_id}}
+        rel_result = self._make_request(
+            "POST",
+            f"module/Meetings/{meeting_id}/relationships/contacts",
+            json=rel_payload
+        )
+        if not rel_result["success"]:
+            # Meeting created but relationship failed - still return success with meeting_id
+            logger.warning(f"Meeting {meeting_id} created but link to contact {patient_id} failed: {rel_result.get('error')}")
+        return {
+            "success": True,
+            "meeting_id": meeting_id,
+            "status": "booked"
+        }
 
     def create_case(self, patient_id: str, subject: str, description: str, priority: str = "P3") -> Dict[str, Any]:
         """
         Create a Case for a medical issue or triage.
+        API rejects relationships in POST - create Case first, then link Contact.
         """
         payload = {
             "data": {
@@ -247,30 +258,26 @@ class SuiteCRMClient:
                     "description": description,
                     "priority": priority,
                     "status": "New"
-                },
-                "relationships": {
-                    "contacts": {
-                        "data": {
-                            "type": "Contacts",
-                            "id": patient_id
-                        }
-                    }
                 }
             }
         }
-        
         result = self._make_request("POST", "module", json=payload)
-        if result["success"]:
-            case = result["data"].get("data", {})
-            return {
-                "success": True,
-                "case_id": case.get("id")
-            }
-        return result
+        if not result["success"]:
+            return result
+        case = result["data"].get("data", {})
+        case_id = case.get("id")
+        if not case_id:
+            return {"success": False, "error": "Case created but no ID returned"}
+        rel_payload = {"data": {"type": "Contacts", "id": patient_id}}
+        rel_result = self._make_request("POST", f"module/Cases/{case_id}/relationships/contacts", json=rel_payload)
+        if not rel_result["success"]:
+            logger.warning(f"Case {case_id} created but link to contact {patient_id} failed")
+        return {"success": True, "case_id": case_id}
 
     def create_note(self, patient_id: str, subject: str, content: str) -> Dict[str, Any]:
         """
         Create a Note for call summaries or doctor notes.
+        API rejects relationships in POST - create Note first, then link Contact.
         """
         payload = {
             "data": {
@@ -278,23 +285,18 @@ class SuiteCRMClient:
                 "attributes": {
                     "name": subject,
                     "description": content
-                },
-                "relationships": {
-                    "contacts": {
-                        "data": {
-                            "type": "Contacts",
-                            "id": patient_id
-                        }
-                    }
                 }
             }
         }
-        
         result = self._make_request("POST", "module", json=payload)
-        if result["success"]:
-            note = result["data"].get("data", {})
-            return {
-                "success": True,
-                "note_id": note.get("id")
-            }
-        return result
+        if not result["success"]:
+            return result
+        note = result["data"].get("data", {})
+        note_id = note.get("id")
+        if not note_id:
+            return {"success": False, "error": "Note created but no ID returned"}
+        rel_payload = {"data": {"type": "Contacts", "id": patient_id}}
+        rel_result = self._make_request("POST", f"module/Notes/{note_id}/relationships/contacts", json=rel_payload)
+        if not rel_result["success"]:
+            logger.warning(f"Note {note_id} created but link to contact {patient_id} failed")
+        return {"success": True, "note_id": note_id}
