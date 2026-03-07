@@ -138,6 +138,13 @@ Restores audio stream
 GET /call-center/api/customer/<customer_id>
 ```
 
+**Voice assistant → extension 2001 (SuiteCRM context):**  
+When a caller’s request is handled by the voice assistant and SuiteCRM creates cases, contacts, meetings (schedule), or notes, that context is shown in the call-center UI after transfer to extension 2001:
+
+1. **Caching on transfer:** The voice/WebRTC backend builds a customer profile (including `suitecrm_context`: Contact ID, Case ID, Appointment/Meeting ID, Note ID) and stores it in Redis under `callcenter:customer:{extension}` and, when available, `callcenter:customer:{extension}:{call_sid}` or `callcenter:customer:{extension}:{call_id}`.
+2. **Lookup when the call arrives:** The agent’s UI requests customer data with `extension` (e.g. 2001) and, when present, `call_sid` or `call_id`. The backend returns the cached profile (or falls back to SuiteCRM lookup by caller phone).
+3. **Display:** The customer popup shows a **“Voice Assistant Session (SuiteCRM)”** section with Contact ID, Appointment ID, Case ID, and Note ID so the agent can see what was created and open the records in SuiteCRM if needed.
+
 **Extensible Fields:**
 - Custom CRM fields
 - Product ownership

@@ -1174,10 +1174,10 @@ def build_customer_profile_from_session(session_data: dict | None) -> dict | Non
         return None
     
     profile = {
-        "customer_id": session_data.get('user_id') or session_data.get('user_name') or "convonet_caller",
+        "customer_id": session_data.get('user_id') or session_data.get('user_name') or session_data.get('caller_phone') or "convonet_caller",
         "name": session_data.get('user_name') or "Convonet Caller",
         "email": None,
-        "phone": None,
+        "phone": session_data.get('caller_phone') or session_data.get('from_number'),
         "account_status": "Active",
         "tier": "Standard",
         "notes": "Captured from Convonet voice assistant",
@@ -1332,11 +1332,48 @@ def build_customer_profile_from_session(session_data: dict | None) -> dict | Non
                                                 activity["title"] = f"Mortgage Application {result_data.get('application_id', '')[:8]}"
                                     except:
                                         pass
+                                elif any(x in tool_name.lower() for x in ['patient', 'appointment', 'clinical', 'call_summary', 'suitecrm']):
+                                    activity["activity_type"] = "suitecrm"
+                                    try:
+                                        if isinstance(tool_content, str):
+                                            result_data = json.loads(tool_content) if tool_content.startswith('{') else {}
+                                            if isinstance(result_data, dict):
+                                                if result_data.get('patient_id'):
+                                                    activity["patient_id"] = result_data["patient_id"]
+                                                if result_data.get('meeting_id'):
+                                                    activity["meeting_id"] = result_data["meeting_id"]
+                                                    activity["title"] = f"Appointment booked"
+                                                if result_data.get('case_id'):
+                                                    activity["case_id"] = result_data["case_id"]
+                                                    activity["title"] = activity.get("title") or "Case created"
+                                                if result_data.get('note_id'):
+                                                    activity["note_id"] = result_data["note_id"]
+                                                if result_data.get('found'):
+                                                    activity["title"] = "Patient found in system"
+                                                elif result_data.get('success') and tool_name.lower() == 'onboard_patient':
+                                                    activity["title"] = "New patient registered"
+                                    except Exception:
+                                        pass
                                 
                                 profile["activities"].append(activity)
                         
                         profile["conversation_history"] = conversation[-CALL_CENTER_MAX_CONVERSATION_MESSAGES:]
                         profile["activities"] = profile["activities"][-10:]  # Last 10 activities
+                        
+                        # Extract SuiteCRM context for call center display
+                        suitecrm = {}
+                        for a in profile["activities"]:
+                            if a.get("activity_type") == "suitecrm":
+                                if a.get("patient_id"):
+                                    suitecrm["patient_id"] = a["patient_id"]
+                                if a.get("meeting_id"):
+                                    suitecrm["meeting_id"] = a["meeting_id"]
+                                if a.get("case_id"):
+                                    suitecrm["case_id"] = a["case_id"]
+                                if a.get("note_id"):
+                                    suitecrm["note_id"] = a["note_id"]
+                        if suitecrm:
+                            profile["suitecrm_context"] = suitecrm
                         
                 except Exception as e:
                     print(f"⚠️ Unable to retrieve LangGraph conversation history: {e}")

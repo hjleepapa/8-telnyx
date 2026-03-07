@@ -354,28 +354,21 @@ def agent_status():
         'active_calls': [call.to_dict() for call in active_calls]
     })
 
-@call_center_bp.route('/api/customer/data', methods=['GET'])
-def get_customer_data():
+@call_center_bp.route('/api/customer/<customer_id>', methods=['GET'])
+def get_customer_by_id(customer_id):
     """
-    Get customer data for popup (prefer real data cached by the voice assistant).
-    
-    Accepts query parameters:
-    - extension: Agent extension (required)
-    - call_sid: Twilio Call SID (optional, for unique lookup)
-    - call_id: Call ID (optional, for WebRTC calls)
-    - customer_id: Fallback customer ID (optional)
+    Get customer/transfer context by customer_id (used by showCustomerPopup).
+    Same logic as get_customer_data - looks up Redis cache by extension + call_sid/call_id.
     """
-    from flask import request
-    
     extension = request.args.get('extension')
     call_sid = request.args.get('call_sid')
     call_id = request.args.get('call_id')
-    customer_id = request.args.get('customer_id')
-    
-    profile = None
+    return _fetch_customer_profile(extension=extension, call_sid=call_sid, call_id=call_id, customer_id=customer_id)
+
+
+def _fetch_customer_profile(extension=None, call_sid=None, call_id=None, customer_id=None):
+    """Shared logic to fetch customer profile from Redis cache."""
     agent_extension = None
-    
-    # Get agent extension from session if not provided
     if not extension:
         agent_id = session.get('agent_id')
         if agent_id:
@@ -383,61 +376,87 @@ def get_customer_data():
             if agent:
                 agent_extension = agent.sip_extension or agent.agent_id
                 extension = agent_extension
-    
+
+    profile = None
     if redis_manager and redis_manager.is_available():
         try:
             keys_to_try = []
-            
-            # Priority 1: Unique cache key with call_sid (if provided)
             if extension and call_sid:
                 keys_to_try.append(f"callcenter:customer:{extension}:{call_sid}")
-            
-            # Priority 2: Unique cache key with call_id (if provided)
             if extension and call_id:
                 keys_to_try.append(f"callcenter:customer:{extension}:{call_id}")
-            
-            # Priority 3: Extension-only key (backward compatibility, most recent call)
             if extension:
                 keys_to_try.append(f"callcenter:customer:{extension}")
-            
-            # Priority 4: Customer ID key (fallback)
             if customer_id:
                 keys_to_try.append(f"callcenter:customer:{customer_id}")
-            
-            # Priority 5: Agent extension key (if different from customer_id)
             if agent_extension and agent_extension != customer_id:
                 keys_to_try.append(f"callcenter:customer:{agent_extension}")
-            
-            cached = None
+
             for cache_key in keys_to_try:
                 cached = redis_manager.redis_client.get(cache_key)
                 if cached:
-                    print(f"✅ Found customer profile in cache: {cache_key}")
+                    profile = json.loads(cached)
                     break
-            
-            if cached:
-                profile = json.loads(cached)
         except Exception as e:
             print(f"⚠️ Failed to read customer cache: {e}")
-            import traceback
-            traceback.print_exc()
-    
+
     if profile:
+        # Optionally enrich with SuiteCRM data by phone (if we have phone but no suitecrm_context)
+        phone = profile.get('phone') or customer_id
+        if phone and (not profile.get('suitecrm_context') or not profile.get('suitecrm_context').get('patient_id')):
+            _enrich_profile_from_suitecrm(profile, phone)
         return jsonify(profile)
     
-    # Fallback mock data
-    return jsonify({
+    # No cached profile - try SuiteCRM lookup by caller number (customer_id)
+    fallback = {
         'customer_id': customer_id or 'unknown',
-        'name': 'John Doe',
-        'email': 'john.doe@example.com',
-        'phone': '+1234567890',
-        'account_status': 'Active',
-        'tier': 'Premium',
-        'last_contact': '2025-10-10',
-        'open_tickets': 2,
-        'lifetime_value': '$5,420',
-        'notes': 'Preferred contact method: Email',
+        'name': 'Unknown Caller',
+        'email': 'N/A',
+        'phone': customer_id or 'N/A',
+        'account_status': 'N/A',
+        'tier': 'N/A',
+        'last_contact': 'N/A',
+        'open_tickets': 0,
+        'lifetime_value': 'N/A',
+        'notes': 'No context from voice assistant. Call may not be from transfer.',
         'conversation_history': [],
         'activities': []
-    })
+    }
+    if customer_id and len(str(customer_id).replace('+', '').replace('-', '').replace(' ', '')) >= 10:
+        _enrich_profile_from_suitecrm(fallback, customer_id)
+    return jsonify(fallback)
+
+
+def _enrich_profile_from_suitecrm(profile, phone):
+    """Look up SuiteCRM contact by phone and add patient_id to profile."""
+    try:
+        from convonet.services.suitecrm_client import SuiteCRMClient
+        client = SuiteCRMClient()
+        if client.authenticate():
+            clean_phone = str(phone).replace('+', '').replace('-', '').replace(' ', '')
+            if len(clean_phone) >= 10:
+                result = client.search_patient(clean_phone)
+                if result.get('found') and result.get('patient_id'):
+                    if not profile.get('suitecrm_context'):
+                        profile['suitecrm_context'] = {}
+                    profile['suitecrm_context']['patient_id'] = result['patient_id']
+                    profile['suitecrm_context']['from_lookup'] = True
+                    attrs = result.get('attributes', {})
+                    if attrs and not profile.get('name') or profile.get('name') == 'Unknown Caller':
+                        profile['name'] = f"{attrs.get('first_name', '')} {attrs.get('last_name', '')}".strip() or profile.get('name')
+    except Exception:
+        pass  # SuiteCRM lookup is best-effort
+
+
+@call_center_bp.route('/api/customer/data', methods=['GET'])
+def get_customer_data():
+    """
+    Get customer data for popup (prefer real data cached by the voice assistant).
+    Accepts: extension, call_sid, call_id, customer_id (all optional query params).
+    """
+    extension = request.args.get('extension')
+    call_sid = request.args.get('call_sid')
+    call_id = request.args.get('call_id')
+    customer_id = request.args.get('customer_id')
+    return _fetch_customer_profile(extension=extension, call_sid=call_sid, call_id=call_id, customer_id=customer_id)
 

@@ -653,6 +653,8 @@ class CallCenterAgent {
         this.currentSession = session;
         this.activeCallSessionId = session.id;
         this.firstCallTimestamp = Date.now(); // Track when first call arrives for Dial leg detection
+        this.currentCallSid = incomingIdentity.twilioCallSid || null;
+        this.currentCallId = incomingIdentity.callId || session.id;
         this.currentCall = {
             call_id: callId,
             caller_number: callerNumber,
@@ -1180,11 +1182,14 @@ class CallCenterAgent {
         }
         
         try {
-            // Extract Call SID or Call-ID from current session for unique lookup
+            // Fetch customer profile (includes SuiteCRM context when call was transferred from voice assistant)
+            // Backend looks up Redis cache by extension + call_sid/call_id so transfer context is shown
             let url = `/call-center/api/customer/${customerId}`;
             const identity = this.currentSession ? this.extractSessionIdentity(this.currentSession) : null;
             const params = new URLSearchParams();
-            
+            if (this.agent && this.agent.sip_extension) {
+                params.append('extension', this.agent.sip_extension);
+            }
             if (identity) {
                 if (identity.twilioCallSid) {
                     params.append('call_sid', identity.twilioCallSid);
@@ -1192,12 +1197,10 @@ class CallCenterAgent {
                     params.append('call_id', identity.callId);
                 }
             }
-            
             if (params.toString()) {
                 url += '?' + params.toString();
             }
-            
-            console.log('Fetching customer data with unique identifier', { url, identity });
+            console.log('Fetching customer data (extension + identity for transfer context)', { url, identity });
             
             const response = await fetch(url);
             const customer = await response.json();
@@ -1295,6 +1298,23 @@ class CallCenterAgent {
                 </div>
             </div>
         `;
+        
+        // Build SuiteCRM section (Contact, Case, Appointment from voice assistant)
+        let suitecrmHtml = '';
+        if (customer.suitecrm_context && Object.keys(customer.suitecrm_context).length > 0) {
+            const sc = customer.suitecrm_context;
+            suitecrmHtml = `
+                <div class="customer-section">
+                    <h4><i class="fas fa-hospital"></i> Voice Assistant Session (SuiteCRM)</h4>
+                    <div class="suitecrm-context">
+                        ${sc.patient_id ? `<div class="customer-field"><label>Contact ID:</label><span>${sc.patient_id}</span></div>` : ''}
+                        ${sc.meeting_id ? `<div class="customer-field"><label>Appointment ID:</label><span>${sc.meeting_id}</span></div>` : ''}
+                        ${sc.case_id ? `<div class="customer-field"><label>Case ID:</label><span>${sc.case_id}</span></div>` : ''}
+                        ${sc.note_id ? `<div class="customer-field"><label>Note ID:</label><span>${sc.note_id}</span></div>` : ''}
+                    </div>
+                </div>
+            `;
+        }
         
         // Build activities section (calendar events, todos, etc.)
         let activitiesHtml = '';
@@ -1397,7 +1417,7 @@ class CallCenterAgent {
         }
         
         // Combine all sections
-        return customerInfoHtml + activitiesHtml + conversationHtml;
+        return customerInfoHtml + suitecrmHtml + activitiesHtml + conversationHtml;
     }
 
     showIncomingCall(callerName, callerNumber) {
