@@ -1541,8 +1541,11 @@ def initiate_agent_transfer(session_id: str, extension: str, department: str, re
         if agent_call.sid and session_data:
             cache_call_center_profile(extension, session_data, call_sid=agent_call.sid)
     except Exception as agent_error:
-        message = f"Failed to originate agent call: {agent_error}"
-        print(f"❌ {message}")
+        message = str(agent_error)
+        if "401" in message or "Authenticate" in message or "20003" in message:
+            print("❌ Twilio 401: Check TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN in Render Dashboard (Environment).")
+            print("   Get them from: https://console.twilio.com → Account Info. If you regenerated Auth Token, update it in Render.")
+        print(f"❌ Failed to originate agent call: {message}")
         response_details['error'] = message
         return False, response_details
 
