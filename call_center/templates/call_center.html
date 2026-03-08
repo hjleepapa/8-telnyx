@@ -223,9 +223,10 @@
         </div>
     </div>
 
-    <!-- Audio Elements -->
-    <audio id="ringTone" loop>
+    <!-- Audio Elements: ringtone (local or fallback URL to avoid 404) -->
+    <audio id="ringTone" loop preload="auto">
         <source src="{{ url_for('call_center.static', filename='audio/ringtone.mp3') }}" type="audio/mpeg">
+        <source src="https://assets.mixkit.co/active_storage/sfx/2869-ringtone-1-2869.mp3" type="audio/mpeg">
     </audio>
     <audio id="remoteAudio"></audio>
 

@@ -1543,8 +1543,10 @@ def initiate_agent_transfer(session_id: str, extension: str, department: str, re
     except Exception as agent_error:
         message = str(agent_error)
         if "401" in message or "Authenticate" in message or "20003" in message:
-            print("❌ Twilio 401: Check TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN in Render Dashboard (Environment).")
-            print("   Get them from: https://console.twilio.com → Account Info. If you regenerated Auth Token, update it in Render.")
+            print("❌ Twilio 401 (Invalid credentials): Render has TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN set, but Twilio rejected them.")
+            print("   Fix: Open https://console.twilio.com → Account Info. Copy Account SID and Auth Token (click Show).")
+            print("   In Render Dashboard → Your Service → Environment, set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN to those exact values (no spaces).")
+            print("   If you regenerated Auth Token in Twilio, the old one is invalid — update TWILIO_AUTH_TOKEN in Render with the new token.")
         print(f"❌ Failed to originate agent call: {message}")
         response_details['error'] = message
         return False, response_details
@@ -1971,6 +1973,19 @@ def init_socketio(socketio_instance: SocketIO, app):
             print(f"   ❌ LiveKit Initialization failed: {e}", flush=True)
     else:
         print(f"⚠️ LiveKit Config Skipped (One or more conditions failed)", flush=True)
+
+    # Twilio transfer config (call transfer to extension 2001)
+    _sid = os.getenv('TWILIO_ACCOUNT_SID')
+    _tok = os.getenv('TWILIO_AUTH_TOKEN')
+    _from = os.getenv('TWILIO_TRANSFER_CALLER_ID') or os.getenv('TWILIO_CALLER_ID') or os.getenv('TWILIO_PHONE_NUMBER')
+    if _sid and _tok and _from:
+        print(f"📞 Twilio transfer: SID set (AC...{_sid[-4:] if len(_sid) >= 4 else '?'}), From={_from}. If transfer gets 401, update TWILIO_AUTH_TOKEN in Render from https://console.twilio.com", flush=True)
+    else:
+        _miss = []
+        if not _sid: _miss.append('TWILIO_ACCOUNT_SID')
+        if not _tok: _miss.append('TWILIO_AUTH_TOKEN')
+        if not _from: _miss.append('TWILIO_TRANSFER_CALLER_ID or TWILIO_CALLER_ID or TWILIO_PHONE_NUMBER')
+        print(f"⚠️ Twilio transfer disabled: missing {', '.join(_miss)}. Set in Render Dashboard → Environment to enable call transfer to extension.", flush=True)
 
     # LiveKit idle timeout: disconnect rooms when inactive to reduce usage charges
     def _livekit_idle_checker_loop():

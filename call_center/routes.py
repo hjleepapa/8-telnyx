@@ -392,11 +392,18 @@ def _fetch_customer_profile(extension=None, call_sid=None, call_id=None, custome
             if agent_extension and agent_extension != customer_id:
                 keys_to_try.append(f"callcenter:customer:{agent_extension}")
 
+            hit_key = None
             for cache_key in keys_to_try:
                 cached = redis_manager.redis_client.get(cache_key)
                 if cached:
                     profile = json.loads(cached)
+                    hit_key = cache_key
                     break
+            if hit_key:
+                sc = (profile or {}).get('suitecrm_context') or {}
+                print(f"📋 Call center profile HIT: key={hit_key}, has_suitecrm_context={bool(sc)}, keys={list(sc.keys()) if sc else []}")
+            elif extension or customer_id:
+                print(f"📋 Call center profile MISS: tried extension={extension}, call_sid={call_sid}, call_id={call_id}, customer_id={customer_id}")
         except Exception as e:
             print(f"⚠️ Failed to read customer cache: {e}")
 

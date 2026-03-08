@@ -1193,7 +1193,8 @@ class CallCenterAgent {
             if (identity) {
                 if (identity.twilioCallSid) {
                     params.append('call_sid', identity.twilioCallSid);
-                } else if (identity.callId) {
+                }
+                if (identity.callId) {
                     params.append('call_id', identity.callId);
                 }
             }
@@ -1203,18 +1204,30 @@ class CallCenterAgent {
             console.log('Fetching customer data (extension + identity for transfer context)', { url, identity });
             
             const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`Customer data request failed: ${response.status}`);
+            }
             const customer = await response.json();
-            
+            const hasSuiteCrm = !!(customer && customer.suitecrm_context && Object.keys(customer.suitecrm_context).length > 0);
+            console.log('Customer data received (popup)', { hasSuiteCrm, keys: customer ? Object.keys(customer) : [] });
             this.displayCustomerData(customer);
+            if (!this.customerData.innerHTML || this.customerData.innerHTML.includes('Loading customer data')) {
+                console.warn('Popup content may not have updated; customerData ref ok:', !!this.customerData);
+            }
         } catch (error) {
             console.error('Fetch customer data error:', error);
             this.customerData.innerHTML = '<div class="customer-info"><p>Failed to load customer data</p></div>';
         }
     }
     
-    displayCustomerData(customer) {
+    displayCustomerData(customer, targetElement = null) {
         const html = this.getCustomerDataHtml(customer);
-        this.customerData.innerHTML = html;
+        const el = targetElement || this.customerData;
+        if (el) {
+            el.innerHTML = html;
+        } else {
+            console.error('displayCustomerData: target element is null', { hasTargetArg: !!targetElement });
+        }
     }
 
     escapeHtml(text) {
@@ -1253,6 +1266,9 @@ class CallCenterAgent {
     }
 
     getCustomerDataHtml(customer) {
+        if (!customer || typeof customer !== 'object') {
+            return '<div class="customer-info"><p>No customer data available</p></div>';
+        }
         // Build customer info section
         let customerInfoHtml = `
             <div class="customer-info">
