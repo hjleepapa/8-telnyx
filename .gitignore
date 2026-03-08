@@ -20,6 +20,8 @@ recordings/
 *.m4a
 # Exception: processing hold music for voice assistant
 !static/assets/audio/processing.mp3
+# Exception: call center incoming-call ringtone
+!call_center/static/audio/ringtone.mp3
 
 # Node
 node_modules/
