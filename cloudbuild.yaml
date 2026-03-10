@@ -1,0 +1,32 @@
+# cloudbuild.yaml
+steps:
+  # 1. Build the gateway service
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['build', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/voice-gateway-service:$COMMIT_SHA', '-f', 'docker/voice-gateway.Dockerfile', '.']
+
+  # 2. Push the gateway service to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/voice-gateway-service:$COMMIT_SHA']
+
+  # 3. Deploy the gateway service to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'deploy'
+      - 'voice-gateway-service'
+      - '--image'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/voice-gateway-service:$COMMIT_SHA'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+
+# Add similar steps for other services as they are implemented
+
+images:
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/voice-gateway-service:$COMMIT_SHA'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
