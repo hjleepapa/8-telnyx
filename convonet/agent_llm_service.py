@@ -45,10 +45,8 @@ class ProviderUpdate(BaseModel):
 async def health_check():
     return {"status": "ok", "service": "agent-llm-service"}
 
-@api_router.post("/api/agent/process", response_model=AgentResponse)
-async def process_agent(request: AgentRequest):
+async def _process_agent_impl(request: AgentRequest) -> AgentResponse:
     logger.info(f"Processing agent request for user {request.user_id} (session: {request.session_id})")
-    
     start_time = time.time()
     try:
         result = await _run_agent_async(
@@ -61,27 +59,32 @@ async def process_agent(request: AgentRequest):
             metadata=request.metadata,
             include_metadata=True
         )
-        
         elapsed_ms = (time.time() - start_time) * 1000
-        
         if isinstance(result, dict):
             return AgentResponse(
                 response=result.get("response", ""),
                 transfer_marker=result.get("transfer_marker"),
                 processing_time_ms=elapsed_ms
             )
-        else:
-            return AgentResponse(
-                response=result,
-                transfer_marker=None,
-                processing_time_ms=elapsed_ms
-            )
-        
+        return AgentResponse(
+            response=result,
+            transfer_marker=None,
+            processing_time_ms=elapsed_ms
+        )
     except Exception as e:
         logger.error(f"Error processing agent request: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# --- Provider Management APIs (Migrated from Monolith) ---
+# Top-level route for voice-gateway and other callers (expect /agent/process)
+@app.post("/agent/process", response_model=AgentResponse)
+async def process_agent(request: AgentRequest):
+    return await _process_agent_impl(request)
+
+# --- Provider Management APIs (under /convonet_todo) ---
+
+@api_router.post("/api/agent/process", response_model=AgentResponse)
+async def process_agent_router(request: AgentRequest):
+    return await _process_agent_impl(request)
 
 @api_router.get("/api/llm-providers")
 async def get_llm_providers():
