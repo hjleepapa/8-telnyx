@@ -100,6 +100,15 @@ Twilio routes **are** implemented in `voice_gateway_service.py`: `POST /twilio/c
 - **LangGraph path:** `_run_agent_async()` in `convonet/routes.py` (lines ~1722+) uses `_get_agent_graph()` and invokes the graph; supports Gemini streaming via `stream_gemini_with_tools` from `convonet/gemini_streaming.py`.
 - **To complete the service:** Import and call `_run_agent_async` (or a refactored async entry point that uses `get_agent()` / `stream_gemini_with_tools`), then map the string (and any transfer marker) to `AgentResponse`.
 
+### 3.2 Intent-based agent selection (todo vs mortgage vs healthcare)
+
+The agent **type** (and thus which tools run) is chosen from the **prompt text** only:
+
+1. **Detection:** `detect_healthcare_intent(prompt)` and `detect_mortgage_intent(prompt)` in `convonet/routes.py`; plus a simple keyword check for **todo** (e.g. "todo", "reminder", "calendar", "meeting", "schedule", "task").
+2. **Priority:** healthcare > mortgage > todo (default). So if the prompt matches both mortgage and healthcare keywords, the **healthcare** agent is used.
+3. **Sticky context:** If the user was already in mortgage or healthcare mode (stored in Redis by `user_id`), the next turn can stay in that agent unless the user shows **todo** intent or **topic change** intent.
+4. **Voice:** The voice gateway sends only `prompt` = transcript (e.g. "I want to apply for the mortgage."). There is no separate "domain" or "agent_type" parameter, so **mortgage** must be detected via `mortgage_intent_detection.py` keywords (e.g. "mortgage", "apply for the mortgage", "apply for mortgage"). If no mortgage/healthcare keyword matches, the **todo** agent is used (productivity tools: get_todos, get_reminders, get_calendar_events, etc.), which is why a phrase like "I want to apply for mortgage" can incorrectly route to the todo agent if the mortgage keyword list didn’t match the exact phrasing. The mortgage keyword list has been updated to include "apply for the mortgage" and "want to apply for the mortgage" so voice transcripts route to the mortgage agent.
+
 ---
 
 ## 4. Call Center Service

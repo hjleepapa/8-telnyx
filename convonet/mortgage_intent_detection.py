@@ -20,12 +20,14 @@ def detect_mortgage_intent(text: str) -> bool:
     text_lower = text.strip().lower()
     
     # Mortgage-related keywords (order matters - more specific first)
+    # Voice often produces "apply for the mortgage" or "want to apply for mortgage"
     mortgage_keywords = [
+        "apply for the mortgage",
+        "want to apply for the mortgage",
         "apply for mortgage",
         "mortgage application",
         "want to apply for a mortgage",
         "want to apply for mortgage",
-        "apply for a mortgage",
         "apply for a mortgage",
         "mortgage",
         "pre-approved",

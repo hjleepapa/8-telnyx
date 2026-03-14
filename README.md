@@ -2,26 +2,26 @@
 
 > **Enterprise-grade voice AI assistant with multi-LLM provider support, team collaboration, and intelligent call transfer**
 
-[![Flask](https://img.shields.io/badge/Flask-2.3+-blue.svg)](https://flask.palletsprojects.com/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
+[![Google Cloud Run](https://img.shields.io/badge/Google%20Cloud-Run-4285F4.svg)](https://cloud.run/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-0.2+-green.svg)](https://langchain-ai.github.io/langgraph/)
-[![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 ## 🎯 Overview
 
-Convonet is a production-ready voice AI productivity system that combines **LangGraph AI agents**, **team collaboration**, **voice interaction**, and **intelligent call center integration**. Built for enterprise use, it supports **three major LLM providers** (Claude, Gemini, OpenAI) with seamless switching capabilities.
+Convonet is a production-ready voice AI productivity system that combines **LangGraph AI agents**, **team collaboration**, **voice interaction**, and **intelligent call center integration**. It runs as **FastAPI microservices on Google Cloud Run**, with support for **three major LLM providers** (Claude, Gemini, OpenAI) and intent-based routing to **domain agents** (Productivity, Mortgage, Healthcare).
 
 ### Key Features
 
 - 🤖 **Multi-LLM Provider Support**: Switch between Claude (Anthropic), Gemini (Google), and OpenAI
-- 🎤 **Voice Interfaces**: LiveKit WebRTC (low-latency), Twilio phone, streaming STT/TTS
-- 🏠 **Domain-Specific Agents**: Productivity (todos, calendar), Mortgage, Healthcare with sticky context
+- 🎤 **Voice Interfaces**: WebRTC/FastAPI WebSocket (voice-gateway), Twilio phone; streaming STT/TTS (Deepgram, Cartesia, ElevenLabs)
+- 🏠 **Domain-Specific Agents**: Productivity (todos, calendar, reminders), Mortgage, Healthcare with sticky context
 - 👥 **Team Collaboration**: Multi-tenant team management with role-based access
-- 🔄 **Call Transfer**: Intelligent AI-to-human agent transfer via Twilio/FusionPBX
-- 🛠️ **38 MCP Tools**: Todos, calendar, teams, reminders, mortgage, healthcare, call transfer
-- 📊 **Agent Monitor**: Voice response timing (T0→buffer→STT→agent→first audio), per-tool elapsed time
-- 📈 **Production Monitoring**: Sentry error tracking, Agent Monitor dashboard
-- ⚡ **Optimized Timeouts**: 15s/20s/25s timeouts for reliable operation
+- 🔄 **Call Transfer**: AI-to-human agent transfer via Twilio/FusionPBX
+- 🛠️ **MCP Tools**: Todos, calendar, teams, reminders, mortgage, healthcare, call transfer
+- 📊 **Agent Monitor**: Voice response timing and per-tool metrics
+- ☁️ **Deployment**: Google Cloud Run (scale-to-zero), path-based routing on a single domain
 
 ---
 
@@ -29,556 +29,249 @@ Convonet is a production-ready voice AI productivity system that combines **Lang
 
 ### Prerequisites
 
-- Python 3.12+
-- PostgreSQL database
-- Redis (for session management)
-- API keys for at least one LLM provider (see below)
+- Python 3.11+
+- PostgreSQL (e.g. Render.com) and Redis (e.g. Redis Cloud) for agent/session state
+- API keys for at least one LLM provider and for STT/TTS (see [Configuration](#configuration))
+- Google Cloud project (for Cloud Run deployment)
 
 ### Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/hjleepapa/convonet-anthropic.git
-cd convonet-anthropic
+git clone https://github.com/hjleepapa/7-gcconvonet.git
+cd 7-gcconvonet
 
 # Install dependencies
 pip install -r requirements.txt
 
-# Set up environment variables (see Configuration section)
-cp .env.example .env
-# Edit .env with your API keys and configuration
+# Set up environment variables (see Configuration)
+cp .env.cloudrun.example .env.cloudrun
+# Edit .env.cloudrun with your API keys (do not commit)
 ```
 
 ### Configuration
 
-#### Required Environment Variables
+Environment variables are **not** baked into the build. Set them per service in **Cloud Run** (Console or `gcloud run services update`); they persist across rebuilds. For the full list of variable **names**, see [`.env.cloudrun.example`](.env.cloudrun.example) and [**docs/CLOUD_RUN_ENV.md**](docs/CLOUD_RUN_ENV.md).
+
+#### Required (per service)
+
+- **Redis**: `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_DB=0`
+- **Postgres**: `DB_URI` (e.g. Render connection string)
+- **LLM** (agent-llm-service): At least one of `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENAI_API_KEY`
+- **Voice** (voice-gateway): `AGENT_LLM_URL` (agent-llm Cloud Run URL), `DEEPGRAM_API_KEY` (STT/TTS), Twilio vars if using phone
+
+#### Optional
+
+- **SuiteCRM** (crm-integration): `SUITECRM_BASE_URL`, `SUITECRM_CLIENT_ID`, `SUITECRM_CLIENT_SECRET`, `SUITECRM_USERNAME`, `SUITECRM_PASSWORD`
+- **Other STT/TTS**: `ELEVENLABS_API_KEY`, `CARTESIA_API_KEY`, etc. (see [CLOUD_RUN_ENV.md](docs/CLOUD_RUN_ENV.md))
+
+### Run Locally (all four services)
 
 ```bash
-# Database
-DB_URI=postgresql://user:password@host:5432/dbname
+# Terminal 1 – voice-gateway (port 8000)
+uvicorn convonet.voice_gateway_service:app --reload --port 8000
 
-# Redis
-REDIS_URL=redis://localhost:6379
+# Terminal 2 – agent-llm (port 8001)
+uvicorn convonet.agent_llm_service:app --reload --port 8001
 
-# JWT Authentication
-JWT_SECRET_KEY=your-super-secret-jwt-key
+# Terminal 3 – call-center (port 8002)
+uvicorn convonet.call_center_service:app --reload --port 8002
 
-# At least ONE LLM provider (see Multi-LLM Provider Support below)
+# Terminal 4 – crm-integration (port 8003)
+uvicorn convonet.crm_integration_service:app --reload --port 8003
 ```
 
-#### Optional Environment Variables
+Then open the call-center UI at `http://localhost:8002/` (landing). For voice, point the Voice Assistant UI at `ws://localhost:8000/webrtc/ws` (or use the voice-gateway port you set).
+
+### Deploy to Google Cloud Run
 
 ```bash
-# Google Calendar OAuth2
-GOOGLE_OAUTH2_TOKEN_B64=base64_encoded_token
-GOOGLE_CLIENT_ID=your_client_id
-GOOGLE_CLIENT_SECRET=your_client_secret
+# Deploy all four services
+gcloud builds submit --config cloudbuild.yaml .
 
-# Twilio Voice
-TWILIO_ACCOUNT_SID=your_twilio_sid
-TWILIO_AUTH_TOKEN=your_twilio_token
-TWILIO_PHONE_NUMBER=+1234567890
-
-# Speech-to-Text (STT)
-DEEPGRAM_API_KEY=your_deepgram_api_key
-MODULATE_API_KEY=your_modulate_api_key  # Velma-2: emotion, diarization (optional)
-# Cartesia for streaming STT (optional)
-
-# Text-to-Speech (TTS)
-DEEPGRAM_API_KEY=your_deepgram_api_key  # Also used for TTS
-ELEVENLABS_API_KEY=your_elevenlabs_key  # ElevenLabs TTS
-CARTESIA_API_KEY=your_cartesia_key      # Cartesia TTS
-
-# LiveKit WebRTC (for low-latency browser voice)
-LIVEKIT_URL=wss://your-livekit-server
-LIVEKIT_API_KEY=your_api_key
-LIVEKIT_API_SECRET=your_api_secret
-
-# FusionPBX Call Transfer
-FREEPBX_DOMAIN=34.26.59.14
-
-# Sentry Monitoring
-SENTRY_DSN=your_sentry_dsn
+# Deploy only voice-gateway + call-center
+gcloud builds submit --config cloudbuild-voice-callcenter.yaml .
 ```
 
-### Run the Application
-
-```bash
-# Development
-python app.py
-
-# Production (with Gunicorn)
-gunicorn --worker-class eventlet -w 1 --threads 4 --bind 0.0.0.0:5000 passenger_wsgi:app
-```
+Set env vars once per service in Cloud Run (Console → service → Edit & deploy new revision → Variables & secrets). See [docs/CLOUD_RUN_ENV.md](docs/CLOUD_RUN_ENV.md).
 
 ---
 
-## 🤖 Multi-LLM Provider Support
+## 🏗️ Architecture (GCP)
 
-Convonet supports **three major LLM providers** with seamless switching capabilities. You can use one, two, or all three providers simultaneously.
+### Microservices
 
-### Supported Providers
+| Service | Purpose | Main entry |
+|--------|---------|------------|
+| **voice-gateway-service** | WebSocket `/webrtc/ws` (STT→agent→TTS), Twilio webhooks | `convonet/voice_gateway_service.py` |
+| **agent-llm-service** | LangGraph agent, `POST /agent/process`, provider APIs | `convonet/agent_llm_service.py` |
+| **call-center-service** | Landing, call center UI, voice/mortgage/agent-monitor/tool-execution pages | `convonet/call_center_service.py` |
+| **crm-integration-service** | SuiteCRM, patient/meeting/case/note APIs | `convonet/crm_integration_service.py` |
 
-| Provider | Model | Default Model | Best For |
-|----------|-------|---------------|----------|
-| **Claude (Anthropic)** | Claude Sonnet 4 | `claude-sonnet-4-20250514` | Best tool calling, complex reasoning |
-| **Gemini (Google)** | Gemini 2.0 Flash | `gemini-2.0-flash` | Cost-effective, fast responses |
-| **OpenAI** | GPT-4o | `gpt-4o` | General purpose, high accuracy |
+All services listen on **port 8080** in the container. They can be exposed under a **single domain** (e.g. `https://v2.convonetai.com`) with path-based routing.
 
-### Configuration
+### Path routing (single domain)
 
-#### Claude (Anthropic)
-
-```bash
-ANTHROPIC_API_KEY=sk-ant-your-key-here
-ANTHROPIC_MODEL=claude-sonnet-4-20250514  # Optional
-```
-
-**Recommended for**: Complex tool calling, multi-step reasoning, production workloads
-
-#### Gemini (Google)
-
-```bash
-GOOGLE_API_KEY=your-google-api-key
-GOOGLE_MODEL=gemini-2.0-flash  # Optional, defaults to gemini-2.0-flash
-```
-
-**Available Gemini Models**:
-- `gemini-2.0-flash` - **Default**: Best price-performance, well-rounded capabilities
-- `gemini-1.5-pro` - Most powerful, best for multimodal and agentic tasks
-- `gemini-1.5-flash` - High-speed, cost-efficient
-- `gemini-2.0-flash-lite` - Cost-efficient, 1M token context window
-
-**Recommended for**: Cost-effective operations, fast responses, high-volume usage
-
-#### OpenAI
-
-```bash
-OPENAI_API_KEY=sk-your-openai-key
-OPENAI_MODEL=gpt-4o  # Optional, defaults to gpt-4o
-```
-
-**Recommended for**: General purpose tasks, high accuracy requirements
-
-### Provider Selection
-
-#### Via Web UI
-
-1. Navigate to the homepage
-2. Click on your preferred provider in the **"🤖 Select LLM Provider"** section
-3. Your selection is automatically saved and used for all future conversations
-
-#### Via API
-
-```bash
-# Get available providers
-GET /convonet_todo/api/llm-providers
-
-# Set user provider preference
-POST /convonet_todo/api/llm-provider
-{
-  "user_id": "user-uuid",
-  "provider": "claude"  # or "gemini" or "openai"
-}
-```
-
-#### Via Environment Variable
-
-```bash
-# Set global default
-LLM_PROVIDER=claude  # or "gemini" or "openai"
-```
-
-### Provider Selection Priority
-
-The system uses the following priority order:
-
-1. **User-specific preference** (stored in Redis per user)
-2. **Global default** (stored in Redis for 'default' user)
-3. **Environment variable** (`LLM_PROVIDER`)
-4. **Fallback to Claude** (if none specified)
-
-### Provider-Specific Features
-
-#### Claude (Anthropic)
-- ✅ Excellent tool calling capabilities
-- ✅ Strong reasoning and multi-step problem solving
-- ✅ Production-grade reliability
-- ✅ Optimized timeout: 15s for execution
-
-#### Gemini (Google)
-- ✅ Cost-effective pricing
-- ✅ Fast response times
-- ✅ Tool limiting support (configurable via `GEMINI_MAX_TOOLS`)
-- ✅ Optimized timeout: 12s for execution
-- ⚠️ Requires tool binding (can be skipped with `SKIP_GEMINI_TOOL_BINDING=true`)
-
-#### OpenAI
-- ✅ High accuracy
-- ✅ General purpose excellence
-- ✅ Optimized timeout: 15s for execution
-
-### Switching Providers
-
-The system automatically:
-- Clears agent graph cache when provider changes
-- Reinitializes with the new provider's model
-- Maintains conversation context across switches
-- Handles provider-specific optimizations
-
----
-
-## 🏗️ Architecture
-
-### System Components
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Frontend Layer                                │
-├─────────────────────────────────────────────────────────────────────┤
-│  Team Dashboard  │  LiveKit WebRTC Voice  │  Twilio  │  Agent Monitor │
-│  Mortgage Dashboard  │  Tool Execution GUI  │  Call Center          │
-└─────────────────────────────────────────────────────────────────────┘
-                                    │
-┌─────────────────────────────────────────────────────────────────────┐
-│                     Core Processing Layer                            │
-├─────────────────────────────────────────────────────────────────────┤
-│  LangGraph Agent (Multi-LLM)  │  Domain Agents (Todo/Mortgage/Healthcare) │
-│  MCP Tools (38)  │  Call Transfer  │  Sentry  │  Agent Monitor       │
-└─────────────────────────────────────────────────────────────────────┘
-                                    │
-┌─────────────────────────────────────────────────────────────────────┐
-│                    External Services Layer                           │
-├─────────────────────────────────────────────────────────────────────┤
-│  Claude/Gemini/OpenAI  │  PostgreSQL  │  Google Calendar             │
-│  Deepgram/Cartesia STT  │  ElevenLabs/Deepgram/Cartesia TTS  │  LiveKit │
-│  Redis  │  FusionPBX  │  Twilio                                      │
-└─────────────────────────────────────────────────────────────────────┘
-```
+| Path pattern | Backend service |
+|--------------|-----------------|
+| `/`, `/call-center`, `/voice_assistant`, `/voice-assistant`, `/mortgage_dashboard`, `/agent-monitor`, `/tool-execution`, `/api/*`, `/static/*` | call-center-service |
+| `/webrtc/*`, `/twilio/*` | voice-gateway-service |
+| `/agent/*`, `/convonet_todo/*` | agent-llm-service |
+| `/patient/*`, `/meeting/create`, `/case/create`, `/note/create` | crm-integration-service |
 
 ### Technology Stack
 
-- **Backend**: Flask, Flask-SocketIO, SQLAlchemy
-- **AI Framework**: LangGraph, LangChain
-- **LLM Providers**: Claude (Anthropic), Gemini (Google), OpenAI
-- **Voice**: LiveKit WebRTC, Twilio Voice API, Deepgram/Cartesia STT, ElevenLabs/Deepgram/Cartesia TTS
-- **Database**: PostgreSQL (multi-tenant)
-- **Cache**: Redis (sessions, audio buffers)
-- **Monitoring**: Sentry.io, Agent Monitor (voice timing, tool calls)
-- **Deployment**: Render.com, Gunicorn + Eventlet
+- **Backend**: FastAPI (microservices), LangGraph, LangChain
+- **LLM**: Claude (Anthropic), Gemini (Google), OpenAI
+- **Voice**: WebRTC/FastAPI WebSocket (no LiveKit on GCP), Twilio; Deepgram/Cartesia/ElevenLabs STT/TTS
+- **Data**: PostgreSQL (e.g. Render), Redis (e.g. Redis Cloud)
+- **Deployment**: Google Cloud Run, Artifact Registry, Cloud Build
 
 ---
 
 ## 📚 Documentation
 
-Comprehensive documentation is available in the [`docs/`](docs/) folder:
+- **[FastAPI + GCP Architecture & Validation](docs/FASTAPI_GCP_ARCHITECTURE_AND_VALIDATION.md)** – Service map, intent routing, local run, deploy commands
+- **[Cloud Run env vars & API keys](docs/CLOUD_RUN_ENV.md)** – What to set per service, persistence, Secret Manager
+- **[LLM Provider Selection Guide](docs/LLM_PROVIDER_SELECTION_GUIDE.md)** – Multi-LLM usage
+- **[FusionPBX / SIP](docs/FUSIONPBX_GUIDE.md)** – Call transfer
+- **[Team Management](docs/TEAM_MANAGEMENT_GUIDE.md)** – Team collaboration
 
-- **[LLM Provider Selection Guide](docs/LLM_PROVIDER_SELECTION_GUIDE.md)** - Using multiple LLM providers
-- **[Deployment Guide](docs/RENDER_DEPLOYMENT.md)** - Production deployment instructions
-- **[WebRTC Voice Guide](docs/WEBRTC_VOICE_GUIDE.md)** - LiveKit browser voice interface
-- **[FusionPBX Integration](docs/FUSIONPBX_GUIDE.md)** - Call transfer setup
-- **[Team Management Guide](docs/TEAM_MANAGEMENT_GUIDE.md)** - Team collaboration features
-- **[Troubleshooting](docs/TRANSFER_TROUBLESHOOTING.md)** - Common issues and solutions
+### Key URLs (single domain, e.g. v2.convonetai.com)
 
-### Key URLs (when running locally)
-
-| Feature | URL |
-|---------|-----|
-| Voice Assistant | `/webrtc/voice-assistant` |
+| Feature | Path |
+|---------|------|
+| Landing | `/` |
+| Voice Assistant | `/voice_assistant` or `/voice-assistant` |
+| Call Center | `/call-center` |
+| Mortgage Dashboard | `/mortgage_dashboard` |
 | Agent Monitor | `/agent-monitor` |
-| Mortgage Dashboard | `/convonet_todo/mortgage/dashboard` |
 | Tool Execution | `/tool-execution` |
-| Team Dashboard | `/team-dashboard` |
 
 ---
 
-## 🎤 Voice Interfaces
+## 🤖 Multi-LLM Provider Support
 
-### LiveKit WebRTC Browser Voice
+Convonet supports **Claude**, **Gemini**, and **OpenAI** with per-user preference (stored in Redis).
 
-Low-latency browser-based voice assistant with LiveKit:
+### Supported Providers
 
-```
-URL: /webrtc/voice-assistant
-```
+| Provider | Example model | Best for |
+|----------|----------------|----------|
+| **Claude (Anthropic)** | `claude-sonnet-4-20250514` | Tool calling, reasoning |
+| **Gemini (Google)** | `gemini-2.0-flash` | Cost-effective, fast |
+| **OpenAI** | `gpt-4o` | General purpose |
 
-**Features**:
-- **LiveKit WebRTC**: Low-latency PCM audio streaming
-- **Streaming STT**: Deepgram or Cartesia real-time transcription
-- **Streaming TTS**: Deepgram streaming for first-sentence latency
-- **TTS Providers**: ElevenLabs (emotion-aware), Deepgram, Cartesia
-- **Domain Agents**: Productivity, Mortgage, Healthcare with sticky context
-- **Processing Music**: Hold music during agent processing
-- **PIN Authentication**: Secure access
+### Configuration (env vars on agent-llm-service)
 
-### Twilio Phone Integration
-
-Call your Twilio number and interact via voice:
-
-```
-User: "Create a high priority todo to review the quarterly report"
-AI: "I've created a high priority todo for reviewing the quarterly report."
+```bash
+ANTHROPIC_API_KEY=sk-ant-...
+GOOGLE_API_KEY=...
+OPENAI_API_KEY=sk-...
 ```
 
-**Features**:
-- Speech-to-text via Twilio
-- Text-to-speech via Deepgram/ElevenLabs
-- Barge-in capability (interrupt AI)
-- 10s speech timeout
-- 15s agent processing timeout
+Provider selection: **Web UI** (landing page), **API** (`GET/POST /convonet_todo/api/llm-provider(s)`), or Redis default. See [docs/LLM_PROVIDER_SELECTION_GUIDE.md](docs/LLM_PROVIDER_SELECTION_GUIDE.md).
 
 ---
 
-## 👥 Team Collaboration
+## 🎤 Voice
 
-### Features
+### WebRTC / FastAPI WebSocket (voice-gateway)
 
-- **Multi-tenant Architecture**: Teams, users, and todos with proper isolation
-- **Role-Based Access**: Owner, Admin, Member, Viewer roles
-- **Team Todos**: Assign tasks to teams and specific members
-- **JWT Authentication**: Secure token-based authentication
-- **Team Dashboard**: Web interface for team management
+- **URL**: Connect to `/webrtc/ws` (same origin as the site when using single-domain routing).
+- **Flow**: Browser captures mic → sends `audio_chunk` + `stop_recording` → gateway runs **STT (Deepgram) → agent-llm HTTP → TTS (Deepgram)** → returns transcript, agent text, and audio to the client.
+- **No LiveKit** on GCP; voice is WebRTC-style via FastAPI WebSocket.
 
-### Team Roles
+### Twilio phone
 
-| Role | Permissions |
-|------|-------------|
-| **Owner** | Full control, can delete team |
-| **Admin** | Manage members and todos |
-| **Member** | Create and edit own todos |
-| **Viewer** | Read-only access |
+- Use Twilio webhooks (`/twilio/call`, `/twilio/verify_pin`, `/twilio/process_audio`) on voice-gateway-service.
+- Set `TWILIO_*` and `AGENT_LLM_URL` on the voice-gateway service.
 
 ---
 
 ## 🏠 Domain-Specific Agents
 
-Convonet supports domain-specific agents with sticky context:
+Intent is derived from the **prompt text** (and optional sticky context in Redis):
 
-| Domain | Features |
-|--------|----------|
-| **Productivity** | Todos, reminders, calendar, teams |
-| **Mortgage** | Applications, DTI ratio, required documents, financial info |
-| **Healthcare** | Member info, policy lookup |
+| Agent | When used | Tools (examples) |
+|-------|-----------|-------------------|
+| **Productivity (todo)** | Default when no mortgage/healthcare keywords | get_todos, get_reminders, get_calendar_events, create_todo, teams, transfer |
+| **Mortgage** | Keywords e.g. "mortgage", "apply for the mortgage" | create_mortgage_application, get_mortgage_application_status, DTI, documents |
+| **Healthcare** | Healthcare keywords (claims, coverage, eligibility, etc.) | Healthcare MCP tools |
 
-- **Sticky Context**: Stays in domain until user explicitly changes topic
-- **Mortgage Dashboard**: `/convonet_todo/mortgage/dashboard`
+Priority: **healthcare > mortgage > todo**. Sticky context keeps the user in mortgage/healthcare for follow-up turns. See [docs/FASTAPI_GCP_ARCHITECTURE_AND_VALIDATION.md](docs/FASTAPI_GCP_ARCHITECTURE_AND_VALIDATION.md) §3.2.
 
 ---
 
-## 🛠️ MCP Tools (38 Tools)
+## 👥 Team Collaboration
 
-The system includes 38 Model Context Protocol (MCP) tools:
-
-### Tool Categories
-
-- **Todo Management** (5 tools): Create, get, update, complete, delete todos
-- **Team Tools** (8 tools): Team creation, member management, role changes
-- **Reminders** (4 tools): Create, get, update, delete reminders
-- **Calendar Events** (6 tools): Calendar operations with Google Calendar sync
-- **Mortgage Tools**: Applications, DTI, documents, financial info
-- **Healthcare Tools**: Member and policy operations
-- **Call Transfer** (2 tools): Transfer to FusionPBX agents
-- **Database Tools**: Various database operations
-
-### Tool Execution
-
-- **Timeout**: 20s per tool execution
-- **Error Handling**: Graceful failure recovery
-- **Streaming**: Real-time execution updates
-- **Provider Support**: All tools work with Claude, Gemini, and OpenAI
+- Multi-tenant teams, roles (Owner, Admin, Member, Viewer), team todos.
+- JWT auth; team and provider APIs exposed via agent-llm and call-center where applicable.
 
 ---
 
 ## 🔄 Call Transfer
 
-Intelligent AI-to-human agent transfer:
-
-1. User requests transfer via voice or tool
-2. LangGraph detects transfer intent
-3. Twilio API bridges call to FusionPBX
-4. Agent dashboard receives call with user info
-5. Live conversation begins
-
-**Configuration**:
-- FusionPBX Extension: 2001
-- SIP/WSS connectivity
-- Google Cloud VM deployment
-- JsSIP browser softphone
+- Transfer intent detected by the agent; Twilio/FusionPBX used to bridge to a human agent.
+- Configure `FREEPBX_DOMAIN`, Twilio, and voice-gateway env vars. See [docs/FUSIONPBX_GUIDE.md](docs/FUSIONPBX_GUIDE.md).
 
 ---
 
-## 📊 Monitoring & Observability
+## 📊 Monitoring
 
-### Agent Monitor
-
-Web dashboard at `/agent-monitor` for LLM interaction monitoring:
-
-- **Voice Response Timing**: T0 (user stop) → buffer capture → STT → agent start → first sentence → first audio → total
-- **Per-Tool Elapsed Time**: Time from user stop to each tool invocation
-- **Provider/Domain Filtering**: Filter by Claude, Gemini, OpenAI; Todo, Mortgage, Healthcare
-- **STT/TTS Latency**: Per-interaction latency metrics
-
-### Sentry Integration
-
-- Real-time error tracking
-- Performance monitoring (agent processing time)
-- User context & session tracking
-- Timeout & thread reset tracking
-- Production-grade observability
-
-### Performance Metrics
-
-- Agent processing time: Tracked per request
-- Tool execution time: Monitored per tool (including elapsed from stop)
-- Timeout rates: Tracked and optimized
-- Error rates: Real-time alerting
-
----
-
-## 🚀 Deployment
-
-### Render.com Deployment
-
-The project includes `render.yaml` for automatic deployment:
-
-```yaml
-services:
-  - type: web
-    name: convonet
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn --worker-class eventlet -w 1 --threads 4 --bind 0.0.0.0:$PORT passenger_wsgi:app
-    envVars:
-      - key: DB_URI
-        sync: false
-      - key: REDIS_URL
-        sync: false
-      # ... other environment variables
-```
-
-### Production Configuration
-
-- **Worker Class**: Eventlet (for async I/O)
-- **Workers**: 1 worker with 4 threads
-- **Timeout**: 60s (Gunicorn)
-- **Auto-scaling**: Configured via Render.com
-
----
-
-## 📖 Usage Examples
-
-### Voice Commands
-
-**Personal Productivity**:
-- "Create a high priority todo to review the quarterly report"
-- "Add a reminder to call the dentist tomorrow at 2 PM"
-- "Schedule a meeting for next Friday from 2 to 3 PM"
-- "Show me all my pending todos"
-
-**Team Collaboration**:
-- "Create a hackathon team"
-- "What teams are available?"
-- "Who are the members of the development team?"
-- "Create a high priority todo for the development team"
-- "Add admin@convonet.com to the hackathon team as owner"
-
-**Call Transfer**:
-- "Transfer me to an agent"
-- "I need to speak with support"
-- "Connect me to sales"
-
-### API Examples
-
-See the [API Reference](docs/) for detailed endpoint documentation.
+- **Agent Monitor**: `/agent-monitor` (call-center-service) – voice timing, tool execution.
+- **Cloud Run logs**: Per-service logs in GCP Console or `gcloud run services logs read SERVICE --region=us-central1`.
+- **Sentry**: Optional; configure `SENTRY_DSN` if used.
 
 ---
 
 ## 🔧 Development
 
-### Project Structure
+### Project structure (relevant to GCP)
 
 ```
 convonet/
-├── routes.py                    # Flask routes, Twilio webhooks, agent execution
-├── assistant_graph_todo.py       # LangGraph agent (multi-LLM)
-├── llm_provider_manager.py      # LLM provider management
-├── webrtc_voice_server_socketio.py  # LiveKit WebRTC voice, streaming STT/TTS
-├── agent_monitor.py             # Agent interaction tracking
-├── agent_monitor_gui.py         # Agent Monitor dashboard
-├── tool_execution_gui.py        # Tool execution viewer
-├── models/                      # Database models (incl. Mortgage)
-├── api_routes/                  # RESTful API endpoints
-├── security/                    # JWT authentication
-├── deepgram/                    # Deepgram STT/TTS integration
-└── mcps/                        # MCP tool servers
+├── voice_gateway_service.py   # WebSocket + Twilio, STT→agent→TTS pipeline
+├── agent_llm_service.py       # POST /agent/process, provider APIs
+├── call_center_service.py     # Landing, call center, voice/mortgage/agent-monitor pages
+├── crm_integration_service.py # SuiteCRM APIs
+├── routes.py                  # _run_agent_async, intent, agent graph
+├── assistant_graph_todo.py    # Todo/Mortgage/Healthcare agents
+├── mortgage_intent_detection.py
+├── healthcare_intent_detection.py
+├── deepgram/                  # STT/TTS
+├── mcps/                      # MCP tool servers (db_todo, db_mortgage, etc.)
+└── ...
+docker/                        # Dockerfiles per service
+cloudbuild.yaml                # Build + deploy all four services
+cloudbuild-voice-callcenter.yaml # Deploy voice-gateway + call-center only
 ```
 
-### Running Tests
+### Tests and lint
 
 ```bash
-# Run tests (if available)
 pytest tests/
-
-# Lint code
 flake8 convonet/
-
-# Type checking
-mypy convonet/
 ```
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT License – see the [LICENSE](LICENSE) file.
 
 ---
 
 ## 🙏 Acknowledgments
 
-- **LangGraph** - AI agent orchestration
-- **LangChain** - LLM integration framework
-- **Anthropic** - Claude API
-- **Google** - Gemini API
-- **OpenAI** - GPT-4 API
-- **Twilio** - Voice API
-- **Deepgram** - Speech-to-text and text-to-speech
-- **ElevenLabs** - Emotional, multilingual TTS
-- **Cartesia** - Streaming TTS
-- **LiveKit** - WebRTC real-time communication
-- **FusionPBX** - Call center integration
+- **FastAPI** – API framework  
+- **LangGraph / LangChain** – Agent orchestration  
+- **Anthropic, Google, OpenAI** – LLM APIs  
+- **Twilio** – Voice API  
+- **Deepgram, ElevenLabs, Cartesia** – STT/TTS  
+- **Google Cloud Run** – Serverless containers  
+- **FusionPBX** – Call center integration  
 
 ---
 
-## 📞 Support
-
-For issues, questions, or contributions:
-
-- **GitHub Issues**: [Create an issue](https://github.com/hjleepapa/convonet-anthropic/issues)
-- **Documentation**: See [`docs/`](docs/) folder
-- **Email**: admin@convonet-anthropic.com
-
----
-
-## 🎯 Roadmap
-
-- [ ] Additional LLM provider support (e.g., Mistral, Cohere)
-- [ ] Multi-language support
-- [ ] Advanced analytics dashboard
-- [ ] Mobile app integration
-
----
-
-**Built with ❤️ for enterprise voice AI productivity**
+**Built for enterprise voice AI productivity on Google Cloud**

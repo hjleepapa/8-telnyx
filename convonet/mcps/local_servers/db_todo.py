@@ -1040,7 +1040,8 @@ async def get_reminders() -> str:
     with SessionLocal() as session:
         reminders = session.query(DBReminder).all()
         reminders_list = [Reminder.model_validate(reminder.__dict__).model_dump_json(indent=2) for reminder in reminders]
-    return f"[{', \n'.join(reminders_list)}]"
+    sep = ",\n"
+    return f"[{sep.join(reminders_list)}]"
 
 @mcp.tool()
 async def update_reminder(
@@ -1212,7 +1213,8 @@ async def get_calendar_events() -> str:
     with SessionLocal() as session:
         events = session.query(DBCalendarEvent).all()
         events_list = [CalendarEvent.model_validate(event.__dict__).model_dump_json(indent=2) for event in events]
-    return f"[{', \n'.join(events_list)}]"
+    sep = ",\n"
+    return f"[{sep.join(events_list)}]"
 
 @mcp.tool()
 async def update_calendar_event(
