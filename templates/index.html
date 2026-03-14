@@ -9,14 +9,14 @@
             <div class="text-center mb-12">
                 <h2 class="text-4xl font-bold text-gray-800 mb-4">🎤 Convonet Voice AI Productivity System</h2>
                 <p class="text-xl text-gray-600 mb-6">
-                    Enterprise-grade voice AI platform with multi-LLM support (Claude, Gemini, OpenAI), LiveKit WebRTC voice,
-                    domain-specific agents (Productivity, Mortgage, Healthcare), <strong>SuiteCRM integration</strong> (contacts, cases, appointments, notes),
-                    team collaboration, and intelligent call center integration with transfer context.
+                    Enterprise-grade voice AI platform on <strong>Google Cloud Run</strong>: FastAPI microservices (voice-gateway, agent-llm, call-center, crm-integration),
+                    multi-LLM support (Claude, Gemini, OpenAI), WebRTC/FastAPI WebSocket voice, domain-specific agents (Productivity, Mortgage, Healthcare),
+                    <strong>SuiteCRM integration</strong> (contacts, cases, appointments, notes), and intelligent call center with transfer context.
                 </p>
 
                 <!-- Quick Links -->
                 <div class="flex justify-center gap-4 mb-8 flex-wrap">
-                    <a href="/webrtc/voice-assistant"
+                    <a href="{{ voice_assistant_url or '/webrtc/voice-assistant' }}"
                         class="inline-flex items-center px-6 py-3 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors shadow-md font-semibold">
                         <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -45,7 +45,8 @@
 
                 <!-- Technology Stack Tags -->
                 <div class="flex justify-center flex-wrap gap-2 mb-8">
-                    <span class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">Flask</span>
+                    <span class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">FastAPI</span>
+                    <span class="bg-slate-100 text-slate-800 px-3 py-1 rounded-full text-sm font-medium">Google Cloud Run</span>
                     <span class="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-medium">LangGraph</span>
                     <span class="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-sm font-medium">MCP (38 Tools)</span>
                     <span class="bg-red-100 text-red-800 px-3 py-1 rounded-full text-sm font-medium">Claude · Gemini · OpenAI</span>
@@ -53,7 +54,7 @@
                     <span class="bg-indigo-100 text-indigo-800 px-3 py-1 rounded-full text-sm font-medium">Deepgram STT/TTS</span>
                     <span class="bg-cyan-100 text-cyan-800 px-3 py-1 rounded-full text-sm font-medium">Cartesia TTS</span>
                     <span class="bg-pink-100 text-pink-800 px-3 py-1 rounded-full text-sm font-medium">Twilio Voice</span>
-                    <span class="bg-sky-100 text-sky-800 px-3 py-1 rounded-full text-sm font-medium">LiveKit WebRTC</span>
+                    <span class="bg-sky-100 text-sky-800 px-3 py-1 rounded-full text-sm font-medium">WebRTC / FastAPI WebSocket</span>
                     <span class="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-sm font-medium">Redis</span>
                     <span class="bg-rose-100 text-rose-800 px-3 py-1 rounded-full text-sm font-medium">Sentry</span>
                     <span class="bg-teal-100 text-teal-800 px-3 py-1 rounded-full text-sm font-medium">FusionPBX</span>
@@ -73,11 +74,11 @@
                                 </path>
                             </svg>
                         </span>
-                        <h3 class="text-lg font-semibold text-gray-800">LiveKit WebRTC Voice</h3>
+                        <h3 class="text-lg font-semibold text-gray-800">WebRTC / FastAPI WebSocket Voice</h3>
                     </div>
                     <p class="text-sm text-gray-600">
-                        Low-latency browser voice with LiveKit, Deepgram/Cartesia streaming STT, ElevenLabs/Deepgram/Cartesia TTS,
-                        streaming TTS, and domain-specific agents (Productivity, Mortgage, Healthcare).
+                        Low-latency browser voice via FastAPI WebSocket (voice-gateway-service). Deepgram/Cartesia streaming STT,
+                        ElevenLabs/Deepgram/Cartesia TTS, and domain-specific agents (Productivity, Mortgage, Healthcare).
                     </p>
                 </div>
 
@@ -318,7 +319,7 @@
 
                 <!-- Demo Link -->
                 <div class="text-center mt-8">
-                    <a href="/webrtc/voice-assistant"
+                    <a href="{{ voice_assistant_url or '/webrtc/voice-assistant' }}"
                         class="inline-flex items-center px-6 py-3 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-lg hover:from-orange-600 hover:to-amber-600 transition-all shadow-lg font-semibold text-lg">
                         <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -376,7 +377,7 @@
                 <div class="text-center">
                     <h3 class="text-xl font-semibold text-gray-800 mb-4">Quick Access</h3>
                     <div class="flex justify-center gap-4 flex-wrap">
-                        <a href="/webrtc/voice-assistant"
+                        <a href="{{ voice_assistant_url or '/webrtc/voice-assistant' }}"
                             class="inline-flex items-center px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors">
                             <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -392,7 +393,7 @@
                             </svg>
                             Agent Monitor
                         </a>
-                        <a href="/convonet_todo/mortgage/dashboard"
+                        <a href="{{ mortgage_dashboard_url or '/convonet_todo/mortgage/dashboard' }}"
                             class="inline-flex items-center px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors">
                             <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -451,26 +452,27 @@
 </div>
 
 <script>
+    // FastAPI microservices: provider APIs are on agent-llm-service. Base URL from backend (same-origin or cross-origin).
+    const CONVONET_API_BASE = {{ convonet_api_base | tojson }};
+
     // LLM Provider Selection
     document.addEventListener('DOMContentLoaded', function () {
         const selector = document.getElementById('llm-provider-selector');
         const status = document.getElementById('llm-provider-status');
         let currentProvider = 'claude';
-        let userId = null; // You can get this from session/auth if available
+        let userId = null;
 
-        // Get user ID from URL or session (adjust based on your auth system)
         const urlParams = new URLSearchParams(window.location.search);
-        userId = urlParams.get('user_id') || 'default'; // Fallback to 'default' for demo
+        userId = urlParams.get('user_id') || 'default';
 
-        // Load available providers
+        // Load available providers (agent-llm-service: /convonet_todo/api/*)
         async function loadProviders() {
             try {
-                const response = await fetch('/convonet_todo/api/llm-providers');
+                const response = await fetch((CONVONET_API_BASE || '') + '/convonet_todo/api/llm-providers');
                 const data = await response.json();
 
                 if (data.success) {
-                    // Get current provider
-                    const currentResponse = await fetch(`/convonet_todo/api/llm-provider?user_id=${userId}`);
+                    const currentResponse = await fetch((CONVONET_API_BASE || '') + `/convonet_todo/api/llm-provider?user_id=${userId}`);
                     const currentData = await currentResponse.json();
                     if (currentData.success) {
                         currentProvider = currentData.provider;
@@ -515,7 +517,7 @@
         // Select provider
         window.selectProvider = async function (providerId) {
             try {
-                const response = await fetch('/convonet_todo/api/llm-provider', {
+                const response = await fetch((CONVONET_API_BASE || '') + '/convonet_todo/api/llm-provider', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -570,8 +572,8 @@
 
         try {
             const [listRes, currentRes] = await Promise.all([
-                fetch('/convonet_todo/api/stt-providers'),
-                fetch(`/convonet_todo/api/stt-provider?user_id=${userId}`)
+                fetch((CONVONET_API_BASE || '') + '/convonet_todo/api/stt-providers'),
+                fetch((CONVONET_API_BASE || '') + `/convonet_todo/api/stt-provider?user_id=${userId}`)
             ]);
 
             const listData = await listRes.json();
@@ -605,7 +607,7 @@
     async function setSttProvider(provider) {
         const userId = new URLSearchParams(window.location.search).get('user_id') || 'default';
         try {
-            await fetch('/convonet_todo/api/stt-provider', {
+            await fetch((CONVONET_API_BASE || '') + '/convonet_todo/api/stt-provider', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ user_id: userId, provider: provider })
@@ -624,8 +626,8 @@
 
         try {
             const [listRes, currentRes] = await Promise.all([
-                fetch('/convonet_todo/api/tts-providers'),
-                fetch(`/convonet_todo/api/tts-provider?user_id=${userId}`)
+                fetch((CONVONET_API_BASE || '') + '/convonet_todo/api/tts-providers'),
+                fetch((CONVONET_API_BASE || '') + `/convonet_todo/api/tts-provider?user_id=${userId}`)
             ]);
 
             const listData = await listRes.json();
@@ -659,7 +661,7 @@
     async function setTtsProvider(provider) {
         const userId = new URLSearchParams(window.location.search).get('user_id') || 'default';
         try {
-            await fetch('/convonet_todo/api/tts-provider', {
+            await fetch((CONVONET_API_BASE || '') + '/convonet_todo/api/tts-provider', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ user_id: userId, provider: provider })

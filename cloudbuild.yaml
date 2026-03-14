@@ -1,26 +1,32 @@
 # cloudbuild.yaml
+# Deploy only updates the container image. Env vars are NOT set here so they persist across rebuilds.
+# Set REDIS_* and DB_URI once in Cloud Run console or: gcloud run services update SERVICE --region=us-central1 --update-env-vars=...
+# See docs/CLOUD_RUN_ENV.md for values and Secret Manager.
+substitutions:
+  _COMMIT_SHA: 'latest'
+
 steps:
   # 1. Build services
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/voice-gateway-service:$COMMIT_SHA', '-f', 'docker/voice-gateway.Dockerfile', '.']
+    args: ['build', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/voice-gateway-service:$_COMMIT_SHA', '-f', 'docker/voice-gateway.Dockerfile', '.']
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/agent-llm-service:$COMMIT_SHA', '-f', 'docker/agent-llm.Dockerfile', '.']
+    args: ['build', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/agent-llm-service:$_COMMIT_SHA', '-f', 'docker/agent-llm.Dockerfile', '.']
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/call-center-service:$COMMIT_SHA', '-f', 'docker/call-center.Dockerfile', '.']
+    args: ['build', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/call-center-service:$_COMMIT_SHA', '-f', 'docker/call-center.Dockerfile', '.']
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/crm-integration-service:$COMMIT_SHA', '-f', 'docker/crm-integration.Dockerfile', '.']
+    args: ['build', '-t', 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/crm-integration-service:$_COMMIT_SHA', '-f', 'docker/crm-integration.Dockerfile', '.']
 
   # 2. Push services to Artifact Registry
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/voice-gateway-service:$COMMIT_SHA']
+    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/voice-gateway-service:$_COMMIT_SHA']
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/agent-llm-service:$COMMIT_SHA']
+    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/agent-llm-service:$_COMMIT_SHA']
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/call-center-service:$COMMIT_SHA']
+    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/call-center-service:$_COMMIT_SHA']
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/crm-integration-service:$COMMIT_SHA']
+    args: ['push', 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/crm-integration-service:$_COMMIT_SHA']
 
-  # 3. Deploy services to Cloud Run
+  # 3. Deploy services to Cloud Run (image only; env vars are left unchanged so they persist across rebuilds)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -28,12 +34,10 @@ steps:
       - 'deploy'
       - 'voice-gateway-service'
       - '--image'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/voice-gateway-service:$COMMIT_SHA'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/voice-gateway-service:$_COMMIT_SHA'
       - '--region'
       - 'us-central1'
       - '--allow-unauthenticated'
-      - '--set-env-vars'
-      - 'REDIS_HOST=$$REDIS_HOST,DB_URI=$$DB_URI'
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -41,12 +45,10 @@ steps:
       - 'deploy'
       - 'agent-llm-service'
       - '--image'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/agent-llm-service:$COMMIT_SHA'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/agent-llm-service:$_COMMIT_SHA'
       - '--region'
       - 'us-central1'
       - '--allow-unauthenticated'
-      - '--set-env-vars'
-      - 'REDIS_HOST=$$REDIS_HOST,DB_URI=$$DB_URI'
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -54,12 +56,10 @@ steps:
       - 'deploy'
       - 'call-center-service'
       - '--image'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/call-center-service:$COMMIT_SHA'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/call-center-service:$_COMMIT_SHA'
       - '--region'
       - 'us-central1'
       - '--allow-unauthenticated'
-      - '--set-env-vars'
-      - 'REDIS_HOST=$$REDIS_HOST,DB_URI=$$DB_URI'
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -67,18 +67,16 @@ steps:
       - 'deploy'
       - 'crm-integration-service'
       - '--image'
-      - 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/crm-integration-service:$COMMIT_SHA'
+      - 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/crm-integration-service:$_COMMIT_SHA'
       - '--region'
       - 'us-central1'
       - '--allow-unauthenticated'
-      - '--set-env-vars'
-      - 'REDIS_HOST=$$REDIS_HOST,DB_URI=$$DB_URI'
 
 images:
-  - 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/voice-gateway-service:$COMMIT_SHA'
-  - 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/agent-llm-service:$COMMIT_SHA'
-  - 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/call-center-service:$COMMIT_SHA'
-  - 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/crm-integration-service:$COMMIT_SHA'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/voice-gateway-service:$_COMMIT_SHA'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/agent-llm-service:$_COMMIT_SHA'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/call-center-service:$_COMMIT_SHA'
+  - 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/crm-integration-service:$_COMMIT_SHA'
 
 options:
   logging: CLOUD_LOGGING_ONLY

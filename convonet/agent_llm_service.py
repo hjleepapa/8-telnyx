@@ -9,8 +9,8 @@ from pydantic import BaseModel
 from convonet.redis_manager import redis_manager
 from convonet.llm_provider_manager import get_llm_provider_manager
 
-# Import core agent logic
-from convonet.routes import _run_agent_async
+# Defer routes import to first request so the container can start and listen on PORT quickly (Cloud Run timeout).
+# from convonet.routes import _run_agent_async  # imported lazily in process_agent
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -45,10 +45,18 @@ class ProviderUpdate(BaseModel):
 async def health_check():
     return {"status": "ok", "service": "agent-llm-service"}
 
+
+def _get_run_agent_async():
+    """Lazy import to avoid loading routes (and heavy deps) at startup."""
+    from convonet.routes import _run_agent_async
+    return _run_agent_async
+
+
 async def _process_agent_impl(request: AgentRequest) -> AgentResponse:
     logger.info(f"Processing agent request for user {request.user_id} (session: {request.session_id})")
     start_time = time.time()
     try:
+        _run_agent_async = _get_run_agent_async()
         result = await _run_agent_async(
             prompt=request.prompt,
             user_id=request.user_id,
@@ -85,6 +93,7 @@ async def process_agent(request: AgentRequest):
 @api_router.post("/api/agent/process", response_model=AgentResponse)
 async def process_agent_router(request: AgentRequest):
     return await _process_agent_impl(request)
+
 
 @api_router.get("/api/llm-providers")
 async def get_llm_providers():

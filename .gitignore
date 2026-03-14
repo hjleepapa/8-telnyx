@@ -1,4 +1,6 @@
 .env
+.env.cloudrun
+.env.*.local
 vapi1.py
 
 # Google API credentials and tokens

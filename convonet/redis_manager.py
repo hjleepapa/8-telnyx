@@ -49,12 +49,12 @@ class RedisManager:
                 password=redis_password if redis_password else None,
                 db=redis_db,
                 decode_responses=True,
-                socket_connect_timeout=5,
+                socket_connect_timeout=2,
                 socket_timeout=5,
                 retry_on_timeout=True
             )
             
-            # Test connection
+            # Test connection (keep startup fast for Cloud Run)
             self.redis_client.ping()
             logger.info("✅ Redis connection established")
             
