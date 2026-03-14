@@ -2,7 +2,37 @@
 
 Use your existing **Redis Cloud** and **Render Postgres** with the four Cloud Run services. If you see latency issues later, you can switch to GCP (Memorystore + Cloud SQL).
 
-**Persisting env vars:** The Cloud Build config does **not** set env vars on deploy (so rebuilds only update the image). Set `REDIS_*` and `DB_URI` once in the Cloud Run console (or via `gcloud run services update`); they will persist across all future rebuilds.
+**Persisting env vars:** The Cloud Build config does **not** set env vars on deploy (so rebuilds only update the image). Set `REDIS_*`, `DB_URI`, and any API keys once in the Cloud Run console (or via `gcloud run services update`); they will **persist across all future rebuilds**.
+
+---
+
+## LLM / STT / TTS / SuiteCRM / Redis / Postgres (where to put them)
+
+API keys and secrets are **not** in the repo or in the build. Set them as **environment variables** on each Cloud Run service. Because the build no longer overwrites env vars, whatever you set in the console (or via `gcloud run services update`) **persists across rebuilds**.
+
+**Reference:** See `.env.cloudrun.example` in the repo for the full list of variable **names** (no real values). Copy it to `.env.cloudrun`, fill in locally, then set in Cloud Run per service below. **Never commit `.env.cloudrun`** or paste real keys into the repo.
+
+**Important:** `REDIS_DB` must be a **number** (0–15). For Redis Cloud single DB use `REDIS_DB=0`. A value like `database-MH3YNEOB` is a Render DB name, not a Redis DB index.
+
+### By service
+
+| Service | Env vars to set |
+|--------|------------------|
+| **voice-gateway-service** | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_DB=0`, `DB_URI`; `AGENT_LLM_URL` (agent-llm URL); Twilio: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, `TWILIO_TRANSFER_CALLER_ID`, `FREEPBX_DOMAIN`. Optional STT/TTS if wired: `DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY`, `CARTESIA_API_KEY`, etc. |
+| **agent-llm-service** | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_DB=0`, `DB_URI`; LLM: `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_MODEL`; optional for provider checks: `DEEPGRAM_API_KEY`, `ELEVENLABS_API_KEY`, `CARTESIA_API_KEY`, `CARTESIA_*`. |
+| **call-center-service** | `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, `REDIS_DB=0`, `DB_URI` (if you add DB/Redis). Optional: `CONVONET_API_BASE`, `VOICE_ASSISTANT_URL`, `MORTGAGE_DASHBOARD_URL` for links (see below). |
+| **crm-integration-service** | `REDIS_*` if used; SuiteCRM: `SUITECRM_BASE_URL`, `SUITECRM_CLIENT_ID`, `SUITECRM_CLIENT_SECRET`, `SUITECRM_USERNAME`, `SUITECRM_PASSWORD`. Optional: `DATABASE_URL` (MySQL for SuiteCRM). |
+
+**CONVONET_API_BASE, VOICE_ASSISTANT_URL, MORTGAGE_DASHBOARD_URL (single domain v2.convonetai.com):**  
+When all traffic is on one domain with path-based routing, **do not set** these three on call-center-service (leave them unset). The app then uses relative paths: API base becomes same-origin (empty prefix), voice assistant link `/voice_assistant`, mortgage link `/mortgage_dashboard`. Only set them if the frontend is served from a different origin than the API or you use different hostnames for those pages.
+
+### How to set (one-time per service)
+
+- **Console:** Cloud Run → select service → **Edit & deploy new revision** → **Variables & secrets** → add each variable (paste value from your local `.env.cloudrun` or secret store).
+- **CLI:** Use `--update-env-vars="KEY1=value1,KEY2=value2"`. If a value contains commas, use the `^@^` delimiter:  
+  `--update-env-vars='^@^REDIS_HOST=host@REDIS_PORT=17434@REDIS_PASSWORD=secret@REDIS_DB=0@DB_URI=postgresql://...'`
+
+For production, use **Secret Manager** and `--set-secrets` so secrets don’t appear in the revision config.
 
 ---
 

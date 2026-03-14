@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Assistant — FastAPI WebSocket</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-gradient-to-br from-purple-50 to-indigo-50 min-h-screen flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-xl p-8 max-w-lg w-full">
+        <h1 class="text-2xl font-bold text-gray-800 mb-2">Voice Assistant</h1>
+        <p class="text-sm text-gray-600 mb-6">WebRTC / FastAPI WebSocket (voice-gateway-service). No LiveKit.</p>
+        <div id="status" class="mb-4 p-3 rounded-lg bg-gray-100 text-gray-700 text-sm">Connecting to <span id="wsUrl"></span>…</div>
+        <div id="log" class="mb-6 h-32 overflow-y-auto rounded bg-gray-50 p-2 text-xs font-mono text-gray-600"></div>
+        <div class="flex gap-3 justify-center">
+            <button id="btnStart" disabled class="px-6 py-3 rounded-lg bg-orange-500 text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed">Start</button>
+            <button id="btnStop" disabled class="px-6 py-3 rounded-lg bg-gray-600 text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed">Stop</button>
+        </div>
+    </div>
+    <script>
+        (function () {
+            const wsPath = "{{ websocket_path | default('/webrtc/ws') }}";
+            const wsUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + wsPath;
+            document.getElementById('wsUrl').textContent = wsPath;
+
+            let ws = null;
+            let sessionId = 'session-' + Math.random().toString(36).slice(2, 11);
+            let sequence = 0;
+
+            function log(msg) {
+                const el = document.getElementById('log');
+                el.appendChild(document.createTextNode(new Date().toISOString().slice(11, 23) + ' ' + msg + '\n'));
+                el.scrollTop = el.scrollHeight;
+            }
+
+            function setStatus(text, ok) {
+                const el = document.getElementById('status');
+                el.textContent = text;
+                el.className = 'mb-4 p-3 rounded-lg text-sm ' + (ok ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-700');
+            }
+
+            function connect() {
+                setStatus('Connecting…', false);
+                log('WS connect ' + wsUrl);
+                ws = new WebSocket(wsUrl);
+                ws.onopen = function () {
+                    setStatus('Connected. Authenticating…', true);
+                    log('Connected');
+                    ws.send(JSON.stringify({ type: 'authenticate', session_id: sessionId }));
+                };
+                ws.onmessage = function (ev) {
+                    try {
+                        const msg = JSON.parse(ev.data);
+                        log('← ' + (msg.type || 'message'));
+                        if (msg.type === 'auth_ok') {
+                            setStatus('Ready. Click Start to begin.', true);
+                            document.getElementById('btnStart').disabled = false;
+                        }
+                        if (msg.type === 'error') log('Error: ' + (msg.message || ''));
+                    } catch (e) { log('← ' + ev.data.slice(0, 80)); }
+                };
+                ws.onclose = function () {
+                    setStatus('Disconnected.', false);
+                    document.getElementById('btnStart').disabled = true;
+                    document.getElementById('btnStop').disabled = true;
+                    log('Closed');
+                };
+                ws.onerror = function () { log('WebSocket error'); };
+            }
+
+            document.getElementById('btnStart').onclick = function () {
+                if (!ws || ws.readyState !== WebSocket.OPEN) return;
+                ws.send(JSON.stringify({ type: 'start_recording', session_id: sessionId, stt_mode: 'streaming', language: 'en-US' }));
+                log('Sent start_recording');
+                document.getElementById('btnStop').disabled = false;
+            };
+            document.getElementById('btnStop').onclick = function () {
+                if (!ws || ws.readyState !== WebSocket.OPEN) return;
+                ws.send(JSON.stringify({ type: 'stop_recording', session_id: sessionId }));
+                log('Sent stop_recording');
+                document.getElementById('btnStop').disabled = true;
+            };
+
+            connect();
+        })();
+    </script>
+</body>
+</html>

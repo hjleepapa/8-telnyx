@@ -21,8 +21,8 @@ All four services are exposed under **one domain**, `https://v2.convonetai.com`,
 
 | Path pattern | Backend Cloud Run service | Purpose |
 |--------------|----------------------------|---------|
-| `/`, `/call-center`, `/api/*`, `/static/*`, `/call_center/static/*` | **call-center-service** | Landing page, call center UI, agent/call/customer APIs, static assets |
-| `/webrtc/*`, `/twilio/*` | **voice-gateway-service** | WebSocket `/webrtc/ws`, Twilio webhooks |
+| `/`, `/call-center`, `/voice_assistant`, `/mortgage_dashboard`, `/agent-monitor`, `/tool-execution`, `/api/*`, `/static/*`, `/call_center/static/*` | **call-center-service** | Landing, call center UI, voice assistant UI, dashboards, APIs, static |
+| `/webrtc/*`, `/twilio/*` | **voice-gateway-service** | WebSocket `/webrtc/ws` (no LiveKit), Twilio webhooks |
 | `/agent/*`, `/convonet_todo/*` | **agent-llm-service** | `POST /agent/process`, provider APIs (`/convonet_todo/api/llm-providers`, etc.) |
 | `/patient/*`, `/meeting/create`, `/case/create`, `/note/create` | **crm-integration-service** | CRM (patient search/create, meeting, case, note) |
 | `/health` | Any (or each backend by path) | Health checks; can route `/health` to a single backend or use per-service paths |

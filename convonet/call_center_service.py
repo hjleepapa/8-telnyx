@@ -80,6 +80,44 @@ async def call_center_ui(request: Request):
         {"request": request, "url_for": _url_for},
     )
 
+
+@app.get("/voice_assistant", response_class=HTMLResponse)
+@app.get("/voice-assistant", response_class=HTMLResponse)
+async def voice_assistant_ui(request: Request):
+    """Voice assistant UI: connects to FastAPI WebSocket at /webrtc/ws (voice-gateway-service). No LiveKit."""
+    return templates.TemplateResponse(
+        "voice_assistant.html",
+        {"request": request, "url_for": _url_for, "websocket_path": "/webrtc/ws"},
+    )
+
+
+@app.get("/mortgage_dashboard", response_class=HTMLResponse)
+async def mortgage_dashboard_ui(request: Request):
+    """Mortgage dashboard UI."""
+    return templates.TemplateResponse(
+        "mortgage_dashboard.html",
+        {"request": request, "url_for": _url_for},
+    )
+
+
+@app.get("/agent-monitor", response_class=HTMLResponse)
+async def agent_monitor_ui(request: Request):
+    """Agent monitor dashboard UI."""
+    return templates.TemplateResponse(
+        "agent_monitor_dashboard.html",
+        {"request": request, "url_for": _url_for},
+    )
+
+
+@app.get("/tool-execution", response_class=HTMLResponse)
+async def tool_execution_ui(request: Request):
+    """Tool execution dashboard UI."""
+    return templates.TemplateResponse(
+        "tool_execution_dashboard.html",
+        {"request": request, "url_for": _url_for},
+    )
+
+
 class AgentStatusUpdate(BaseModel):
     agent_id: str
     status: str # e.g., "Available", "Busy", "Offline"

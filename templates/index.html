@@ -10,13 +10,13 @@
                 <h2 class="text-4xl font-bold text-gray-800 mb-4">🎤 Convonet Voice AI Productivity System</h2>
                 <p class="text-xl text-gray-600 mb-6">
                     Enterprise-grade voice AI platform on <strong>Google Cloud Run</strong>: FastAPI microservices (voice-gateway, agent-llm, call-center, crm-integration),
-                    multi-LLM support (Claude, Gemini, OpenAI), WebRTC/FastAPI WebSocket voice, domain-specific agents (Productivity, Mortgage, Healthcare),
+                    multi-LLM support (Claude, Gemini, OpenAI), <strong>WebRTC / FastAPI WebSocket</strong> voice (no LiveKit on GCP — voice-gateway-service only), domain-specific agents (Productivity, Mortgage, Healthcare),
                     <strong>SuiteCRM integration</strong> (contacts, cases, appointments, notes), and intelligent call center with transfer context.
                 </p>
 
                 <!-- Quick Links -->
                 <div class="flex justify-center gap-4 mb-8 flex-wrap">
-                    <a href="{{ voice_assistant_url or '/webrtc/voice-assistant' }}"
+                    <a href="{{ voice_assistant_url or '/voice_assistant' }}"
                         class="inline-flex items-center px-6 py-3 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors shadow-md font-semibold">
                         <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -319,7 +319,7 @@
 
                 <!-- Demo Link -->
                 <div class="text-center mt-8">
-                    <a href="{{ voice_assistant_url or '/webrtc/voice-assistant' }}"
+                    <a href="{{ voice_assistant_url or '/voice_assistant' }}"
                         class="inline-flex items-center px-6 py-3 bg-gradient-to-r from-orange-500 to-amber-500 text-white rounded-lg hover:from-orange-600 hover:to-amber-600 transition-all shadow-lg font-semibold text-lg">
                         <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -377,7 +377,7 @@
                 <div class="text-center">
                     <h3 class="text-xl font-semibold text-gray-800 mb-4">Quick Access</h3>
                     <div class="flex justify-center gap-4 flex-wrap">
-                        <a href="{{ voice_assistant_url or '/webrtc/voice-assistant' }}"
+                        <a href="{{ voice_assistant_url or '/voice_assistant' }}"
                             class="inline-flex items-center px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors">
                             <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -393,7 +393,7 @@
                             </svg>
                             Agent Monitor
                         </a>
-                        <a href="{{ mortgage_dashboard_url or '/convonet_todo/mortgage/dashboard' }}"
+                        <a href="{{ mortgage_dashboard_url or '/mortgage_dashboard' }}"
                             class="inline-flex items-center px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors">
                             <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
