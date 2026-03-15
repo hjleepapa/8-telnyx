@@ -133,6 +133,23 @@ For the Twilio/WebSocket flow, voice-gateway calls the agent-llm service. If the
 
 ---
 
+## Twilio transfer to FusionPBX (voice-gateway-service)
+
+When a user on a **Twilio voice call** says “transfer me to an agent,” the agent returns a transfer marker and the voice-gateway returns TwiML that Dials the SIP endpoint (e.g. `2001@FusionPBX`). Set these on **voice-gateway-service**:
+
+| Variable | Purpose |
+|----------|---------|
+| `VOICE_GATEWAY_PUBLIC_URL` or `WEBHOOK_BASE_URL` | Base URL Twilio uses for webhooks (e.g. `https://voice-gateway-service-xxx.run.app` or `https://v2.convonetai.com`). Used for the transfer callback URL. |
+| `FREEPBX_DOMAIN` or `FUSIONPBX_SIP_DOMAIN` | FusionPBX host (IP or FQDN) for SIP, e.g. `pbx.example.com` or `136.115.41.45`. |
+| `FUSIONPBX_SIP_TRANSPORT` | Optional; `udp` (default) or `tcp`. |
+| `TRANSFER_TIMEOUT` | Optional; seconds to wait for the agent to answer (default `30`). |
+| `TWILIO_TRANSFER_CALLER_ID` or `TWILIO_PHONE_NUMBER` | Caller ID presented to FusionPBX when dialing the extension. |
+| `FREEPBX_SIP_USERNAME` / `FREEPBX_SIP_PASSWORD` | Optional; SIP auth if FusionPBX requires it (otherwise whitelist Twilio IPs). |
+
+Flow: `/twilio/process_audio` receives the agent response with `transfer_marker` → parses `TRANSFER_INITIATED:extension|department|reason` → returns TwiML with `<Dial><Sip>sip:extension@domain</Sip></Dial>`. When the Dial ends, Twilio POSTs to `{VOICE_GATEWAY_PUBLIC_URL}/twilio/transfer_callback?extension=...` (if base URL is set).
+
+---
+
 ## Switching to GCP later (Memorystore + Cloud SQL)
 
 When you’re ready to reduce latency:
@@ -142,3 +159,12 @@ When you’re ready to reduce latency:
 3. Optionally use a VPC connector so Cloud Run can reach Memorystore/Cloud SQL private IPs.
 
 No code changes are required; the app already reads these from the environment.
+
+---
+
+## Artifact Registry: automatic removal of old container images
+
+After each full deploy (`gcloud builds submit --config cloudbuild.yaml .`), **Cloud Build runs a cleanup step** that removes old container image tags for all four services. For each package (`voice-gateway-service`, `agent-llm-service`, `call-center-service`, `crm-integration-service`), it keeps only the tag you just deployed (e.g. `latest` or `$_COMMIT_SHA`) and deletes any other tags. That prevents old tags from accumulating when you use unique tags per build.
+
+**Optional: remove untagged images**  
+When you always push the same tag (e.g. `latest`), the previous digest becomes untagged. To have GCP automatically delete those, set a **cleanup policy** on the repository once: **Console** → Artifact Registry → **convonet-repo** → **Cleanup policies** → Add policy → “Keep most recent versions” → set **1** → Save. You can also use `gcloud artifacts repositories set-cleanup-policies` with a JSON policy file (see [Cleanup policy overview](https://cloud.google.com/artifact-registry/docs/repositories/cleanup-policy-overview)).

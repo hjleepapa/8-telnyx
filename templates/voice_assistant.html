@@ -28,6 +28,10 @@
         </div>
         <div id="transcript" class="mb-2 p-2 rounded bg-blue-50 text-sm text-gray-700 hidden"></div>
         <div id="response" class="mb-2 p-2 rounded bg-green-50 text-sm text-gray-700 hidden"></div>
+        <div id="processingBox" class="mb-2 p-3 rounded bg-amber-50 border border-amber-200 hidden">
+            <p id="processingStatus" class="text-sm text-amber-800">Please wait…</p>
+            <p id="processingElapsed" class="text-lg font-mono font-semibold text-amber-700 mt-1">0s</p>
+        </div>
         <div id="log" class="mb-6 h-32 overflow-y-auto rounded bg-gray-50 p-2 text-xs font-mono text-gray-600"></div>
     </div>
     <script>
@@ -42,6 +46,10 @@
             let mediaRecorder = null;
             let audioChunks = [];
             let stream = null;
+            let currentResponseAudio = null;
+            let processingTimerId = null;
+            let holdMusicCtx = null;
+            let holdMusicOsc = null;
 
             function log(msg) {
                 const el = document.getElementById('log');
@@ -55,11 +63,61 @@
                 el.className = 'mb-4 p-3 rounded-lg text-sm ' + (ok ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-700');
             }
 
+            function stopHoldMusic() {
+                if (holdMusicOsc) {
+                    try { holdMusicOsc.stop(); } catch (e) {}
+                    holdMusicOsc = null;
+                }
+                if (holdMusicCtx) {
+                    try { holdMusicCtx.close(); } catch (e) {}
+                    holdMusicCtx = null;
+                }
+                if (processingTimerId) {
+                    clearInterval(processingTimerId);
+                    processingTimerId = null;
+                }
+                document.getElementById('processingBox').classList.add('hidden');
+            }
+
+            function startHoldMusicAndTimer(startedAtTs) {
+                document.getElementById('processingBox').classList.remove('hidden');
+                document.getElementById('processingStatus').textContent = 'Please wait…';
+                if (window.speechSynthesis && window.SpeechSynthesisUtterance) {
+                    var u = new SpeechSynthesisUtterance('Please wait.');
+                    u.rate = 0.9;
+                    u.volume = 1;
+                    window.speechSynthesis.speak(u);
+                }
+                function updateElapsed() {
+                    var elapsed = Math.floor((Date.now() / 1000) - startedAtTs);
+                    document.getElementById('processingElapsed').textContent = elapsed + 's';
+                }
+                updateElapsed();
+                processingTimerId = setInterval(updateElapsed, 1000);
+                try {
+                    holdMusicCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    holdMusicOsc = holdMusicCtx.createOscillator();
+                    var gain = holdMusicCtx.createGain();
+                    gain.gain.value = 0.03;
+                    holdMusicOsc.connect(gain);
+                    gain.connect(holdMusicCtx.destination);
+                    holdMusicOsc.frequency.value = 220;
+                    holdMusicOsc.type = 'sine';
+                    holdMusicOsc.start();
+                } catch (e) { log('Hold music: ' + e.message); }
+            }
+
             function playAudioFromBase64(b64, mime) {
+                if (currentResponseAudio) {
+                    try { currentResponseAudio.pause(); } catch (e) {}
+                    currentResponseAudio = null;
+                }
                 mime = mime || 'audio/mpeg';
                 const dataUrl = 'data:' + mime + ';base64,' + b64;
                 const audio = new Audio(dataUrl);
-                audio.play().catch(function (e) { log('Play failed: ' + e.message); });
+                currentResponseAudio = audio;
+                audio.onended = audio.onerror = function () { currentResponseAudio = null; };
+                audio.play().catch(function (e) { log('Play failed: ' + e.message); currentResponseAudio = null; });
             }
 
             function connect() {
@@ -82,24 +140,35 @@
                             setStatus('Ready. Click Start, speak, then Stop.', true);
                             document.getElementById('btnStart').disabled = false;
                         }
+                        if (msg.type === 'greeting' && msg.data_b64) {
+                            playAudioFromBase64(msg.data_b64);
+                            setStatus('Playing greeting…', true);
+                        }
                         if (msg.type === 'status') {
                             setStatus(msg.message || 'Processing…', true);
                         }
+                        if (msg.type === 'processing_start' && msg.started_at_ts != null) {
+                            startHoldMusicAndTimer(msg.started_at_ts);
+                        }
                         if (msg.type === 'transcript_final' && msg.text) {
+                            stopHoldMusic();
                             const el = document.getElementById('transcript');
                             el.textContent = 'You: ' + msg.text;
                             el.classList.remove('hidden');
                         }
                         if (msg.type === 'agent_final' && msg.text) {
+                            stopHoldMusic();
                             const el = document.getElementById('response');
                             el.textContent = 'Assistant: ' + msg.text;
                             el.classList.remove('hidden');
                         }
                         if (msg.type === 'audio_chunk' && msg.data_b64) {
+                            stopHoldMusic();
                             playAudioFromBase64(msg.data_b64);
                             setStatus('Playing response…', true);
                         }
                         if (msg.type === 'error') {
+                            stopHoldMusic();
                             log('Error: ' + (msg.message || ''));
                             if (msg.code === 'auth_failed' || (msg.message && msg.message.toLowerCase().indexOf('pin') !== -1)) {
                                 document.getElementById('authError').textContent = msg.message || 'Invalid PIN.';
@@ -133,6 +202,12 @@
 
             document.getElementById('btnStart').onclick = function () {
                 if (!ws || ws.readyState !== WebSocket.OPEN) return;
+                if (currentResponseAudio) {
+                    try { currentResponseAudio.pause(); currentResponseAudio.currentTime = 0; } catch (e) {}
+                    currentResponseAudio = null;
+                    log('Barge-in: stopped playback');
+                }
+                stopHoldMusic();
                 ws.send(JSON.stringify({ type: 'start_recording', session_id: sessionId, stt_mode: 'streaming', language: 'en-US' }));
                 log('Sent start_recording');
                 document.getElementById('btnStop').disabled = false;

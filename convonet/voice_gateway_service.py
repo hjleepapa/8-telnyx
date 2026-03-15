@@ -20,6 +20,8 @@ from convonet.schemas import (
     StartRecordingMessage,
     AudioChunkMessage,
     AuthOkMessage,
+    GreetingMessage,
+    ProcessingStartMessage,
     TranscriptPartialMessage,
     TranscriptFinalMessage,
     ErrorMessage,
@@ -48,7 +50,130 @@ app.add_middleware(
 AGENT_LLM_URL = os.getenv("AGENT_LLM_URL", "http://localhost:8080").rstrip("/")
 
 def get_webhook_base_url():
-    return os.getenv('WEBHOOK_BASE_URL', os.getenv('RENDER_EXTERNAL_URL', ''))
+    """Base URL for Twilio webhooks (voice-gateway public URL). Set WEBHOOK_BASE_URL or VOICE_GATEWAY_PUBLIC_URL."""
+    return (
+        os.getenv("VOICE_GATEWAY_PUBLIC_URL")
+        or os.getenv("WEBHOOK_BASE_URL")
+        or os.getenv("RENDER_EXTERNAL_URL", "")
+    ).rstrip("/")
+
+
+def _cache_transfer_context_for_call_center(
+    extension: str,
+    transfer_context: Dict[str, Any],
+    call_sid: Optional[str] = None,
+    call_id: Optional[str] = None,
+) -> None:
+    """Store transfer context (conversation history, user) in Redis for call-center UI. Key: callcenter:customer:{extension}:{call_sid|call_id}."""
+    if not extension or not transfer_context:
+        return
+    try:
+        from convonet.redis_manager import redis_manager
+        if not redis_manager.is_available():
+            return
+        profile = {
+            "extension": extension,
+            "customer_id": transfer_context.get("user_id") or "unknown",
+            "name": transfer_context.get("user_name") or "Voice Caller",
+            "phone": "",
+            "notes": "Transferred from voice assistant",
+            "conversation_history": transfer_context.get("conversation_history") or [],
+            "activities": [],
+        }
+        if call_sid:
+            profile["call_sid"] = call_sid
+            key = f"callcenter:customer:{extension}:{call_sid}"
+        elif call_id:
+            profile["call_id"] = call_id
+            key = f"callcenter:customer:{extension}:{call_id}"
+        else:
+            return
+        redis_manager.redis_client.setex(key, 300, json.dumps(profile))
+        logger.info("Cached transfer context for call-center: %s", key)
+        fallback_key = f"callcenter:customer:{extension}"
+        redis_manager.redis_client.setex(fallback_key, 300, json.dumps(profile))
+    except Exception as e:
+        logger.warning("Failed to cache transfer context: %s", e)
+
+
+def _parse_transfer_marker(marker: str) -> Tuple[str, str, str]:
+    """Parse TRANSFER_INITIATED:extension|department|reason. Returns (extension, department, reason)."""
+    if not marker or "TRANSFER_INITIATED:" not in marker:
+        return ("2001", "support", "User requested transfer to human agent")
+    data = marker.replace("TRANSFER_INITIATED:", "").strip()
+    parts = data.split("|")
+    extension = (parts[0].strip() or "2001") if parts else "2001"
+    department = (parts[1].strip() or "support") if len(parts) > 1 else "support"
+    reason = (parts[2].strip() or "User requested transfer") if len(parts) > 2 else "User requested transfer"
+    return (extension, department, reason)
+
+
+def _build_transfer_twiml(extension: str, department: str, reason: str) -> str:
+    """
+    Build TwiML to transfer the current call to a SIP endpoint (e.g. 2001@FusionPBX).
+    Uses FREEPBX_DOMAIN or FUSIONPBX_SIP_DOMAIN, optional SIP auth, TRANSFER_TIMEOUT, and optional callback.
+    """
+    domain = os.getenv("FUSIONPBX_SIP_DOMAIN") or os.getenv("FREEPBX_DOMAIN", "")
+    transport = (os.getenv("FUSIONPBX_SIP_TRANSPORT") or "udp").lower()
+    timeout = int(os.getenv("TRANSFER_TIMEOUT", "30"))
+    sip_user = os.getenv("FREEPBX_SIP_USERNAME") or os.getenv("FUSIONPBX_SIP_USERNAME", "")
+    sip_pass = os.getenv("FREEPBX_SIP_PASSWORD") or os.getenv("FUSIONPBX_SIP_PASSWORD", "")
+    caller_id = (
+        os.getenv("TWILIO_TRANSFER_CALLER_ID")
+        or os.getenv("TWILIO_CALLER_ID")
+        or os.getenv("TWILIO_PHONE_NUMBER", "")
+    )
+
+    response = VoiceResponse()
+    response.say("Transferring you to an agent. Please wait.", voice="Polly.Amy")
+
+    if not domain:
+        logger.warning("Twilio transfer: FREEPBX_DOMAIN / FUSIONPBX_SIP_DOMAIN not set; cannot build SIP Dial")
+        response.say("Transfer is not configured. Please try again later.", voice="Polly.Amy")
+        return str(response)
+
+    sip_uri = f"sip:{extension}@{domain};transport={transport}"
+    logger.info("Twilio transfer: dialing SIP URI=%s", sip_uri)
+
+    base_url = get_webhook_base_url()
+    dial_kwargs = dict(
+        answer_on_bridge=True,
+        timeout=timeout,
+    )
+    if caller_id:
+        dial_kwargs["caller_id"] = caller_id
+    if base_url:
+        dial_kwargs["action"] = f"{base_url}/twilio/transfer_callback?extension={extension}"
+
+    dial = response.dial(**dial_kwargs)
+    if sip_user and sip_pass:
+        dial.sip(sip_uri, username=sip_user, password=sip_pass)
+    else:
+        dial.sip(sip_uri)
+
+    response.say("I'm sorry, the transfer failed. Please try again later.", voice="Polly.Amy")
+    response.hangup()
+    return str(response)
+
+# Greeting text after PIN login (played via TTS)
+DEFAULT_GREETING = "Hi, this is Convonet AI. What can I help you with today?"
+
+
+def _synthesize_greeting_sync(user_name: Optional[str] = None) -> Tuple[str, Optional[bytes]]:
+    """Build greeting text and TTS audio. Runs in thread. Returns (text, audio_bytes)."""
+    if user_name and user_name.strip():
+        text = f"Hi {user_name.strip()}, this is Convonet AI. What can I help you with today?"
+    else:
+        text = DEFAULT_GREETING
+    try:
+        from convonet.deepgram import get_deepgram_service
+        svc = get_deepgram_service()
+        audio = svc.synthesize_speech(text, voice="aura-asteria-en")
+        return (text, audio)
+    except Exception as e:
+        logger.warning("Greeting TTS failed: %s", e)
+        return (text, None)
+
 
 # Active WebSocket connections: session_id -> WebSocket
 active_connections: Dict[str, WebSocket] = {}
@@ -125,11 +250,12 @@ def _run_stt_tts_pipeline_sync(
     user_id: Optional[str] = None,
     user_name: Optional[str] = None,
     t0: Optional[float] = None,
-) -> Tuple[Optional[str], Optional[str], Optional[bytes]]:
-    """Run STT -> agent -> TTS synchronously (call from thread). Returns (transcript, agent_text, tts_audio_bytes)."""
+) -> Tuple[Optional[str], Optional[str], Optional[bytes], Optional[str]]:
+    """Run STT -> agent -> TTS synchronously (call from thread). Returns (transcript, agent_text, tts_audio_bytes, transfer_marker)."""
     transcript = None
     agent_text = None
     tts_audio = None
+    transfer_marker = None
     uid = user_id or "voice-ws"
     if t0 is None:
         t0 = time.time()
@@ -141,7 +267,7 @@ def _run_stt_tts_pipeline_sync(
         transcript = transcribe_audio_with_deepgram_webrtc(audio_bytes, language=language or "en")
         stt_ms = (time.time() - t0) * 1000
         if not transcript or not transcript.strip():
-            return (None, None, None)
+            return (None, None, None, None)
         # Agent LLM: send metadata so agent-monitor can show tool calls and voice response timing
         agent_url = f"{AGENT_LLM_URL}/agent/process"
         payload = {
@@ -166,16 +292,21 @@ def _run_stt_tts_pipeline_sync(
         resp.raise_for_status()
         data = resp.json()
         agent_text = data.get("response") or ""
+        transfer_marker = data.get("transfer_marker")
+        transfer_context = data.get("transfer_context")
+        if transfer_marker and transfer_context:
+            ext, _dept, _reason = _parse_transfer_marker(transfer_marker)
+            _cache_transfer_context_for_call_center(ext, transfer_context, call_sid=None, call_id=session_id)
         if not agent_text.strip():
-            return (transcript, "", None)
+            return (transcript, "", None, transfer_marker)
         # TTS (Deepgram)
         from convonet.deepgram import get_deepgram_service
         svc = get_deepgram_service()
         tts_audio = svc.synthesize_speech(agent_text, voice="aura-asteria-en")
-        return (transcript, agent_text, tts_audio)
+        return (transcript, agent_text, tts_audio, transfer_marker)
     except Exception as e:
         logger.exception("Pipeline error: %s", e)
-        return (transcript, agent_text, tts_audio)
+        return (transcript, agent_text, tts_audio, None)
 
 
 async def _run_pipeline_and_send(
@@ -195,7 +326,16 @@ async def _run_pipeline_and_send(
         await websocket.send_json(
             StatusMessage(session_id=session_id, message="Transcribing…").model_dump(mode="json")
         )
-        transcript, agent_text, tts_audio = await loop.run_in_executor(
+        await websocket.send_json(
+            StatusMessage(session_id=session_id, message="Please wait…").model_dump(mode="json")
+        )
+        await websocket.send_json(
+            ProcessingStartMessage(
+                session_id=session_id,
+                started_at_ts=time.time(),
+            ).model_dump(mode="json")
+        )
+        result = await loop.run_in_executor(
             None,
             _run_stt_tts_pipeline_sync,
             session_id,
@@ -205,6 +345,7 @@ async def _run_pipeline_and_send(
             user_name,
             t0,
         )
+        transcript, agent_text, tts_audio, transfer_marker = (result + (None, None, None))[:4]
         if not transcript or not transcript.strip():
             await websocket.send_json(
                 ErrorMessage(session_id=session_id, message="No speech detected. Please try again.").model_dump(mode="json")
@@ -219,7 +360,7 @@ async def _run_pipeline_and_send(
             )
             return
         await websocket.send_json(
-            AgentFinalMessage(session_id=session_id, text=agent_text, transfer_marker=None).model_dump(mode="json")
+            AgentFinalMessage(session_id=session_id, text=agent_text, transfer_marker=transfer_marker).model_dump(mode="json")
         )
         if tts_audio:
             b64 = base64.b64encode(tts_audio).decode("utf-8")
@@ -317,14 +458,17 @@ async def process_audio(request: Request, user_id: str = Query(...)):
         agent_data = resp.json()
         agent_response = agent_data.get("response")
         transfer_marker = agent_data.get("transfer_marker")
+        transfer_context = agent_data.get("transfer_context")
+        if transfer_marker and transfer_context and call_sid:
+            ext, _dept, _reason = _parse_transfer_marker(transfer_marker)
+            _cache_transfer_context_for_call_center(ext, transfer_context, call_sid=call_sid, call_id=None)
         
         response = VoiceResponse()
         
         if transfer_marker:
-            # Handle transfer logic
-            response.say("Transferring you to an agent. Please wait.", voice='Polly.Amy')
-            # Assuming FusionPBX or similar setup
-            response.dial("2001") # Placeholder
+            ext, dept, reason = _parse_transfer_marker(transfer_marker)
+            twiml = _build_transfer_twiml(ext, dept, reason)
+            return Response(content=twiml, media_type="text/xml")
         else:
             gather = Gather(
                 input='speech',
@@ -345,6 +489,37 @@ async def process_audio(request: Request, user_id: str = Query(...)):
         response.say("I'm sorry, I'm having trouble connecting to the brain. Please try again later.", voice='Polly.Amy')
         response.hangup()
         return Response(content=str(response), media_type="text/xml")
+
+
+@app.post("/twilio/transfer_callback")
+async def twilio_transfer_callback(request: Request):
+    """
+    Twilio callback when the Dial to SIP completes (success, no-answer, busy, failed).
+    Returns TwiML to speak status and hang up if the transfer did not complete.
+    """
+    form_data = await request.form()
+    dial_status = form_data.get("DialCallStatus", "unknown")
+    call_sid = form_data.get("CallSid", "")
+    extension = request.query_params.get("extension", "2001")
+
+    logger.info("Twilio transfer_callback: call_sid=%s extension=%s DialCallStatus=%s", call_sid, extension, dial_status)
+
+    response = VoiceResponse()
+    if dial_status == "completed":
+        # Call was connected; nothing more to do
+        pass
+    elif dial_status == "busy":
+        response.say("The agent is currently busy. Please try again later.", voice="Polly.Amy")
+        response.hangup()
+    elif dial_status == "no-answer":
+        response.say("The agent did not answer. Please try again later.", voice="Polly.Amy")
+        response.hangup()
+    else:
+        response.say("The transfer could not be completed. Please try again later.", voice="Polly.Amy")
+        response.hangup()
+
+    return Response(content=str(response), media_type="text/xml")
+
 
 @app.websocket("/webrtc/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -392,6 +567,26 @@ async def websocket_endpoint(websocket: WebSocket):
                         ).model_dump(mode="json")
                     )
                     logger.info(f"Session {session_id} authenticated (user_id={uid})")
+                    # Send greeting TTS so caller hears "Hi, this is Convonet AI. What can I help you with today?"
+                    async def send_greeting():
+                        try:
+                            loop = asyncio.get_event_loop()
+                            greeting_text, greeting_audio = await loop.run_in_executor(
+                                None, _synthesize_greeting_sync, state.get("user_name")
+                            )
+                            if greeting_audio:
+                                b64 = base64.b64encode(greeting_audio).decode("utf-8")
+                                await websocket.send_json(
+                                    GreetingMessage(
+                                        session_id=session_id,
+                                        text=greeting_text,
+                                        data_b64=b64,
+                                    ).model_dump(mode="json")
+                                )
+                                logger.info("Greeting sent to %s", session_id)
+                        except Exception as e:
+                            logger.warning("Failed to send greeting: %s", e)
+                    asyncio.create_task(send_greeting())
                     
                 elif msg_type == ClientMessageType.START_RECORDING:
                     start = StartRecordingMessage(**message)

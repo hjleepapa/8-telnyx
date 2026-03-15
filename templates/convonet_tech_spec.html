@@ -58,7 +58,7 @@
                     <span class="bg-rose-100 text-rose-800 px-3 py-1 rounded-full text-sm font-medium">Sentry</span>
                     <span class="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-sm font-medium">Redis</span>
                     <span
-                        class="bg-violet-100 text-violet-800 px-3 py-1 rounded-full text-sm font-medium">Composio</span>
+                        class="bg-violet-100 text-violet-800 px-3 py-1 rounded-full text-sm font-medium">Composio (opt)</span>
                 </div>
             </div>
         </div>
@@ -325,7 +325,7 @@
                 </div>
             </div>
 
-            <!-- Composio Integration -->
+            <!-- Composio (optional) -->
             <div class="bg-white p-5 rounded-lg shadow-sm">
                 <div class="flex items-center mb-3">
                     <span class="bg-violet-100 p-2 rounded-full mr-3">
@@ -334,18 +334,12 @@
                                 d="M13 10V3L4 14h7v7l9-11h-7z"></path>
                         </svg>
                     </span>
-                    <h4 class="text-lg font-semibold text-gray-800">Composio Integration</h4>
+                    <h4 class="text-lg font-semibold text-gray-800">Composio (optional)</h4>
                 </div>
                 <ul class="text-sm text-gray-600 space-y-1.5">
-                    <li>✓ Slack workspace integration</li>
-                    <li>✓ GitHub repository management</li>
-                    <li>✓ Gmail email automation</li>
-                    <li>✓ Notion workspace sync</li>
-                    <li>✓ External platform connectivity</li>
+                    <li>Optional external tools (Slack, GitHub, Gmail, Notion, etc.)</li>
+                    <li>Not required for GCP core voice/agent/call-center flows</li>
                 </ul>
-                <div class="mt-3 text-xs text-gray-500">
-                    <strong>Files:</strong> COMPOSIO_FEATURES_SUMMARY.md
-                </div>
             </div>
 
             <!-- Sentry Monitoring -->
@@ -368,7 +362,7 @@
                     <li>✓ Production-grade observability</li>
                 </ul>
                 <div class="mt-3 text-xs text-gray-500">
-                    <strong>Integration:</strong> Flask + SQLAlchemy + Logging
+                    <strong>Integration:</strong> FastAPI (agent-llm, voice-gateway) + Logging
                 </div>
             </div>
 
@@ -493,313 +487,116 @@
     </div>
 </div>
 
-<!-- LiveKit WebRTC Voice Integration Architecture -->
+<!-- GCP WebSocket Voice Architecture (no LiveKit on GCP) -->
 <div class="mb-12">
-    <h3 class="text-2xl font-semibold mb-6 text-gray-800">LiveKit WebRTC Voice Integration Architecture</h3>
+    <h3 class="text-2xl font-semibold mb-6 text-gray-800">GCP WebSocket Voice Architecture</h3>
     <div class="bg-gradient-to-r from-sky-50 to-blue-50 p-6 rounded-lg border-2 border-sky-200">
         <p class="text-gray-700 mb-6">
-            The LiveKit WebRTC Voice Interface provides browser-based voice interaction with real-time audio streaming
-            via LiveKit,
-            domain-specific agents (Productivity, Mortgage, Healthcare), streaming STT (Deepgram) and TTS (Deepgram,
-            ElevenLabs, Cartesia),
-            and seamless integration with the LangGraph AI agent. Users interact with the assistant directly through
-            their web browser.
+            On <strong>Google Cloud Run</strong>, voice uses <strong>FastAPI WebSocket</strong> only—<strong>no LiveKit</strong>. The browser connects to <strong>voice-gateway-service</strong> at <code class="bg-gray-200 px-1 rounded">/webrtc/ws</code>. After PIN auth (PostgreSQL or env), the pipeline runs: batch STT (Deepgram) → HTTP <code class="bg-gray-200 px-1 rounded">POST</code> to agent-llm-service → TTS (Deepgram) → transcript_final, agent_final, and audio_chunk back to the client. Domain agents (Productivity, Mortgage, Healthcare) and Agent Monitor (tool calls, voice_timing) are unchanged.
         </p>
 
         <div class="mb-6 text-center">
-            <a href="{{ url_for('webrtc_voice.voice_assistant') }}" target="_blank" rel="noopener noreferrer"
+            <a href="/voice_assistant" target="_blank" rel="noopener noreferrer"
                 class="inline-flex items-center gap-2 px-6 py-3 bg-sky-600 hover:bg-sky-700 text-white rounded-lg transition-colors shadow-md">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z">
                     </path>
                 </svg>
-                <span class="font-semibold">Try LiveKit Voice Assistant →</span>
+                <span class="font-semibold">Try Voice Assistant →</span>
             </a>
             <p class="text-xs text-gray-500 mt-2">
-                <a href="{{ url_for('webrtc_voice.voice_assistant') }}" target="_blank" rel="noopener noreferrer"
+                <a href="/voice_assistant" target="_blank" rel="noopener noreferrer"
                     class="text-blue-600 hover:text-blue-800 underline">
-                    /webrtc/voice-assistant
+                    /voice_assistant
                 </a>
+                &nbsp;· WebSocket: <code class="bg-gray-200 px-1 rounded">/webrtc/ws</code> (voice-gateway-service)
             </p>
         </div>
 
         <div class="mb-8">
-            <h4 class="text-lg font-semibold mb-4 text-gray-800">LiveKit Voice Assistant Architecture</h4>
+            <h4 class="text-lg font-semibold mb-4 text-gray-800">Voice Assistant Architecture (GCP)</h4>
             <div class="bg-white p-6 rounded-lg border-2 border-gray-200">
-                <!-- WebRTC Speech-to-Deepgram Flow Diagram -->
                 <div class="mb-8">
-                    <h5 class="text-lg font-semibold mb-4 text-gray-800">LiveKit WebRTC Processing Flow</h5>
+                    <h5 class="text-lg font-semibold mb-4 text-gray-800">WebSocket Voice Processing Flow</h5>
                     <div class="bg-gray-50 p-4 rounded-lg border">
-                        <div class="flex justify-center items-center space-x-4">
-                            <!-- Browser -->
-                            <div class="text-center">
-                                <div
-                                    class="w-12 h-12 bg-blue-100 border-2 border-blue-300 rounded-full flex items-center justify-center mx-auto mb-2">
-                                    <span class="text-blue-800 font-bold text-xs">🌐</span>
-                                </div>
-                                <div class="text-xs font-medium text-gray-800">Browser</div>
-                                <div class="text-xs text-gray-600">WebRTC</div>
-                            </div>
-
-                            <!-- Arrow -->
-                            <div class="flex items-center">
-                                <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor"
-                                    viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                        d="M9 5l7 7-7 7" />
-                                </svg>
-                            </div>
-                            <!-- Socket.IO -->
-                            <div class="text-center">
-                                <div
-                                    class="w-12 h-12 bg-green-100 border-2 border-green-300 rounded-full flex items-center justify-center mx-auto mb-2">
-                                    <span class="text-green-800 font-bold text-xs">🚀</span>
-                                </div>
-                                <div class="text-xs font-medium text-gray-800">FastAPI Gateway</div>
-                                <div class="text-xs text-gray-600">ASGI/WSGI</div>
-                            </div>
-
-                            <!-- Arrow -->
-                            <div class="flex items-center">
-                                <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor"
-                                    viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                        d="M9 5l7 7-7 7" />
-                                </svg>
-                            </div>
-
-                            <!-- Socket.IO -->
-                            <div class="text-center">
-                                <div
-                                    class="w-12 h-12 bg-blue-100 border-2 border-blue-300 rounded-full flex items-center justify-center mx-auto mb-2">
-                                    <span class="text-blue-800 font-bold text-xs">📡</span>
-                                </div>
-                                <div class="text-xs font-medium text-gray-800">Socket.IO</div>
-                                <div class="text-xs text-gray-600">Long Polling</div>
-                            </div>
-
-                            <!-- Arrow -->
-                            <div class="flex items-center">
-                                <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor"
-                                    viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                        d="M9 5l7 7-7 7" />
-                                </svg>
-                            </div>
-
-                            <!-- Redis Buffer -->
-                            <div class="text-center">
-                                <div
-                                    class="w-12 h-12 bg-amber-100 border-2 border-amber-300 rounded-full flex items-center justify-center mx-auto mb-2">
-                                    <span class="text-amber-800 font-bold text-xs">💾</span>
-                                </div>
-                                <div class="text-xs font-medium text-gray-800">Redis</div>
-                                <div class="text-xs text-gray-600">Buffer</div>
-                            </div>
-
-                            <!-- Arrow -->
-                            <div class="flex items-center">
-                                <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor"
-                                    viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                        d="M9 5l7 7-7 7" />
-                                </svg>
-                            </div>
-
-                            <!-- Deepgram -->
-                            <div class="text-center">
-                                <div
-                                    class="w-12 h-12 bg-purple-100 border-2 border-purple-300 rounded-full flex items-center justify-center mx-auto mb-2">
-                                    <span class="text-purple-800 font-bold text-xs">🎧</span>
-                                </div>
-                                <div class="text-xs font-medium text-gray-800">Deepgram</div>
-                                <div class="text-xs text-gray-600">STT API</div>
-                            </div>
-
-                            <!-- Arrow -->
-                            <div class="flex items-center">
-                                <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor"
-                                    viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                        d="M9 5l7 7-7 7" />
-                                </svg>
-                            </div>
-
-                            <!-- LangGraph -->
-                            <div class="text-center">
-                                <div
-                                    class="w-12 h-12 bg-indigo-100 border-2 border-indigo-300 rounded-full flex items-center justify-center mx-auto mb-2">
-                                    <span class="text-indigo-800 font-bold text-xs">🧠</span>
-                                </div>
-                                <div class="text-xs font-medium text-gray-800">LangGraph</div>
-                                <div class="text-xs text-gray-600">AI Agent</div>
-                            </div>
+                        <div class="flex justify-center items-center flex-wrap gap-2">
+                            <div class="text-center"><div class="w-12 h-12 bg-blue-100 border-2 border-blue-300 rounded-full flex items-center justify-center mx-auto mb-2"><span class="text-blue-800 font-bold text-xs">🌐</span></div><div class="text-xs font-medium text-gray-800">Browser</div><div class="text-xs text-gray-600">getUserMedia</div></div>
+                            <span class="text-gray-400">→</span>
+                            <div class="text-center"><div class="w-12 h-12 bg-green-100 border-2 border-green-300 rounded-full flex items-center justify-center mx-auto mb-2"><span class="text-green-800 font-bold text-xs">📡</span></div><div class="text-xs font-medium text-gray-800">Voice Gateway</div><div class="text-xs text-gray-600">WebSocket /webrtc/ws</div></div>
+                            <span class="text-gray-400">→</span>
+                            <div class="text-center"><div class="w-12 h-12 bg-amber-100 border-2 border-amber-300 rounded-full flex items-center justify-center mx-auto mb-2"><span class="text-amber-800 font-bold text-xs">🔐</span></div><div class="text-xs font-medium text-gray-800">PIN Auth</div><div class="text-xs text-gray-600">PostgreSQL / env</div></div>
+                            <span class="text-gray-400">→</span>
+                            <div class="text-center"><div class="w-12 h-12 bg-purple-100 border-2 border-purple-300 rounded-full flex items-center justify-center mx-auto mb-2"><span class="text-purple-800 font-bold text-xs">🎧</span></div><div class="text-xs font-medium text-gray-800">Deepgram</div><div class="text-xs text-gray-600">Batch STT</div></div>
+                            <span class="text-gray-400">→</span>
+                            <div class="text-center"><div class="w-12 h-12 bg-indigo-100 border-2 border-indigo-300 rounded-full flex items-center justify-center mx-auto mb-2"><span class="text-indigo-800 font-bold text-xs">🧠</span></div><div class="text-xs font-medium text-gray-800">Agent LLM</div><div class="text-xs text-gray-600">HTTP /agent/process</div></div>
+                            <span class="text-gray-400">→</span>
+                            <div class="text-center"><div class="w-12 h-12 bg-purple-100 border-2 border-purple-300 rounded-full flex items-center justify-center mx-auto mb-2"><span class="text-purple-800 font-bold text-xs">🔊</span></div><div class="text-xs font-medium text-gray-800">Deepgram</div><div class="text-xs text-gray-600">TTS</div></div>
+                            <span class="text-gray-400">→</span>
+                            <div class="text-center"><div class="w-12 h-12 bg-blue-100 border-2 border-blue-300 rounded-full flex items-center justify-center mx-auto mb-2"><span class="text-blue-800 font-bold text-xs">🌐</span></div><div class="text-xs font-medium text-gray-800">Browser</div><div class="text-xs text-gray-600">Playback</div></div>
                         </div>
-
-                        <!-- Flow Description -->
                         <div class="mt-4 text-center">
                             <p class="text-xs text-gray-600">
-                                <strong>Flow:</strong> User Browser → LiveKit WebRTC → PIN Auth (PostgreSQL) → Streaming
-                                STT (Deepgram) → LangGraph → Multi-LLM (Claude/Gemini/OpenAI) → Domain Agents → Tool
-                                Calling → Streaming TTS (Deepgram/ElevenLabs/Cartesia) → User Browser
+                                <strong>Flow:</strong> Browser → voice-gateway WebSocket → PIN Auth (PostgreSQL or env) → Batch STT (Deepgram) → agent-llm-service HTTP → LangGraph · Multi-LLM · MCP Tools → TTS (Deepgram) → transcript_final, agent_final, audio_chunk → User. <strong>No LiveKit on GCP.</strong>
                             </p>
                         </div>
                     </div>
                 </div>
 
-                <!-- Flow Phases Summary -->
                 <div class="mt-6 bg-white p-6 rounded-lg border-2 border-gray-200">
                     <div class="flex items-center justify-between mb-4">
-                        <h5 class="text-lg font-semibold text-gray-800">WebRTC Voice Assistant Flow Phases</h5>
+                        <h5 class="text-lg font-semibold text-gray-800">Voice Flow Phases</h5>
                         <a href="{{ url_for('convonet_sequence_diagram') }}"
                             class="text-sm text-blue-600 hover:text-blue-800 underline font-medium">
                             View Detailed Sequence Diagram →
                         </a>
                     </div>
-
                     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                        <!-- Phase 1: Authentication -->
                         <div class="border-l-4 border-blue-500 pl-4">
                             <h6 class="font-semibold text-gray-800 mb-1">Phase 1: Authentication</h6>
-                            <p class="text-xs text-gray-600 mb-2">Steps 1-7</p>
-                            <p class="text-sm text-gray-600">WebSocket connection, PIN authentication via PostgreSQL,
-                                Redis session creation</p>
+                            <p class="text-sm text-gray-600">WebSocket connect, PIN auth (PostgreSQL or VOICE_PIN env)</p>
                         </div>
-
-                        <!-- Phase 2: Normal Conversation Loop -->
                         <div class="border-l-4 border-green-500 pl-4">
                             <h6 class="font-semibold text-gray-800 mb-1">Phase 2: Conversation Loop</h6>
-                            <p class="text-xs text-gray-600 mb-2">Steps 8-31</p>
-                            <p class="text-sm text-gray-600">LiveKit audio → Streaming STT (Deepgram) → LangGraph →
-                                Multi-LLM → Domain agents → Tool execution → Streaming TTS
-                                (Deepgram/ElevenLabs/Cartesia) → Response</p>
+                            <p class="text-sm text-gray-600">Record → Batch STT → agent-llm HTTP → TTS → playback</p>
                         </div>
-
-                        <!-- Phase 3: Transfer Request -->
                         <div class="border-l-4 border-yellow-500 pl-4">
                             <h6 class="font-semibold text-gray-800 mb-1">Phase 3: Transfer Request</h6>
-                            <p class="text-xs text-gray-600 mb-2">Steps 32-38</p>
-                            <p class="text-sm text-gray-600">User requests transfer, LangGraph detects intent, sets
-                                transfer flag in Redis</p>
+                            <p class="text-sm text-gray-600">User requests transfer; agent-llm returns transfer_marker</p>
                         </div>
-
-                        <!-- Phase 4: Twilio Transfer -->
                         <div class="border-l-4 border-pink-500 pl-4">
                             <h6 class="font-semibold text-gray-800 mb-1">Phase 4: Twilio Transfer</h6>
-                            <p class="text-xs text-gray-600 mb-2">Steps 39-52</p>
-                            <p class="text-sm text-gray-600">Twilio API → FusionPBX → Agent Dashboard (JsSIP) → Live
-                                conversation bridging</p>
+                            <p class="text-sm text-gray-600">Voice-gateway → Twilio → FusionPBX → Agent Dashboard (JsSIP)</p>
                         </div>
                     </div>
                 </div>
 
                 <div class="mt-6 text-center">
                     <p class="text-sm text-gray-600">
-                        <strong>LiveKit WebRTC Architecture:</strong> Browser-based voice assistant with LiveKit WebRTC,
-                        PostgreSQL PIN authentication,
-                        streaming STT (Deepgram) and TTS (Deepgram, ElevenLabs, Cartesia), LangGraph AI orchestration
-                        with multi-LLM (Claude, Gemini, OpenAI),
-                        domain-specific agents (Productivity, Mortgage, Healthcare), Agent Monitor for real-time
-                        tool/voice timing,
-                        MCP tool integration, and seamless transfer to FusionPBX via Twilio.
+                        <strong>GCP architecture:</strong> Voice uses FastAPI WebSocket to voice-gateway-service only. No LiveKit, no Socket.IO. PIN (PostgreSQL or env), batch STT/TTS (Deepgram), HTTP to agent-llm for LangGraph and MCP tools. Agent Monitor (tool calls, voice_timing) and transfer to FusionPBX via Twilio unchanged.
                     </p>
                 </div>
 
-                <!-- Component Interaction Matrix -->
                 <div class="mt-8 bg-white p-6 rounded-lg border-2 border-gray-200">
-                    <h5 class="text-lg font-semibold mb-4 text-gray-800">Component Interaction Matrix</h5>
+                    <h5 class="text-lg font-semibold mb-4 text-gray-800">Component Interaction (GCP)</h5>
                     <div class="overflow-x-auto">
                         <table class="min-w-full divide-y divide-gray-200 text-sm">
                             <thead class="bg-gray-50">
                                 <tr>
-                                    <th
-                                        class="px-4 py-3 text-left text-sm font-bold text-gray-700 uppercase tracking-wider">
-                                        Component</th>
-                                    <th
-                                        class="px-4 py-3 text-left text-sm font-bold text-gray-700 uppercase tracking-wider">
-                                        Input From</th>
-                                    <th
-                                        class="px-4 py-3 text-left text-sm font-bold text-gray-700 uppercase tracking-wider">
-                                        Output To</th>
-                                    <th
-                                        class="px-4 py-3 text-left text-sm font-bold text-gray-700 uppercase tracking-wider">
-                                        Purpose</th>
+                                    <th class="px-4 py-3 text-left text-sm font-bold text-gray-700 uppercase tracking-wider">Component</th>
+                                    <th class="px-4 py-3 text-left text-sm font-bold text-gray-700 uppercase tracking-wider">Input From</th>
+                                    <th class="px-4 py-3 text-left text-sm font-bold text-gray-700 uppercase tracking-wider">Output To</th>
+                                    <th class="px-4 py-3 text-left text-sm font-bold text-gray-700 uppercase tracking-wider">Purpose</th>
                                 </tr>
                             </thead>
                             <tbody class="bg-white divide-y divide-gray-200">
-                                <tr>
-                                    <td class="px-4 py-3 font-medium text-gray-800">User Browser</td>
-                                    <td class="px-4 py-3 text-gray-600">User voice input</td>
-                                    <td class="px-4 py-3 text-gray-600">WebSocket Server</td>
-                                    <td class="px-4 py-3 text-gray-600">Captures audio, displays UI</td>
-                                </tr>
-                                <tr class="bg-gray-50">
-                                    <td class="px-4 py-3 font-medium text-gray-800">WebSocket Server</td>
-                                    <td class="px-4 py-3 text-gray-600">Browser, WebRTC Server</td>
-                                    <td class="px-4 py-3 text-gray-600">Browser, Redis</td>
-                                    <td class="px-4 py-3 text-gray-600">Manages real-time communication</td>
-                                </tr>
-                                <tr>
-                                    <td class="px-4 py-3 font-medium text-gray-800">PIN Auth</td>
-                                    <td class="px-4 py-3 text-gray-600">WebSocket Server</td>
-                                    <td class="px-4 py-3 text-gray-600">PostgreSQL</td>
-                                    <td class="px-4 py-3 text-gray-600">Validates user credentials</td>
-                                </tr>
-                                <tr class="bg-gray-50">
-                                    <td class="px-4 py-3 font-medium text-gray-800">Redis</td>
-                                    <td class="px-4 py-3 text-gray-600">WebRTC Server, Tools</td>
-                                    <td class="px-4 py-3 text-gray-600">Deepgram, WebRTC Server</td>
-                                    <td class="px-4 py-3 text-gray-600">Buffers audio, stores session</td>
-                                </tr>
-                                <tr>
-                                    <td class="px-4 py-3 font-medium text-gray-800">Deepgram STT</td>
-                                    <td class="px-4 py-3 text-gray-600">Redis Audio Buffer</td>
-                                    <td class="px-4 py-3 text-gray-600">WebRTC Voice Server</td>
-                                    <td class="px-4 py-3 text-gray-600">Converts speech to text</td>
-                                </tr>
-                                <tr class="bg-gray-50">
-                                    <td class="px-4 py-3 font-medium text-gray-800">LangGraph</td>
-                                    <td class="px-4 py-3 text-gray-600">WebRTC Server</td>
-                                    <td class="px-4 py-3 text-gray-600">Claude LLM, Tools</td>
-                                    <td class="px-4 py-3 text-gray-600">Orchestrates AI conversation flow</td>
-                                </tr>
-                                <tr>
-                                    <td class="px-4 py-3 font-medium text-gray-800">Claude LLM</td>
-                                    <td class="px-4 py-3 text-gray-600">LangGraph</td>
-                                    <td class="px-4 py-3 text-gray-600">LangGraph</td>
-                                    <td class="px-4 py-3 text-gray-600">Generates responses, decides actions</td>
-                                </tr>
-                                <tr class="bg-gray-50">
-                                    <td class="px-4 py-3 font-medium text-gray-800">Tool Calling</td>
-                                    <td class="px-4 py-3 text-gray-600">LangGraph</td>
-                                    <td class="px-4 py-3 text-gray-600">PostgreSQL, Google APIs</td>
-                                    <td class="px-4 py-3 text-gray-600">Executes external operations</td>
-                                </tr>
-                                <tr>
-                                    <td class="px-4 py-3 font-medium text-gray-800">Deepgram TTS</td>
-                                    <td class="px-4 py-3 text-gray-600">LangGraph Response</td>
-                                    <td class="px-4 py-3 text-gray-600">WebRTC Server</td>
-                                    <td class="px-4 py-3 text-gray-600">Converts text to speech</td>
-                                </tr>
-                                <tr class="bg-gray-50">
-                                    <td class="px-4 py-3 font-medium text-gray-800">Twilio API</td>
-                                    <td class="px-4 py-3 text-gray-600">WebRTC Server</td>
-                                    <td class="px-4 py-3 text-gray-600">FusionPBX</td>
-                                    <td class="px-4 py-3 text-gray-600">Bridges call to agent</td>
-                                </tr>
-                                <tr>
-                                    <td class="px-4 py-3 font-medium text-gray-800">FusionPBX</td>
-                                    <td class="px-4 py-3 text-gray-600">Twilio</td>
-                                    <td class="px-4 py-3 text-gray-600">Agent Dashboard</td>
-                                    <td class="px-4 py-3 text-gray-600">Routes call to extension</td>
-                                </tr>
-                                <tr class="bg-gray-50">
-                                    <td class="px-4 py-3 font-medium text-gray-800">Agent Dashboard</td>
-                                    <td class="px-4 py-3 text-gray-600">FusionPBX</td>
-                                    <td class="px-4 py-3 text-gray-600">PostgreSQL, User</td>
-                                    <td class="px-4 py-3 text-gray-600">Displays call, shows user info</td>
-                                </tr>
+                                <tr><td class="px-4 py-3 font-medium text-gray-800">User Browser</td><td class="px-4 py-3 text-gray-600">User voice</td><td class="px-4 py-3 text-gray-600">Voice Gateway (WS)</td><td class="px-4 py-3 text-gray-600">Captures audio (MediaRecorder), displays UI</td></tr>
+                                <tr class="bg-gray-50"><td class="px-4 py-3 font-medium text-gray-800">Voice Gateway</td><td class="px-4 py-3 text-gray-600">Browser, Deepgram, Agent LLM</td><td class="px-4 py-3 text-gray-600">Browser, Deepgram, Agent LLM</td><td class="px-4 py-3 text-gray-600">WebSocket /webrtc/ws, STT→agent→TTS pipeline</td></tr>
+                                <tr><td class="px-4 py-3 font-medium text-gray-800">PIN Auth</td><td class="px-4 py-3 text-gray-600">Voice Gateway</td><td class="px-4 py-3 text-gray-600">PostgreSQL (or env)</td><td class="px-4 py-3 text-gray-600">Validates PIN (users_anthropic or VOICE_PIN)</td></tr>
+                                <tr class="bg-gray-50"><td class="px-4 py-3 font-medium text-gray-800">Deepgram STT/TTS</td><td class="px-4 py-3 text-gray-600">Voice Gateway</td><td class="px-4 py-3 text-gray-600">Voice Gateway</td><td class="px-4 py-3 text-gray-600">Batch transcription and TTS</td></tr>
+                                <tr><td class="px-4 py-3 font-medium text-gray-800">Agent LLM Service</td><td class="px-4 py-3 text-gray-600">Voice Gateway (HTTP)</td><td class="px-4 py-3 text-gray-600">Voice Gateway, Redis</td><td class="px-4 py-3 text-gray-600">LangGraph, Multi-LLM, MCP tools, Agent Monitor</td></tr>
+                                <tr class="bg-gray-50"><td class="px-4 py-3 font-medium text-gray-800">Twilio / FusionPBX</td><td class="px-4 py-3 text-gray-600">Voice Gateway</td><td class="px-4 py-3 text-gray-600">Agent Dashboard</td><td class="px-4 py-3 text-gray-600">Call transfer to JsSIP</td></tr>
+                                <tr><td class="px-4 py-3 font-medium text-gray-800">Agent Dashboard</td><td class="px-4 py-3 text-gray-600">FusionPBX</td><td class="px-4 py-3 text-gray-600">User</td><td class="px-4 py-3 text-gray-600">JsSIP at /call-center</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -808,276 +605,108 @@
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <!-- WebRTC Voice Interface -->
             <div class="bg-white p-5 rounded-lg shadow-sm">
                 <div class="flex items-center mb-3">
-                    <span class="bg-sky-100 p-2 rounded-full mr-3">
-                        <svg class="w-5 h-5 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z">
-                            </path>
-                        </svg>
-                    </span>
-                    <h4 class="text-lg font-semibold text-gray-800">WebRTC Voice Interface</h4>
+                    <span class="bg-sky-100 p-2 rounded-full mr-3"><svg class="w-5 h-5 text-sky-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path></svg></span>
+                    <h4 class="text-lg font-semibold text-gray-800">WebSocket Voice Interface</h4>
                 </div>
                 <ul class="text-sm text-gray-600 space-y-1.5">
-                    <li>✓ Browser-based voice recording</li>
-                    <li>✓ Real-time audio streaming</li>
-                    <li>✓ WebSocket communication</li>
-                    <li>✓ Audio format detection (WebM)</li>
-                    <li>✓ Base64 audio encoding</li>
+                    <li>✓ Browser: getUserMedia + MediaRecorder (WebM)</li>
+                    <li>✓ FastAPI WebSocket at /webrtc/ws</li>
+                    <li>✓ Base64 audio chunks; transcript_final, agent_final, audio_chunk</li>
                 </ul>
-                <div class="mt-3 text-xs text-gray-500">
-                    <strong>Technology:</strong> WebRTC + Socket.IO
-                </div>
+                <div class="mt-3 text-xs text-gray-500"><strong>Technology:</strong> FastAPI WebSocket (no LiveKit on GCP)</div>
             </div>
-
-            <!-- Redis Session Management -->
             <div class="bg-white p-5 rounded-lg shadow-sm">
                 <div class="flex items-center mb-3">
-                    <span class="bg-amber-100 p-2 rounded-full mr-3">
-                        <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4">
-                            </path>
-                        </svg>
-                    </span>
-                    <h4 class="text-lg font-semibold text-gray-800">Redis Session Management</h4>
+                    <span class="bg-amber-100 p-2 rounded-full mr-3"><svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"></path></svg></span>
+                    <h4 class="text-lg font-semibold text-gray-800">Session &amp; Agent Monitor</h4>
                 </div>
                 <ul class="text-sm text-gray-600 space-y-1.5">
-                    <li>✓ Session storage & caching</li>
-                    <li>✓ Audio buffer management</li>
-                    <li>✓ Real-time notifications</li>
-                    <li>✓ User activity tracking</li>
-                    <li>✓ Session expiration handling</li>
+                    <li>✓ In-memory session state (voice-gateway)</li>
+                    <li>✓ Redis: agent-llm writes interactions (tool_calls, voice_timing)</li>
+                    <li>✓ Call-center serves /agent-monitor APIs from Redis</li>
                 </ul>
-                <div class="mt-3 text-xs text-gray-500">
-                    <strong>Integration:</strong> Redis Pub/Sub + Session Store
-                </div>
+                <div class="mt-3 text-xs text-gray-500"><strong>Integration:</strong> Redis for Agent Monitor (call-center reads)</div>
             </div>
-
-            <!-- Composio Tool Integration -->
             <div class="bg-white p-5 rounded-lg shadow-sm">
                 <div class="flex items-center mb-3">
-                    <span class="bg-violet-100 p-2 rounded-full mr-3">
-                        <svg class="w-5 h-5 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M13 10V3L4 14h7v7l9-11h-7z"></path>
-                        </svg>
-                    </span>
-                    <h4 class="text-lg font-semibold text-gray-800">Composio Integration</h4>
+                    <span class="bg-violet-100 p-2 rounded-full mr-3"><svg class="w-5 h-5 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg></span>
+                    <h4 class="text-lg font-semibold text-gray-800">Composio (optional)</h4>
                 </div>
                 <ul class="text-sm text-gray-600 space-y-1.5">
-                    <li>✓ Slack workspace integration</li>
-                    <li>✓ GitHub repository management</li>
-                    <li>✓ Gmail email automation</li>
-                    <li>✓ Notion workspace sync</li>
-                    <li>✓ Jira project management</li>
+                    <li>Optional external tools; not required for GCP core flows</li>
                 </ul>
-                <div class="mt-3 text-xs text-gray-500">
-                    <strong>Platforms:</strong> Slack, GitHub, Gmail, Notion, Jira
-                </div>
             </div>
         </div>
     </div>
 </div>
 
-<!-- Module Structure -->
+<!-- Module Structure (GCP Cloud Run) -->
 <div class="mb-12">
-    <h3 class="text-2xl font-semibold mb-6 text-gray-800">Module Structure</h3>
+    <h3 class="text-2xl font-semibold mb-6 text-gray-800">Module Structure (GCP Cloud Run)</h3>
     <div class="bg-gray-50 p-6 rounded-lg">
         <div class="flex justify-center">
             <div class="bg-white p-4 rounded border max-w-3xl w-full">
-                <h4 class="font-semibold text-gray-800 mb-3">Convonet Project Structure</h4>
+                <h4 class="font-semibold text-gray-800 mb-3">Deployment &amp; Services (v2.convonetai.com)</h4>
                 <div class="font-mono text-sm overflow-x-auto">
                     <pre>Project Root/
-├── asgi_main.py                    # FastAPI ASGI Master Gateway (Entry Point)
-├── app.py                          # Main Flask application (Mounted as sub-app)
-├── app_memory_optimized.py         # Memory-optimized Flask application
-├── passenger_wsgi.py               # WSGI entry point for legacy support
-├── passenger_wsgi_memory_optimized.py  # WSGI entry for memory-optimized app
-├── extensions.py                   # Flask extensions (db, login, migrate, etc.)
-├── requirements.txt                # Python dependencies
-├── requirements-render.txt         # Production dependencies (No Eventlet)
-├── Procfile                        # Render.com process file (runs Uvicorn)
-├── render-hybrid.yaml              # Render.com hybrid deployment config
-├── render-build.sh                 # Build script for Render.com
-├── templates/                      # Flask templates
-│   ├── team_dashboard.html         # Team management UI
-│   ├── register.html               # User registration
-│   ├── convonet_tech_spec.html     # Technical documentation
-│   ├── convonet_system_architecture.html  # System architecture diagram
-│   ├── convonet_sequence_diagram.html     # Sequence diagram page
-│   └── agent_monitor_dashboard.html       # Agent Monitor (tool/voice timing)
-├── static/                         # Static assets
-│   └── convonet/                   # Convonet static files
-│       └── assets/                 # Images, CSS, JS
-├── shared/                         # Shared utilities
-│   ├── google_calendar.py          # Google Calendar integration
-│   ├── helpers.py                  # Shared helper functions
-│   └── schemas.py                  # Shared data schemas
-└── convonet/                       # Convonet module
-    ├── __init__.py                 # Package initialization
-    ├── routes.py                   # Flask routes & Twilio webhooks (Sentry integrated)
-    ├── assistant_graph_todo.py     # LangGraph agent (optimized timeouts)
-    ├── state.py                    # Agent state management
-    ├── asgi_main.py                # FastAPI ASGI application
-    ├── fastapi_voice_gateway.py    # FastAPI-native Voice Assistant Gateway
-    ├── webrtc_voice_server_socketio.py  # LiveKit WebRTC voice server
-    ├── agent_monitor.py            # Agent Monitor (tool/voice timing)
-    ├── deepgram/                   # Deepgram STT/TTS (streaming)
-    ├── audio_player_routes.py      # Audio stream player routes
-    ├── redis_manager.py            # Redis session & audio buffer management
-    ├── composio_tools.py           # Composio tool integration
-    ├── twilio_handler.py           # Twilio call handling
-    ├── voice_intent_utils.py       # Voice intent detection utilities
-    ├── voice_utils.py              # Voice processing utilities
-    ├── environment_config.py       # Environment configuration
-    ├── models/                     # Database models
-    │   ├── base.py                 # Shared SQLAlchemy Base
-    │   └── user_models.py          # User, Team, TeamMembership models
-    ├── security/                   # Authentication & authorization
-    │   └── auth.py                 # JWT authentication system
-    ├── api_routes/                 # RESTful API endpoints
-    │   ├── auth_routes.py          # User registration & login
-    │   ├── jwt_scr.py              # JWT secret key management
-    │   ├── team_routes.py          # Team management API
-    │   └── team_todo_routes.py     # Team todo management API
-    ├── migrations/                 # Database migrations
-    │   ├── add_team_collaboration.py  # Team collaboration migration
-    │   └── add_voice_pin.py        # Voice PIN authentication migration
-    ├── mcps/                       # Model Context Protocol servers
-    │   ├── mcp_config.json         # MCP server configuration
-    │   └── local_servers/
-    │       ├── db_todo.py          # 36 database tools (optimized)
-    │       ├── call_transfer.py    # 2 call transfer tools (FusionPBX)
-    │       └── google_calendar.py  # Calendar operations
-    ├── static/                     # Convonet static assets
-    │   └── assets/
-    │       ├── img/                # Images & diagrams
-    │       ├── css/                # Stylesheets
-    │       └── js/                 # JavaScript files
-    └── templates/                  # Convonet templates
-        ├── convonet_todo_index.html  # Main todo interface
-        └── webrtc_voice_assistant.html  # LiveKit voice assistant UI</pre>
+├── cloudbuild.yaml                 # Build &amp; deploy all 4 services to Cloud Run
+├── cloudbuild-callcenter.yaml      # Deploy only call-center-service
+├── docker/                         # Per-service Dockerfiles
+│   ├── voice-gateway.Dockerfile
+│   ├── agent-llm.Dockerfile
+│   ├── call-center.Dockerfile
+│   └── crm-integration.Dockerfile
+├── templates/                      # Served by call-center-service
+│   ├── index.html, voice_assistant.html, call_center.html
+│   ├── agent_monitor_dashboard.html, mortgage_dashboard.html
+│   ├── convonet_tech_spec.html, convonet_system_architecture.html, convonet_sequence_diagram.html
+│   └── ...
+└── convonet/
+    ├── voice_gateway_service.py    # FastAPI: /webrtc/ws, /twilio/* (STT→agent-llm→TTS, transfer)
+    ├── agent_llm_service.py        # FastAPI: /agent/process, /convonet_todo/* (LangGraph, MCP, mortgage)
+    ├── call_center_service.py      # FastAPI: /, /call-center, /voice_assistant, /agent-monitor, docs
+    ├── routes.py                   # Agent logic, LangGraph, tool execution (used by agent_llm_service)
+    ├── agent_monitor.py            # Redis-backed interactions (tool_calls, voice_timing)
+    ├── redis_manager.py            # Redis session, Agent Monitor, transfer context cache
+    ├── deepgram/                   # STT/TTS (used by voice_gateway_service)
+    ├── mcps/local_servers/          # MCP tools (db_todo, db_mortgage, call_transfer, etc.)
+    ├── models/                     # SQLAlchemy (user_models: users_anthropic, voice_pin)
+    └── ...                         # Legacy Flask/Socket.IO/LiveKit code not used on GCP</pre>
                 </div>
+                <p class="text-sm text-gray-600 mt-3">Path-based routing on v2.convonetai.com directs requests to the appropriate Cloud Run service.</p>
             </div>
         </div>
     </div>
 </div>
 
-<!-- Database Schema -->
+<!-- Database (PostgreSQL, agent-llm) -->
 <div class="mb-12">
-    <h3 class="text-2xl font-semibold mb-6 text-gray-800">Database Schema</h3>
+    <h3 class="text-2xl font-semibold mb-6 text-gray-800">Database (PostgreSQL)</h3>
     <div class="bg-gray-50 p-6 rounded-lg">
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <!-- Users Table -->
-            <div class="bg-white p-6 rounded-lg shadow">
-                <h4 class="text-lg font-semibold mb-3 text-gray-800">users_convonet</h4>
-                <ul class="text-sm text-gray-600 space-y-1">
-                    <li>• id: UUID (PK)</li>
-                    <li>• email: String (unique)</li>
-                    <li>• username: String (unique)</li>
-                    <li>• password_hash: String</li>
-                    <li>• first_name: String</li>
-                    <li>• last_name: String</li>
-                    <li>• is_active: Boolean</li>
-                    <li>• is_verified: Boolean</li>
-                    <li>• created_at: DateTime</li>
-                    <li>• last_login_at: DateTime</li>
-                </ul>
+        <p class="text-gray-700 mb-4">
+            Used by <strong>agent-llm-service</strong> (e.g. Render.com PostgreSQL). Connection via <code class="bg-gray-200 px-1 rounded">DB_URI</code>; optional <code class="bg-gray-200 px-1 rounded">RENDER_POSTGRES_HOST_SUFFIX</code> for Render host normalization.
+        </p>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-white p-4 rounded-lg shadow">
+                <h4 class="font-semibold text-gray-800 mb-2">users_anthropic</h4>
+                <p class="text-xs text-gray-600">Voice PIN auth; <code>voice_pin</code> column for PIN validation.</p>
             </div>
-
-            <!-- Teams Table -->
-            <div class="bg-white p-6 rounded-lg shadow">
-                <h4 class="text-lg font-semibold mb-3 text-gray-800">teams_convonet</h4>
-                <ul class="text-sm text-gray-600 space-y-1">
-                    <li>• id: UUID (PK)</li>
-                    <li>• name: String</li>
-                    <li>• description: Text</li>
-                    <li>• is_active: Boolean</li>
-                    <li>• created_at: DateTime</li>
-                    <li>• updated_at: DateTime</li>
-                </ul>
+            <div class="bg-white p-4 rounded-lg shadow">
+                <h4 class="font-semibold text-gray-800 mb-2">todos_convonet</h4>
+                <p class="text-xs text-gray-600">Todo CRUD via MCP/db_todo.</p>
             </div>
-
-            <!-- Team Memberships Table -->
-            <div class="bg-white p-6 rounded-lg shadow">
-                <h4 class="text-lg font-semibold mb-3 text-gray-800">team_memberships_convonet</h4>
-                <ul class="text-sm text-gray-600 space-y-1">
-                    <li>• id: UUID (PK)</li>
-                    <li>• team_id: UUID (FK)</li>
-                    <li>• user_id: UUID (FK)</li>
-                    <li>• role: Enum (owner/admin/member/viewer)</li>
-                    <li>• joined_at: DateTime</li>
-                    <li>• updated_at: DateTime</li>
-                </ul>
+            <div class="bg-white p-4 rounded-lg shadow">
+                <h4 class="font-semibold text-gray-800 mb-2">reminders_convonet</h4>
+                <p class="text-xs text-gray-600">Reminders via MCP.</p>
             </div>
-
-            <!-- Todos Table -->
-            <div class="bg-white p-6 rounded-lg shadow">
-                <h4 class="text-lg font-semibold mb-3 text-gray-800">todos_convonet</h4>
-                <ul class="text-sm text-gray-600 space-y-1">
-                    <li>• id: UUID (PK)</li>
-                    <li>• title: String</li>
-                    <li>• description: String</li>
-                    <li>• completed: Boolean</li>
-                    <li>• priority: Enum</li>
-                    <li>• due_date: DateTime</li>
-                    <li>• creator_id: UUID (FK)</li>
-                    <li>• assignee_id: UUID (FK)</li>
-                    <li>• team_id: UUID (FK)</li>
-                    <li>• is_private: Boolean</li>
-                    <li>• google_calendar_event_id</li>
-                </ul>
+            <div class="bg-white p-4 rounded-lg shadow">
+                <h4 class="font-semibold text-gray-800 mb-2">Mortgage / Healthcare</h4>
+                <p class="text-xs text-gray-600">Applications, patients, etc. (see mcps/local_servers).</p>
             </div>
         </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mt-6">
-            <!-- Reminders Table -->
-            <div class="bg-white p-6 rounded-lg shadow">
-                <h4 class="text-lg font-semibold mb-3 text-gray-800">reminders_convonet</h4>
-                <ul class="text-sm text-gray-600 space-y-1">
-                    <li>• id: UUID (PK)</li>
-                    <li>• reminder_text: String</li>
-                    <li>• importance: Enum</li>
-                    <li>• reminder_date: DateTime</li>
-                    <li>• google_calendar_event_id</li>
-                    <li>• created_at: DateTime</li>
-                    <li>• updated_at: DateTime</li>
-                </ul>
-            </div>
-
-            <!-- Calendar Events Table -->
-            <div class="bg-white p-6 rounded-lg shadow">
-                <h4 class="text-lg font-semibold mb-3 text-gray-800">calendar_events_convonet</h4>
-                <ul class="text-sm text-gray-600 space-y-1">
-                    <li>• id: UUID (PK)</li>
-                    <li>• title: String</li>
-                    <li>• description: String</li>
-                    <li>• event_from: DateTime</li>
-                    <li>• event_to: DateTime</li>
-                    <li>• google_calendar_event_id</li>
-                    <li>• created_at: DateTime</li>
-                    <li>• updated_at: DateTime</li>
-                </ul>
-            </div>
-
-            <!-- Call Recordings Table -->
-            <div class="bg-white p-6 rounded-lg shadow">
-                <h4 class="text-lg font-semibold mb-3 text-gray-800">call_recordings_convonet</h4>
-                <ul class="text-sm text-gray-600 space-y-1">
-                    <li>• id: UUID (PK)</li>
-                    <li>• call_sid: String (unique)</li>
-                    <li>• from_number: String</li>
-                    <li>• to_number: String</li>
-                    <li>• recording_path: String</li>
-                    <li>• transcription: Text</li>
-                    <li>• status: String</li>
-                    <li>• created_at: DateTime</li>
-                </ul>
-            </div>
-        </div>
+        <p class="text-sm text-gray-500 mt-4">Full schema and migrations are in <code class="bg-gray-200 px-1 rounded">convonet/models/</code> and <code class="bg-gray-200 px-1 rounded">migrations/</code>.</p>
     </div>
 </div>
 
@@ -1137,8 +766,7 @@
     <div class="bg-gray-50 p-6 rounded-lg">
         <p class="text-gray-700 mb-4">
             MCP provides a standardized way for AI agents to interact with external tools and services.
-            The Convonet system uses MCP to expose 38 tools for database operations, team management,
-            call transfer to FusionPBX, Google Calendar integration, and WebRTC voice processing with Deepgram STT.
+            On GCP, <strong>agent-llm-service</strong> uses MCP to expose 38+ tools: database operations (todos, reminders, calendar), team management, mortgage/healthcare, call transfer to FusionPBX, and Google Calendar. STT/TTS are handled by voice-gateway (Deepgram), not MCP.
         </p>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
@@ -1363,273 +991,56 @@
 </div>
 
 
-<!-- New Features Technical Details -->
+<!-- Redis (GCP) -->
 <div class="mb-12">
-    <h3 class="text-2xl font-semibold mb-6 text-gray-800">New Features Technical Details</h3>
-    <div class="space-y-8">
-
-        <!-- Redis Integration Details -->
-        <div class="bg-gradient-to-r from-amber-50 to-orange-50 p-6 rounded-lg border-2 border-amber-200">
-            <h4 class="text-xl font-semibold mb-4 text-gray-800 flex items-center">
-                <span class="bg-amber-100 p-2 rounded-full mr-3">
-                    <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4">
-                        </path>
-                    </svg>
-                </span>
-                Redis Session Management & Caching
-            </h4>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                    <h5 class="font-semibold text-gray-700 mb-2">Session Management</h5>
-                    <ul class="text-sm text-gray-600 space-y-1">
-                        <li>• Session creation, retrieval, updates, deletion</li>
-                        <li>• Audio buffer storage (base64 encoded)</li>
-                        <li>• User authentication state management</li>
-                        <li>• Session expiration handling</li>
-                    </ul>
-                </div>
-                <div>
-                    <h5 class="font-semibold text-gray-700 mb-2">Real-time Features</h5>
-                    <ul class="text-sm text-gray-600 space-y-1">
-                        <li>• Pub/Sub notifications for team updates</li>
-                        <li>• Rate limiting (requests per minute)</li>
-                        <li>• User activity tracking & analytics</li>
-                        <li>• Cache invalidation strategies</li>
-                    </ul>
-                </div>
-            </div>
-            <div class="mt-4 p-3 bg-gray-100 rounded">
-                <code class="text-sm text-gray-700">
-                                # Redis connection with environment config<br>
-                                REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379')<br>
-                                # Session data structure<br>
-                                session_data = {<br>
-                                &nbsp;&nbsp;'user_id': 'user-123', 'audio_buffer': 'base64...',<br>
-                                &nbsp;&nbsp;'created_at': timestamp, 'expires_at': ttl<br>
-                                }
-                            </code>
-            </div>
-        </div>
-
-        <!-- Composio Integration Details -->
-        <div class="bg-gradient-to-r from-violet-50 to-purple-50 p-6 rounded-lg border-2 border-violet-200">
-            <h4 class="text-xl font-semibold mb-4 text-gray-800 flex items-center">
-                <span class="bg-violet-100 p-2 rounded-full mr-3">
-                    <svg class="w-5 h-5 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M13 10V3L4 14h7v7l9-11h-7z"></path>
-                    </svg>
-                </span>
-                Composio External Tool Integration
-            </h4>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                    <h5 class="font-semibold text-gray-700 mb-2">Supported Platforms</h5>
-                    <ul class="text-sm text-gray-600 space-y-1">
-                        <li>• <strong>Slack:</strong> Message sending, channel management</li>
-                        <li>• <strong>GitHub:</strong> Repository operations, issue tracking</li>
-                        <li>• <strong>Gmail:</strong> Email composition, sending, management</li>
-                        <li>• <strong>Notion:</strong> Page creation, database operations</li>
-                        <li>• <strong>Jira:</strong> Ticket creation, project management</li>
-                    </ul>
-                </div>
-                <div>
-                    <h5 class="font-semibold text-gray-700 mb-2">Integration Features</h5>
-                    <ul class="text-sm text-gray-600 space-y-1">
-                        <li>• OAuth2 authentication for each platform</li>
-                        <li>• Robust method discovery for API compatibility</li>
-                        <li>• Error handling for missing methods</li>
-                        <li>• Tool orchestration with LangGraph</li>
-                    </ul>
-                </div>
-            </div>
-            <div class="mt-4 p-3 bg-gray-100 rounded">
-                <code class="text-sm text-gray-700">
-                                # Composio tool loading with fallback methods<br>
-                                if hasattr(toolset, 'get_tools'):<br>
-                                &nbsp;&nbsp;&nbsp;&nbsp;tools = toolset.get_tools(apps=["slack"])<br>
-                                elif hasattr(toolset, 'get_actions'):<br>
-                                &nbsp;&nbsp;&nbsp;&nbsp;tools = toolset.get_actions(apps=["slack"])
-                            </code>
-            </div>
-        </div>
-
-        <!-- Audio Stream Player Details -->
-        <div class="bg-gradient-to-r from-emerald-50 to-green-50 p-6 rounded-lg border-2 border-emerald-200">
-            <h4 class="text-xl font-semibold mb-4 text-gray-800 flex items-center">
-                <span class="bg-emerald-100 p-2 rounded-full mr-3">
-                    <svg class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z">
-                        </path>
-                    </svg>
-                </span>
-                Audio Stream Player & WebM Support
-            </h4>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                    <h5 class="font-semibold text-gray-700 mb-2">Audio Processing</h5>
-                    <ul class="text-sm text-gray-600 space-y-1">
-                        <li>• WebM format detection & handling</li>
-                        <li>• Base64 audio buffer decoding</li>
-                        <li>• Real-time audio streaming from Redis</li>
-                        <li>• Audio format conversion (WebM → WAV fallback)</li>
-                    </ul>
-                </div>
-                <div>
-                    <h5 class="font-semibold text-gray-700 mb-2">Player Features</h5>
-                    <ul class="text-sm text-gray-600 space-y-1">
-                        <li>• Session-based audio playback</li>
-                        <li>• Audio file download (WebM/WAV)</li>
-                        <li>• Audio buffer analysis & debugging</li>
-                        <li>• Flask-SocketIO real-time updates</li>
-                    </ul>
-                </div>
-            </div>
-            <div class="mt-4 p-3 bg-gray-100 rounded">
-                <code class="text-sm text-gray-700">
-                                # WebM format detection<br>
-                                if audio_data.startswith(b'\x1a\x45\xdf\xa3'):<br>
-                                &nbsp;&nbsp;&nbsp;&nbsp;return Response(audio_data, mimetype='audio/webm')<br>
-                                # Audio buffer from Redis<br>
-                                audio_buffer = session_data.get('audio_buffer', '')<br>
-                                audio_data = base64.b64decode(audio_buffer)
-                            </code>
-            </div>
-        </div>
+    <h3 class="text-2xl font-semibold mb-6 text-gray-800">Redis (GCP)</h3>
+    <div class="bg-gradient-to-r from-amber-50 to-orange-50 p-6 rounded-lg border-2 border-amber-200">
+        <p class="text-gray-700 mb-4">
+            Redis is used by <strong>voice-gateway-service</strong> and <strong>agent-llm-service</strong> (e.g. Redis Cloud). Configure via <code class="bg-gray-200 px-1 rounded">REDIS_HOST</code>, <code class="bg-gray-200 px-1 rounded">REDIS_PORT</code>, <code class="bg-gray-200 px-1 rounded">REDIS_PASSWORD</code>.
+        </p>
+        <ul class="text-sm text-gray-600 space-y-1">
+            <li>• <strong>Agent Monitor:</strong> agent-llm writes interactions (tool_calls, voice_timing, metadata) for the /agent-monitor dashboard.</li>
+            <li>• <strong>Transfer context:</strong> On transfer to human agent, voice-gateway caches conversation_history and customer profile (e.g. <code>callcenter:customer:{extension}:{call_sid}</code>) for call-center UI.</li>
+            <li>• <strong>Session/audio:</strong> Optional session and audio buffer storage for voice pipeline.</li>
+        </ul>
     </div>
 </div>
 
-<!-- API Endpoints -->
+<!-- API Endpoints (GCP path-based routing) -->
 <div class="mb-12">
-    <h3 class="text-2xl font-semibold mb-6 text-gray-800">API Endpoints</h3>
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <!-- Authentication Endpoints -->
-        <div class="bg-white p-6 rounded-lg shadow">
-            <h4 class="text-lg font-semibold mb-3 text-gray-800">Authentication</h4>
-            <ul class="text-sm text-gray-600 space-y-2">
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">POST /api/auth/register</code></li>
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">POST /api/auth/login</code></li>
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">POST /api/auth/refresh</code></li>
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">GET /api/auth/profile</code></li>
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">PUT /api/auth/profile</code></li>
-            </ul>
-        </div>
-
-        <!-- Team Endpoints -->
-        <div class="bg-white p-6 rounded-lg shadow">
-            <h4 class="text-lg font-semibold mb-3 text-gray-800">Team Management</h4>
-            <ul class="text-sm text-gray-600 space-y-2">
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">POST /api/teams/</code></li>
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">GET /api/teams/</code></li>
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">GET /api/teams/{id}</code></li>
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">POST /api/teams/{id}/members</code></li>
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">DELETE /api/teams/{id}/members/{user_id}</code>
-                </li>
-                <li><code
-                        class="bg-gray-100 px-2 py-1 rounded text-xs">PUT /api/teams/{id}/members/{user_id}/role</code>
-                </li>
-            </ul>
-        </div>
-
-        <!-- Twilio Endpoints -->
-        <div class="bg-white p-6 rounded-lg shadow">
-            <h4 class="text-lg font-semibold mb-3 text-gray-800">Twilio Voice</h4>
-            <ul class="text-sm text-gray-600 space-y-2">
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">POST /convonet_todo/twilio/call</code></li>
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">POST /convonet_todo/twilio/process_audio</code>
-                </li>
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">POST /convonet_todo/twilio/transfer</code></li>
-            </ul>
-            <div class="mt-3 p-3 bg-gray-50 rounded">
-                <p class="text-xs text-gray-600 mb-2">Webhook URL:</p>
-                <pre class="text-xs"><code>https://hjlees.com/convonet_todo/twilio/call</code></pre>
+    <h3 class="text-2xl font-semibold mb-6 text-gray-800">API Endpoints (v2.convonetai.com)</h3>
+    <div class="bg-gray-50 p-6 rounded-lg">
+        <p class="text-gray-700 mb-4">All paths are served under a single domain with path-based routing to the appropriate Cloud Run service.</p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="bg-white p-4 rounded-lg shadow">
+                <h4 class="font-semibold text-gray-800 mb-2">call-center-service</h4>
+                <ul class="text-sm text-gray-600 space-y-1">
+                    <li><code class="bg-gray-100 px-1 rounded text-xs">GET /</code> Landing</li>
+                    <li><code class="bg-gray-100 px-1 rounded text-xs">GET /voice_assistant</code>, <code class="bg-gray-100 px-1 rounded text-xs">/call-center</code>, <code class="bg-gray-100 px-1 rounded text-xs">/agent-monitor</code>, <code class="bg-gray-100 px-1 rounded text-xs">/tool-execution</code>, <code class="bg-gray-100 px-1 rounded text-xs">/mortgage_dashboard</code></li>
+                    <li><code class="bg-gray-100 px-1 rounded text-xs">GET /convonet_tech_spec</code>, <code class="bg-gray-100 px-1 rounded text-xs">/convonet_system_architecture</code>, <code class="bg-gray-100 px-1 rounded text-xs">/convonet_sequence_diagram</code></li>
+                    <li><code class="bg-gray-100 px-1 rounded text-xs">GET/POST /call-center/api/*</code> (agent status, login, call actions, customer data from Redis)</li>
+                    <li><code class="bg-gray-100 px-1 rounded text-xs">GET /agent-monitor/api/stats</code>, <code class="bg-gray-100 px-1 rounded text-xs">/agent-monitor/api/interactions</code></li>
+                </ul>
             </div>
-        </div>
-
-        <!-- LiveKit WebRTC & Agent Monitor Endpoints -->
-        <div class="bg-white p-6 rounded-lg shadow">
-            <h4 class="text-lg font-semibold mb-3 text-gray-800">LiveKit WebRTC Voice</h4>
-            <ul class="text-sm text-gray-600 space-y-2">
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">GET /webrtc/voice-assistant</code></li>
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">GET /fastapi/voice-assistant</code> (FastAPI
-                    Native)</li>
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">WebSocket /voice</code></li>
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">WebSocket /fastapi/voice-assistant/ws</code>
-                </li>
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">GET /audio-player/</code></li>
-            </ul>
-            <div class="mt-2 p-3 bg-blue-50 rounded">
-                <p class="text-xs text-blue-800">
-                    <strong>Features:</strong> LiveKit WebRTC, streaming STT (Deepgram), TTS
-                    (Deepgram/ElevenLabs/Cartesia), domain agents, Agent Monitor
-                </p>
+            <div class="bg-white p-4 rounded-lg shadow">
+                <h4 class="font-semibold text-gray-800 mb-2">voice-gateway-service</h4>
+                <ul class="text-sm text-gray-600 space-y-1">
+                    <li><code class="bg-gray-100 px-1 rounded text-xs">WebSocket /webrtc/ws</code> (PIN auth, STT→agent-llm→TTS, greeting, processing status, barge-in)</li>
+                    <li><code class="bg-gray-100 px-1 rounded text-xs">POST /twilio/process_audio</code>, <code class="bg-gray-100 px-1 rounded text-xs">/twilio/transfer_callback</code></li>
+                </ul>
             </div>
-        </div>
-        <div class="bg-white p-6 rounded-lg shadow">
-            <h4 class="text-lg font-semibold mb-3 text-gray-800">Agent Monitor</h4>
-            <ul class="text-sm text-gray-600 space-y-2">
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">GET /agent-monitor/</code></li>
-            </ul>
-            <p class="text-xs text-gray-600 mt-2">Real-time tool calls, voice timing, elapsed time per tool</p>
-        </div>
-
-        <!-- Redis Audio Player Endpoints -->
-        <div class="bg-white p-6 rounded-lg shadow">
-            <h4 class="text-lg font-semibold mb-3 text-gray-800">Redis Audio Player</h4>
-            <ul class="text-sm text-gray-600 space-y-2">
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">GET /audio-player/</code></li>
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">GET /audio-player/sessions</code></li>
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">GET /audio-player/audio/{session_id}</code></li>
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">WebSocket /audio-stream</code></li>
-            </ul>
-            <div class="mt-3 p-3 bg-gray-50 rounded">
-                <p class="text-xs text-gray-600 mb-2">Audio Player Dashboard:</p>
-                <p class="text-xs">
-                    <a href="https://hjlees.com/audio-player/" target="_blank" rel="noopener noreferrer"
-                        class="text-blue-600 hover:text-blue-800 underline font-medium">
-                        https://hjlees.com/audio-player/ →
-                    </a>
-                </p>
+            <div class="bg-white p-4 rounded-lg shadow">
+                <h4 class="font-semibold text-gray-800 mb-2">agent-llm-service</h4>
+                <ul class="text-sm text-gray-600 space-y-1">
+                    <li><code class="bg-gray-100 px-1 rounded text-xs">POST /agent/process</code> (LangGraph, multi-LLM, MCP tools, metadata.voice_timing, transfer_context)</li>
+                    <li><code class="bg-gray-100 px-1 rounded text-xs">GET /convonet_todo/api/mortgage/applications</code>, <code class="bg-gray-100 px-1 rounded text-xs">/convonet_todo/api/mortgage/applications/{id}</code></li>
+                </ul>
             </div>
-            <div class="mt-2 p-3 bg-amber-50 rounded">
-                <p class="text-xs text-amber-800">
-                    <strong>Features:</strong> View and analyze audio streams from Redis audio buffers, real-time
-                    session monitoring, audio playback and download
-                </p>
-            </div>
-        </div>
-
-        <!-- Team Dashboard Endpoints -->
-        <div class="bg-white p-6 rounded-lg shadow">
-            <h4 class="text-lg font-semibold mb-3 text-gray-800">Team Dashboard</h4>
-            <ul class="text-sm text-gray-600 space-y-2">
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">GET /team-dashboard</code></li>
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">POST /api/teams/</code></li>
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">GET /api/teams/{id}/todos</code></li>
-                <li><code class="bg-gray-100 px-2 py-1 rounded text-xs">GET /api/teams/{id}/calendar</code></li>
-            </ul>
-            <div class="mt-3 p-3 bg-gray-50 rounded">
-                <p class="text-xs text-gray-600 mb-2">Team Dashboard:</p>
-                <p class="text-xs">
-                    <a href="https://hjlees.com/team-dashboard" target="_blank" rel="noopener noreferrer"
-                        class="text-blue-600 hover:text-blue-800 underline font-medium">
-                        https://hjlees.com/team-dashboard →
-                    </a>
-                </p>
-            </div>
-            <div class="mt-2 p-3 bg-indigo-50 rounded">
-                <p class="text-xs text-indigo-800">
-                    <strong>Features:</strong> Team collaboration dashboard with todo management, calendar integration,
-                    member management, real-time updates, and role-based access control
-                </p>
-            </div>
-            <div class="mt-2 p-3 bg-gray-50 rounded">
-                <p class="text-xs text-gray-600">
-                    <strong>Demo Credentials:</strong> admin@convonet.com / admin123
-                </p>
+            <div class="bg-white p-4 rounded-lg shadow">
+                <h4 class="font-semibold text-gray-800 mb-2">crm-integration-service</h4>
+                <ul class="text-sm text-gray-600 space-y-1">
+                    <li><code class="bg-gray-100 px-1 rounded text-xs">/patient/*</code>, <code class="bg-gray-100 px-1 rounded text-xs">/meeting/create</code>, etc. (SuiteCRM)</li>
+                </ul>
             </div>
         </div>
     </div>
@@ -1889,9 +1300,9 @@
             <div class="mt-3 p-3 bg-white rounded">
                 <p class="text-xs text-gray-600 mb-2">Call Center Agent Dashboard:</p>
                 <p class="text-xs">
-                    <a href="https://hjlees.com/call-center/" target="_blank" rel="noopener noreferrer"
+                    <a href="https://v2.convonetai.com/call-center/" target="_blank" rel="noopener noreferrer"
                         class="text-blue-600 hover:text-blue-800 underline font-medium">
-                        https://hjlees.com/call-center/ →
+                        https://v2.convonetai.com/call-center/ →
                     </a>
                 </p>
             </div>
@@ -1903,396 +1314,29 @@
     </div>
 </div>
 
-<!-- Twilio Voice Interface -->
+<!-- Twilio &amp; Voice (GCP) -->
 <div class="mb-12">
-    <h3 class="text-2xl font-semibold mb-6 text-gray-800">Twilio Voice Interface</h3>
+    <h3 class="text-2xl font-semibold mb-6 text-gray-800">Twilio &amp; Voice (GCP)</h3>
     <div class="bg-gray-50 p-6 rounded-lg">
         <p class="text-gray-700 mb-4">
-            The Convonet assistant provides complete voice interaction through Twilio integration,
-            supporting natural language commands for team collaboration and task management with
-            Amazon Polly.Amy voice and barge-in capabilities for interruption.
+            <strong>Browser voice:</strong> Use <code class="bg-gray-200 px-1 rounded">/voice_assistant</code> → WebSocket <code class="bg-gray-200 px-1 rounded">/webrtc/ws</code> (voice-gateway-service). PIN auth (PostgreSQL or env), Deepgram STT/TTS, greeting after login, “please wait” + elapsed timer during processing, barge-in (Start stops playback and starts recording).
         </p>
-
-        <!-- Voice Processing Pipeline -->
-        <div class="mb-8">
-            <h4 class="text-lg font-semibold mb-4 text-gray-800">Voice Processing Pipeline</h4>
-            <div class="bg-white p-6 rounded-lg border-2 border-gray-200">
-                <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
-                    <!-- Speech Input -->
-                    <div class="text-center">
-                        <div
-                            class="w-16 h-16 bg-blue-100 border-2 border-blue-300 rounded-full flex items-center justify-center mx-auto mb-2">
-                            <span class="text-blue-800 font-bold text-sm">🎤</span>
-                        </div>
-                        <div class="text-sm font-medium text-gray-800">Speech Input</div>
-                        <div class="text-xs text-gray-600">Twilio Voice</div>
-                    </div>
-
-                    <!-- Speech Recognition -->
-                    <div class="text-center">
-                        <div
-                            class="w-16 h-16 bg-green-100 border-2 border-green-300 rounded-full flex items-center justify-center mx-auto mb-2">
-                            <span class="text-green-800 font-bold text-sm">👂</span>
-                        </div>
-                        <div class="text-sm font-medium text-gray-800">Speech-to-Text</div>
-                        <div class="text-xs text-gray-600">Twilio STT</div>
-                    </div>
-
-                    <!-- LangGraph Agent -->
-                    <div class="text-center">
-                        <div
-                            class="w-16 h-16 bg-purple-100 border-2 border-purple-300 rounded-full flex items-center justify-center mx-auto mb-2">
-                            <span class="text-purple-800 font-bold text-sm">🧠</span>
-                        </div>
-                        <div class="text-sm font-medium text-gray-800">LangGraph Agent</div>
-                        <div class="text-xs text-gray-600">AI Processing</div>
-                    </div>
-
-                    <!-- TTS -->
-                    <div class="text-center">
-                        <div
-                            class="w-16 h-16 bg-orange-100 border-2 border-orange-300 rounded-full flex items-center justify-center mx-auto mb-2">
-                            <span class="text-orange-800 font-bold text-sm">🗣️</span>
-                        </div>
-                        <div class="text-sm font-medium text-gray-800">Text-to-Speech</div>
-                        <div class="text-xs text-gray-600">Polly.Amy</div>
-                    </div>
-
-                    <!-- Audio Output -->
-                    <div class="text-center">
-                        <div
-                            class="w-16 h-16 bg-red-100 border-2 border-red-300 rounded-full flex items-center justify-center mx-auto mb-2">
-                            <span class="text-red-800 font-bold text-sm">🔊</span>
-                        </div>
-                        <div class="text-sm font-medium text-gray-800">Voice Response</div>
-                        <div class="text-xs text-gray-600">Twilio TTS</div>
-                    </div>
-                </div>
-
-                <!-- Flow Arrows -->
-                <div class="mt-6">
-                    <div class="flex justify-between items-center">
-                        <div class="text-xs text-gray-600">User Speech</div>
-                        <div class="flex-1 h-0.5 bg-blue-400 mx-4"></div>
-                        <div class="text-xs text-gray-600">Recognition</div>
-                        <div class="flex-1 h-0.5 bg-green-400 mx-4"></div>
-                        <div class="text-xs text-gray-600">AI Processing</div>
-                        <div class="flex-1 h-0.5 bg-orange-400 mx-4"></div>
-                        <div class="text-xs text-gray-600">Voice Output</div>
-                    </div>
-                </div>
-
-                <div class="mt-6 text-center">
-                    <p class="text-sm text-gray-600">
-                        <strong>Voice Pipeline:</strong> Complete end-to-end voice processing from speech input to
-                        AI-generated voice response with real-time streaming.
-                    </p>
-                </div>
-            </div>
-        </div>
-
-        <div class="mb-8">
-            <h4 class="text-lg font-semibold mb-4 text-gray-800">Voice Command Examples</h4>
-            <div class="bg-white p-6 rounded-lg border-2 border-gray-200">
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                        <h5 class="font-semibold text-gray-800 mb-3">Personal Productivity</h5>
-                        <ul class="text-sm text-gray-600 space-y-2">
-                            <li>🗣️ "Create a high priority todo to review the quarterly report"</li>
-                            <li>🗣️ "Add a reminder to call the dentist tomorrow at 2 PM"</li>
-                            <li>🗣️ "Schedule a meeting for next Friday from 2 to 3 PM"</li>
-                            <li>🗣️ "Show me all my pending todos"</li>
-                            <li>🗣️ "Mark the grocery shopping todo as completed"</li>
-                        </ul>
-                    </div>
-                    <div>
-                        <h5 class="font-semibold text-gray-800 mb-3">Team Collaboration</h5>
-                        <ul class="text-sm text-gray-600 space-y-2">
-                            <li>🗣️ "Create a hackathon team"</li>
-                            <li>🗣️ "What teams are available?"</li>
-                            <li>🗣️ "Who are the members of the development team?"</li>
-                            <li>🗣️ "Create a high priority todo for the dev team"</li>
-                            <li>🗣️ "Add admin@convonet.com to the hackathon team as owner"</li>
-                            <li>🗣️ "Assign a code review task to John in the dev team"</li>
-                            <li>🗣️ "Change john@example.com to admin role in the dev team"</li>
-                        </ul>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div class="bg-white p-4 rounded border">
-                <h4 class="font-semibold text-gray-800 mb-2">Voice Components</h4>
-                <ul class="text-sm text-gray-600 space-y-1">
-                    <li>• <strong>Speech-to-Text:</strong> Twilio speech recognition engine</li>
-                    <li>• <strong>Text-to-Speech:</strong> Amazon Polly.Amy voice</li>
-                    <li>• <strong>Barge-in:</strong> Interrupt AI while speaking</li>
-                    <li>• <strong>Speech Timeout:</strong> Auto detection (10s)</li>
-                    <li>• <strong>Agent Timeout:</strong> 30s processing time</li>
-                    <li>• <strong>Tool Timeout:</strong> 20s per MCP tool</li>
-                    <li>• <strong>Continuation:</strong> Multi-turn conversations</li>
-                    <li>• <strong>Exit Detection:</strong> Natural conversation ending</li>
-                </ul>
-            </div>
-            <div class="bg-white p-4 rounded border">
-                <h4 class="font-semibold text-gray-800 mb-2">Processing Flow</h4>
-                <ol class="text-sm text-gray-600 space-y-1">
-                    <li>1. User calls Twilio number</li>
-                    <li>2. Twilio webhook triggers /convonet_todo/twilio/call</li>
-                    <li>3. TwiML with &lt;Gather&gt; returned (10s timeout)</li>
-                    <li>4. User speaks, Twilio recognizes speech</li>
-                    <li>5. SpeechResult posted to /process_audio</li>
-                    <li>6. LangGraph agent processes (30s timeout)</li>
-                    <li>7. MCP tools execute (20s per tool)</li>
-                    <li>8. Database & Calendar operations</li>
-                    <li>9. Response converted to TwiML</li>
-                    <li>10. Polly.Amy speaks response with barge-in</li>
-                    <li>11. Conversation continues or ends</li>
-                </ol>
-            </div>
-        </div>
+        <p class="text-gray-700 mb-4">
+            <strong>Phone (Twilio):</strong> Twilio webhooks target <strong>voice-gateway-service</strong> at <code class="bg-gray-200 px-1 rounded">POST /twilio/process_audio</code>. STT/TTS are Deepgram (not Twilio/Polly). On transfer intent, agent-llm returns <code class="bg-gray-200 px-1 rounded">transfer_marker</code>; voice-gateway returns TwiML <code class="bg-gray-200 px-1 rounded">&lt;Dial&gt;&lt;Sip&gt;</code> to FusionPBX (e.g. extension 2001). Config: <code class="bg-gray-200 px-1 rounded">VOICE_GATEWAY_PUBLIC_URL</code>, <code class="bg-gray-200 px-1 rounded">FUSIONPBX_SIP_DOMAIN</code>, <code class="bg-gray-200 px-1 rounded">TRANSFER_TIMEOUT</code>. Callback <code class="bg-gray-200 px-1 rounded">/twilio/transfer_callback</code> handles dial status.
+        </p>
+        <p class="text-sm text-gray-600">
+            Transfer context (conversation_history, user_id) is cached in Redis for the call-center UI. See <code class="bg-gray-200 px-1 rounded">docs/CLOUD_RUN_ENV.md</code> for Twilio/FusionPBX env vars.
+        </p>
     </div>
 </div>
 
-<!-- Twilio Phone Integration -->
+<!-- Validation -->
 <div class="mb-12">
-    <h3 class="text-2xl font-semibold mb-6 text-gray-800">Twilio Phone Integration</h3>
+    <h3 class="text-2xl font-semibold mb-6 text-gray-800">Validation</h3>
     <div class="bg-gray-50 p-6 rounded-lg">
-        <p class="text-gray-700 mb-4">
-            The Convonet assistant can be accessed via phone calls through Twilio integration, allowing users
-            to interact with the AI assistant through voice calls from any phone number. The system uses TwiML
-            and Gather for speech recognition with barge-in capability.
+        <p class="text-gray-700">
+            Validate the GCP deployment via <strong>/voice_assistant</strong> (WebSocket voice, PIN, greeting, barge-in), <strong>/agent-monitor</strong> (tool calls and voice timing), <strong>/call-center</strong> (SIP dashboard and customer popup from Redis), and <strong>/mortgage_dashboard</strong>. For phone flows, configure Twilio webhooks to <code class="bg-gray-200 px-1 rounded">VOICE_GATEWAY_PUBLIC_URL/twilio/process_audio</code> and test transfer to FusionPBX.
         </p>
-
-        <!-- Twilio Call Flow Architecture -->
-        <div class="mb-8">
-            <h4 class="text-lg font-semibold mb-4 text-gray-800">Twilio Call Flow Architecture</h4>
-            <div class="bg-white p-6 rounded-lg border-2 border-gray-200">
-                <div class="grid grid-cols-1 md:grid-cols-6 gap-4">
-                    <!-- Phone Call -->
-                    <div class="text-center">
-                        <div
-                            class="w-16 h-16 bg-blue-100 border-2 border-blue-300 rounded-full flex items-center justify-center mx-auto mb-2">
-                            <span class="text-blue-800 font-bold text-sm">📞</span>
-                        </div>
-                        <div class="text-sm font-medium text-gray-800">Phone Call</div>
-                        <div class="text-xs text-gray-600">PSTN Network</div>
-                    </div>
-
-                    <!-- Twilio -->
-                    <div class="text-center">
-                        <div
-                            class="w-16 h-16 bg-red-100 border-2 border-red-300 rounded-full flex items-center justify-center mx-auto mb-2">
-                            <span class="text-red-800 font-bold text-sm">T</span>
-                        </div>
-                        <div class="text-sm font-medium text-gray-800">Twilio</div>
-                        <div class="text-xs text-gray-600">Voice API</div>
-                    </div>
-
-                    <!-- Flask Webhook -->
-                    <div class="text-center">
-                        <div
-                            class="w-16 h-16 bg-green-100 border-2 border-green-300 rounded-full flex items-center justify-center mx-auto mb-2">
-                            <span class="text-green-800 font-bold text-sm">🌐</span>
-                        </div>
-                        <div class="text-sm font-medium text-gray-800">Flask Webhook</div>
-                        <div class="text-xs text-gray-600">TwiML Response</div>
-                    </div>
-
-                    <!-- MCP Client -->
-                    <div class="text-center">
-                        <div
-                            class="w-16 h-16 bg-purple-100 border-2 border-purple-300 rounded-full flex items-center justify-center mx-auto mb-2">
-                            <span class="text-purple-800 font-bold text-sm">🔌</span>
-                        </div>
-                        <div class="text-sm font-medium text-gray-800">MCP Client</div>
-                        <div class="text-xs text-gray-600">38 Tools</div>
-                    </div>
-
-                    <!-- Database -->
-                    <div class="text-center">
-                        <div
-                            class="w-16 h-16 bg-orange-100 border-2 border-orange-300 rounded-full flex items-center justify-center mx-auto mb-2">
-                            <span class="text-orange-800 font-bold text-sm">⚙️</span>
-                        </div>
-                        <div class="text-sm font-medium text-gray-800">Database</div>
-                        <div class="text-xs text-gray-600">PostgreSQL</div>
-                    </div>
-
-                    <!-- LangGraph Agent -->
-                    <div class="text-center">
-                        <div
-                            class="w-16 h-16 bg-indigo-100 border-2 border-indigo-300 rounded-full flex items-center justify-center mx-auto mb-2">
-                            <span class="text-indigo-800 font-bold text-sm">🧠</span>
-                        </div>
-                        <div class="text-sm font-medium text-gray-800">LangGraph Agent</div>
-                        <div class="text-xs text-gray-600">AI Processing</div>
-                    </div>
-                </div>
-
-                <!-- Flow Arrows -->
-                <div class="mt-6">
-                    <div class="flex justify-between items-center">
-                        <div class="text-xs text-gray-600">Call Initiation</div>
-                        <div class="flex-1 h-0.5 bg-blue-400 mx-4"></div>
-                        <div class="text-xs text-gray-600">Webhook</div>
-                        <div class="flex-1 h-0.5 bg-green-400 mx-4"></div>
-                        <div class="text-xs text-gray-600">Tool Execution</div>
-                        <div class="flex-1 h-0.5 bg-purple-400 mx-4"></div>
-                        <div class="text-xs text-gray-600">AI Processing</div>
-                    </div>
-                </div>
-
-                <div class="mt-6 text-center">
-                    <p class="text-sm text-gray-600">
-                        <strong>Call Flow:</strong> Phone → Twilio → Flask Webhook → LangGraph Agent → MCP Tools →
-                        Database/Calendar → TwiML Response
-                    </p>
-                </div>
-            </div>
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-            <div class="bg-white p-4 rounded border">
-                <h4 class="font-semibold text-gray-800 mb-2">Twilio Components</h4>
-                <ul class="text-sm text-gray-600 space-y-1">
-                    <li>• <strong>Twilio Voice API:</strong> Handles incoming/outgoing calls</li>
-                    <li>• <strong>TwiML:</strong> XML-based call flow instructions</li>
-                    <li>• <strong>Gather Element:</strong> Collects speech input with barge-in</li>
-                    <li>• <strong>Say Element:</strong> Text-to-speech via Polly.Amy</li>
-                    <li>• <strong>Redirect Element:</strong> Call continuation logic</li>
-                    <li>• <strong>Webhook Endpoints:</strong> Flask routes for call handling</li>
-                </ul>
-            </div>
-            <div class="bg-white p-4 rounded border">
-                <h4 class="font-semibold text-gray-800 mb-2">Call Flow Process</h4>
-                <ol class="text-sm text-gray-600 space-y-1">
-                    <li>1. User calls Twilio phone number</li>
-                    <li>2. Twilio webhook triggers /twilio/call</li>
-                    <li>3. TwiML with &lt;Gather&gt; returned</li>
-                    <li>4. Greeting: "Hello! I'm your Convonet productivity assistant"</li>
-                    <li>5. User speaks command</li>
-                    <li>6. Speech posted to /process_audio</li>
-                    <li>7. LangGraph agent processes request</li>
-                    <li>8. MCP tools execute database operations</li>
-                    <li>9. TwiML response with confirmation</li>
-                    <li>10. Call continues or ends based on user</li>
-                </ol>
-            </div>
-        </div>
-
-        <div class="bg-white p-4 rounded border">
-            <h4 class="font-semibold text-gray-800 mb-2">Twilio Configuration</h4>
-            <div class="font-mono text-sm bg-gray-100 p-3 rounded">
-                <pre># Environment Variables
-TWILIO_ACCOUNT_SID=your_account_sid
-TWILIO_AUTH_TOKEN=your_auth_token
-TWILIO_PHONE_NUMBER=+1234567890
-
-# Webhook Endpoints
-POST https://hjlees.com/convonet_todo/twilio/call
-POST https://hjlees.com/convonet_todo/twilio/process_audio
-
-# TwiML Response Example
-&lt;Response&gt;
-  &lt;Gather action="/convonet_todo/twilio/process_audio" 
-          method="POST" 
-          input="speech" 
-          speechTimeout="auto" 
-          timeout="10" 
-          bargeIn="true"&gt;
-    &lt;Say voice="Polly.Amy"&gt;Hello! I'm your Convonet productivity assistant...&lt;/Say&gt;
-  &lt;/Gather&gt;
-  &lt;Say voice="Polly.Amy"&gt;I didn't hear anything. Please try again.&lt;/Say&gt;
-  &lt;Redirect&gt;/convonet_todo/twilio/call?is_continuation=true&lt;/Redirect&gt;
-&lt;/Response&gt;</pre>
-            </div>
-        </div>
-
-        <div class="mt-6 bg-blue-50 p-4 rounded border-l-4 border-blue-400">
-            <h4 class="font-semibold text-blue-800 mb-2">Twilio Setup Instructions</h4>
-            <div class="space-y-3">
-                <div>
-                    <p class="text-sm text-blue-700 font-medium mb-1">Step 1: Configure Voice Settings</p>
-                    <p class="text-sm text-blue-600">In Twilio Console → Phone Numbers → Active Numbers → Select your
-                        number</p>
-                </div>
-                <div>
-                    <p class="text-sm text-blue-700 font-medium mb-1">Step 2: Set Webhook URL</p>
-                    <p class="text-sm text-blue-600">A CALL COMES IN: https://hjlees.com/convonet_todo/twilio/call (HTTP
-                        POST)</p>
-                </div>
-                <div>
-                    <p class="text-sm text-blue-700 font-medium mb-1">Step 3: Test Integration</p>
-                    <p class="text-sm text-blue-600">Call your Twilio number and speak a command</p>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Test Case Demo -->
-<div class="mb-12">
-    <h3 class="text-2xl font-semibold mb-6 text-gray-800">Test Case Demo</h3>
-    <div class="bg-gradient-to-r from-purple-50 to-pink-50 p-6 rounded-lg border-2 border-purple-200">
-        <p class="text-gray-700 mb-6">
-            Watch a demonstration of the Convonet voice assistant in action, showcasing the complete workflow
-            from user interaction to call transfer to a human agent.
-        </p>
-
-        <div class="bg-white p-6 rounded-lg shadow-lg">
-            <div class="flex justify-center items-center">
-                <video controls class="w-full max-w-4xl rounded-lg shadow-md" preload="metadata" playsinline
-                    crossorigin="anonymous">
-                    <source src="{{ url_for('static', filename='assets/img/convonet_dm_fixed.m4v') }}" type="video/mp4">
-                    <source src="{{ url_for('static', filename='assets/img/convonet_dm_fixed.m4v') }}"
-                        type="video/x-m4v">
-                    <source src="{{ url_for('static', filename='assets/img/convonet_dm_fixed.m4v') }}"
-                        type="video/quicktime">
-                    Your browser does not support the video tag.
-                </video>
-            </div>
-            <div class="mt-4 text-center">
-                <p class="text-sm text-gray-600">
-                    <strong>Video Format:</strong> M4V (MPEG-4) |
-                    <strong>Demo:</strong> Complete voice assistant workflow including call transfer
-                </p>
-                <div class="mt-3 p-3 bg-yellow-50 rounded-lg border-l-4 border-yellow-400">
-                    <p class="text-xs text-yellow-800 mb-2">
-                        <strong>Audio Note:</strong> If you don't hear sound, please check:
-                    </p>
-                    <ul class="text-xs text-yellow-800 list-disc list-inside space-y-1">
-                        <li>Ensure the video volume control is not muted (check the volume icon in the video player)
-                        </li>
-                        <li>Check your browser's audio settings and system volume</li>
-                        <li>Some browsers may have limited support for MP2 audio codec in M4V files</li>
-                        <li>Try using Chrome or Firefox for best compatibility</li>
-                    </ul>
-                </div>
-            </div>
-        </div>
-
-        <div class="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div class="bg-white p-4 rounded-lg shadow-sm">
-                <h4 class="font-semibold text-gray-800 mb-2">🎤 Voice Interaction</h4>
-                <p class="text-xs text-gray-600">
-                    Demonstrates natural language voice commands and real-time transcription
-                </p>
-            </div>
-            <div class="bg-white p-4 rounded-lg shadow-sm">
-                <h4 class="font-semibold text-gray-800 mb-2">🤖 AI Processing</h4>
-                <p class="text-xs text-gray-600">
-                    Shows LangGraph agent processing requests and tool calling capabilities
-                </p>
-            </div>
-            <div class="bg-white p-4 rounded-lg shadow-sm">
-                <h4 class="font-semibold text-gray-800 mb-2">📞 Call Transfer</h4>
-                <p class="text-xs text-gray-600">
-                    Illustrates seamless transfer from AI assistant to human agent dashboard
-                </p>
-            </div>
-        </div>
     </div>
 </div>
 

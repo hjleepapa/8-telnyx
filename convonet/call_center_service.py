@@ -1,7 +1,8 @@
+import json
 import logging
 import os
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, HTTPException, Depends, Request
+from fastapi import FastAPI, HTTPException, Depends, Request, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -265,6 +266,155 @@ async def tool_execution_api_trackers():
 async def tool_execution_api_tracker(request_id: str):
     """Stub: return empty tools until real backend is wired."""
     return {"success": True, "tools": []}
+
+
+# --- Call-center UI APIs (stubs so /call-center page does not 404 on login/status/call/customer) ---
+
+@app.get("/call-center/api/agent/status")
+async def call_center_agent_status():
+    """Stub: agent status for call-center UI. No server-side session; always logged_out."""
+    return {"logged_in": False, "agent": None}
+
+
+class CallCenterAgentLogin(BaseModel):
+    agent_id: str = ""
+    name: str = ""
+    sip_username: str = ""
+    sip_password: str = ""
+    sip_domain: str = "sip.example.com"
+    sip_extension: Optional[str] = None
+    email: Optional[str] = None
+
+
+@app.post("/call-center/api/agent/login")
+async def call_center_agent_login(data: CallCenterAgentLogin):
+    """Stub: accept login so call-center UI can show dashboard and init JsSIP. No server-side session."""
+    agent = {
+        "agent_id": data.agent_id or "agent-1",
+        "name": data.name or data.agent_id,
+        "sip_username": data.sip_username,
+        "sip_domain": data.sip_domain or "sip.example.com",
+        "sip_extension": data.sip_extension or data.agent_id,
+    }
+    return {"success": True, "agent": agent}
+
+
+@app.post("/call-center/api/agent/logout")
+async def call_center_agent_logout():
+    return {"success": True}
+
+
+@app.post("/call-center/api/agent/ready")
+async def call_center_agent_ready():
+    return {"success": True}
+
+
+@app.post("/call-center/api/agent/not-ready")
+async def call_center_agent_not_ready():
+    return {"success": True}
+
+
+@app.post("/call-center/api/call/ringing")
+async def call_center_call_ringing():
+    return {"success": True}
+
+
+@app.post("/call-center/api/call/answer")
+async def call_center_call_answer():
+    return {"success": True}
+
+
+@app.post("/call-center/api/call/drop")
+async def call_center_call_drop():
+    return {"success": True}
+
+
+@app.post("/call-center/api/call/hold")
+async def call_center_call_hold():
+    return {"success": True}
+
+
+@app.post("/call-center/api/call/unhold")
+async def call_center_call_unhold():
+    return {"success": True}
+
+
+@app.post("/call-center/api/call/transfer")
+async def call_center_call_transfer():
+    return {"success": True}
+
+
+def _fetch_customer_profile_from_redis(
+    extension: Optional[str] = None,
+    call_sid: Optional[str] = None,
+    call_id: Optional[str] = None,
+    customer_id: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """Fetch customer/transfer context from Redis (cached by voice-gateway on transfer). Same keys as Flask call_center."""
+    try:
+        from convonet.redis_manager import redis_manager
+        if not redis_manager.is_available():
+            return None
+        keys_to_try: List[str] = []
+        if extension and call_sid:
+            keys_to_try.append(f"callcenter:customer:{extension}:{call_sid}")
+        if extension and call_id:
+            keys_to_try.append(f"callcenter:customer:{extension}:{call_id}")
+        if extension:
+            keys_to_try.append(f"callcenter:customer:{extension}")
+        if customer_id:
+            keys_to_try.append(f"callcenter:customer:{customer_id}")
+        for key in keys_to_try:
+            raw = redis_manager.redis_client.get(key)
+            if raw:
+                profile = json.loads(raw) if isinstance(raw, str) else raw
+                logger.info("Call center profile HIT: key=%s, has_history=%s", key, bool(profile.get("conversation_history")))
+                return profile
+        if extension or customer_id:
+            logger.debug("Call center profile MISS: extension=%s, call_sid=%s, call_id=%s", extension, call_sid, call_id)
+    except Exception as e:
+        logger.warning("Failed to read customer cache: %s", e)
+    return None
+
+
+@app.get("/call-center/api/customer/{customer_id}")
+async def call_center_customer(
+    customer_id: str,
+    extension: Optional[str] = Query(None),
+    call_sid: Optional[str] = Query(None),
+    call_id: Optional[str] = Query(None),
+):
+    """Customer popup data. Reads from Redis when call was transferred from voice assistant (conversation_history + context)."""
+    profile = _fetch_customer_profile_from_redis(
+        extension=extension, call_sid=call_sid, call_id=call_id, customer_id=customer_id
+    )
+    if profile:
+        return profile
+    return {
+        "customer_id": customer_id,
+        "name": "Customer",
+        "phone": "",
+        "notes": "No context from voice assistant. Call may not be from transfer.",
+        "conversation_history": [],
+        "activities": [],
+    }
+
+
+@app.get("/call-center/api/customer/data")
+async def call_center_customer_data(
+    request: Request,
+    extension: Optional[str] = Query(None),
+    call_sid: Optional[str] = Query(None),
+    call_id: Optional[str] = Query(None),
+    customer_id: Optional[str] = Query(None),
+):
+    """Customer data for popup. Prefer Redis cache (transfer context from voice assistant)."""
+    profile = _fetch_customer_profile_from_redis(
+        extension=extension, call_sid=call_sid, call_id=call_id, customer_id=customer_id
+    )
+    if profile:
+        return {"customers": [profile], "total": 1}
+    return {"customers": [], "total": 0}
 
 
 class AgentStatusUpdate(BaseModel):

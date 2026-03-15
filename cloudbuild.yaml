@@ -28,6 +28,7 @@ steps:
 
   # 3. Deploy services to Cloud Run (image only; env vars are left unchanged so they persist across rebuilds)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: deploy-voice-gateway
     entrypoint: gcloud
     args:
       - 'run'
@@ -39,6 +40,7 @@ steps:
       - 'us-central1'
       - '--allow-unauthenticated'
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: deploy-agent-llm
     entrypoint: gcloud
     args:
       - 'run'
@@ -50,6 +52,7 @@ steps:
       - 'us-central1'
       - '--allow-unauthenticated'
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: deploy-call-center
     entrypoint: gcloud
     args:
       - 'run'
@@ -61,6 +64,7 @@ steps:
       - 'us-central1'
       - '--allow-unauthenticated'
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: deploy-crm-integration
     entrypoint: gcloud
     args:
       - 'run'
@@ -71,6 +75,28 @@ steps:
       - '--region'
       - 'us-central1'
       - '--allow-unauthenticated'
+
+  # 4. Remove old container images (keep only the tag just deployed for each service)
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    id: cleanup-old-images
+    entrypoint: 'bash'
+    args:
+      - '-c'
+      - |
+        set -e
+        REPO="us-central1-docker.pkg.dev/${PROJECT_ID}/convonet-repo"
+        for pkg in voice-gateway-service agent-llm-service call-center-service crm-integration-service; do
+          echo "Cleaning old images for $$pkg (keeping tag: ${_COMMIT_SHA})"
+          TAGS=$$(gcloud artifacts docker images list "$$REPO/$$pkg" --include-tags --format="value(version)" 2>/dev/null || true)
+          for tag in $$TAGS; do
+            if [ "$$tag" != "${_COMMIT_SHA}" ]; then
+              echo "Deleting $$pkg:$$tag"
+              gcloud artifacts docker images delete "$$REPO/$$pkg:$$tag" --quiet --delete-tags 2>/dev/null || true
+            fi
+          done
+        done
+        echo "Cleanup complete."
+    waitFor: ['deploy-voice-gateway', 'deploy-agent-llm', 'deploy-call-center', 'deploy-crm-integration']
 
 images:
   - 'us-central1-docker.pkg.dev/$PROJECT_ID/convonet-repo/voice-gateway-service:$_COMMIT_SHA'

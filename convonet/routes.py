@@ -48,6 +48,47 @@ _mcp_tools_cache = None
 _mcp_tools_loading = False
 _mcp_tools_lock = None  # Lazy initialized to avoid loop conflicts
 
+# Max conversation history entries to send to call-center on transfer
+CALL_CENTER_MAX_CONVERSATION_MESSAGES = 50
+
+
+def _extract_transfer_marker_from_message(msg):
+    """Extract TRANSFER_INITIATED:... from a message's content (str or list). Returns the marker string or None."""
+    if not hasattr(msg, "content"):
+        return None
+    content = msg.content
+    if isinstance(content, str):
+        return content if "TRANSFER_INITIATED:" in content else None
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, str) and "TRANSFER_INITIATED:" in item:
+                return item
+            if isinstance(item, dict) and "text" in item and "TRANSFER_INITIATED:" in str(item["text"]):
+                return str(item["text"])
+    return None
+
+
+def _messages_to_conversation_history(messages, append_assistant_content=None):
+    """Convert LangChain messages to call-center format [{role, content}, ...]. Optionally append one assistant message."""
+    from langchain_core.messages import HumanMessage, AIMessage
+    history = []
+    for msg in (messages or []):
+        if isinstance(msg, HumanMessage):
+            content = msg.content if hasattr(msg, 'content') else str(msg)
+            if isinstance(content, list):
+                content = " ".join(p.get("text", str(p)) for p in content if isinstance(p, dict) and "text" in p) or str(content)
+            history.append({"role": "user", "content": content})
+        elif isinstance(msg, AIMessage):
+            content = msg.content if hasattr(msg, 'content') else str(msg)
+            if isinstance(content, list):
+                content = " ".join(p.get("text", str(p)) for p in content if isinstance(p, dict) and "text" in p) or str(content)
+            history.append({"role": "assistant", "content": content})
+        # skip ToolMessage for display
+    if append_assistant_content:
+        history.append({"role": "assistant", "content": append_assistant_content})
+    return history[-CALL_CENTER_MAX_CONVERSATION_MESSAGES:] if len(history) > CALL_CENTER_MAX_CONVERSATION_MESSAGES else history
+
+
 convonet_todo_bp = Blueprint(
     'convonet_todo',
     __name__,
@@ -1459,6 +1500,9 @@ async def _get_agent_graph(
                     tools = limited_tools
             
             # Filter tools based on agent type
+            # Transfer tools: all agents (mortgage, healthcare, todo) can transfer to human agent
+            transfer_tool_names = ["transfer_to_agent", "get_available_departments"]
+
             mortgage_tool_names = [
                 "create_mortgage_application",
                 "get_mortgage_application_status",
@@ -1471,8 +1515,8 @@ async def _get_agent_graph(
                 "get_required_documents",
                 "get_missing_documents",
                 "web_search",
-            ]
-            
+            ] + transfer_tool_names
+
             healthcare_tool_names = [
                 "check_eligibility",
                 "get_coverage_dates",
@@ -1502,7 +1546,7 @@ async def _get_agent_graph(
                 "log_clinical_intake",
                 "save_call_summary",
                 "web_search",
-            ]
+            ] + transfer_tool_names
             
             # Helper function to get tool name
             def _get_tool_name(t):
@@ -2024,6 +2068,7 @@ async def _run_agent_async(
             # This must happen before any other code to avoid scoping issues
             process_start_time = start_time
             transfer_marker = None
+            transfer_context = None  # For call-center: conversation_history, user_id, user_name
             tool_calls_info = []
             # For voice: elapsed from user stop; for text: elapsed from agent start
             voice_t0 = (metadata or {}).get('t0')
@@ -2053,14 +2098,14 @@ async def _run_agent_async(
                         print(f"🔧 Got {len(tools)} tools from MCP cache for Gemini streaming", flush=True)
                         sys.stdout.flush()
                         
-                        # Get system prompt - use a simplified version for Gemini native SDK
-                        # The full system prompt is in TodoAgent, but we use a concise version here
-                        system_prompt = """You are a productivity assistant that helps users manage todos, reminders, and calendar events. You MUST use tools to perform actions - never just ask for more information.
+                        # Get system prompt - use a simplified version for Gemini native SDK (all agent types)
+                        # Include transfer rule so "transfer to human agent" always triggers transfer_to_agent tool
+                        system_prompt = """You are a voice assistant. You MUST use tools to perform actions - never refuse or say you cannot do something when a tool exists for it.
 
 CRITICAL RULES:
-1. ALWAYS use tools when users mention creating, adding, or doing something
-2. NEVER ask "what would you like to create?" - infer the intent and use the appropriate tool
-3. Be proactive - if user says "create", "add", "todo", "reminder", "calendar event", immediately use the tool
+1. When the user asks to TRANSFER the call, speak to a human agent, talk to an agent, or be connected to a person: you MUST immediately use the transfer_to_agent tool with department="support", reason="User requested transfer to human agent". Do NOT reply with text only; you MUST call the tool. Extension 2001 is the human agent at FusionPBX.
+2. ALWAYS use tools when users mention creating, adding, or doing something (todos, reminders, calendar, etc.)
+3. NEVER say "I cannot transfer" or "I cannot fulfill this request" when the user asks for a transfer - use the transfer_to_agent tool.
 4. Make reasonable assumptions when details are missing
 
 VOICE OUTPUT FORMAT (CRITICAL):
@@ -2114,6 +2159,22 @@ VOICE OUTPUT FORMAT (CRITICAL):
                         print(f"📊 Gemini tool calls info: {len(tool_calls_info)} tool call(s) with results", flush=True)
                         for tc_info in tool_calls_info:
                             print(f"   - {tc_info.tool_name}: status={tc_info.status}, result={'present' if tc_info.result else 'missing'}", flush=True)
+                        
+                        # Extract transfer_marker from transfer_to_agent tool result (for voice-gateway → Twilio/FusionPBX)
+                        for tc in tool_calls_list:
+                            if tc.get("name") == "transfer_to_agent":
+                                res = tc.get("result")
+                                if res and ("TRANSFER_INITIATED:" in str(res)):
+                                    transfer_marker = res if isinstance(res, str) else str(res)
+                                    print(f"🔄 Transfer marker from Gemini tool result: {transfer_marker[:80]}...", flush=True)
+                                    break
+                        # Build transfer context for call-center UI (conversation history)
+                        if transfer_marker and conversation_messages is not None:
+                            transfer_context = {
+                                "conversation_history": _messages_to_conversation_history(conversation_messages, final_response),
+                                "user_id": user_id,
+                                "user_name": user_name or None,
+                            }
                         
                         print(f"✅ Gemini native streaming completed", flush=True)
                         print(f"📝 Final response length: {len(final_response)} chars", flush=True)
@@ -2294,11 +2355,11 @@ VOICE OUTPUT FORMAT (CRITICAL):
                                 if "messages" in state:
                                     new_tool_calls_in_update = 0
                                     for msg in state["messages"]:
-                                        # Check for TRANSFER_INITIATED in tool message content
-                                        if hasattr(msg, 'content') and isinstance(msg.content, str):
-                                            if 'TRANSFER_INITIATED:' in msg.content:
-                                                transfer_marker = msg.content
-                                                print(f"🔄 Transfer marker detected in tool result: {transfer_marker}")
+                                        # Check for TRANSFER_INITIATED in any message content (str or list)
+                                        marker = _extract_transfer_marker_from_message(msg)
+                                        if marker:
+                                            transfer_marker = marker
+                                            print(f"🔄 Transfer marker detected in tool result: {transfer_marker[:80]}...", flush=True)
                                         
                                         # Track tool calls
                                         tool_calls_to_process = []
@@ -2380,6 +2441,13 @@ VOICE OUTPUT FORMAT (CRITICAL):
                         try:
                             final_state = agent_graph.get_state(config=config)
                             final_messages = final_state.values.get("messages", [])
+                            # Ensure we have transfer_marker if transfer_to_agent was called (scan all messages)
+                            for m in final_messages:
+                                marker = _extract_transfer_marker_from_message(m)
+                                if marker:
+                                    transfer_marker = marker
+                                    print(f"🔄 Transfer marker from final_messages: {marker[:80]}...", flush=True)
+                                    break
                             # Search backwards for the last AIMessage to avoid returning a ToolMessage (JSON)
                             last_ai_message = None
                             for m in reversed(final_messages):
@@ -2405,6 +2473,13 @@ VOICE OUTPUT FORMAT (CRITICAL):
                                     final_response = str(content) if content else ""
                             else:
                                 final_response = ""
+                            # Build transfer context for call-center UI when transfer was requested
+                            if transfer_marker and include_metadata and final_messages:
+                                transfer_context = {
+                                    "conversation_history": _messages_to_conversation_history(final_messages),
+                                    "user_id": user_id,
+                                    "user_name": user_name or None,
+                                }
                             # Clear state reference after extracting needed data
                             final_state = None
                         except Exception as e:
@@ -2532,12 +2607,15 @@ VOICE OUTPUT FORMAT (CRITICAL):
             # If transfer marker was found, return it (for WebRTC transfer detection)
             # Otherwise return the final response
             if include_metadata:
-                return {
+                out = {
                     "response": final_response,
                     "transfer_marker": transfer_marker,
                     "provider_used": _agent_graph_provider,
                     "model_used": _agent_graph_model,
                 }
+                if transfer_context:
+                    out["transfer_context"] = transfer_context
+                return out
             if transfer_marker:
                 return transfer_marker
             return final_response

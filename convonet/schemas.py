@@ -52,7 +52,9 @@ class HeartbeatMessage(BaseModel):
 class ServerMessageType(str, Enum):
     AUTH_OK = "auth_ok"
     AUTH_FAILED = "auth_failed"
+    GREETING = "greeting"
     STATUS = "status"
+    PROCESSING_START = "processing_start"
     TRANSCRIPT_PARTIAL = "transcript_partial"
     TRANSCRIPT_FINAL = "transcript_final"
     AGENT_STREAM_CHUNK = "agent_stream_chunk"
@@ -67,6 +69,17 @@ class AuthOkMessage(BaseModel):
     session_id: str
     user_id: Optional[str] = None
     user_name: Optional[str] = None
+
+class GreetingMessage(BaseModel):
+    type: ServerMessageType = Field(ServerMessageType.GREETING, Literal=True)
+    session_id: str
+    text: str
+    data_b64: str  # TTS audio (e.g. audio/mpeg or audio/wav)
+
+class ProcessingStartMessage(BaseModel):
+    type: ServerMessageType = Field(ServerMessageType.PROCESSING_START, Literal=True)
+    session_id: str
+    started_at_ts: float  # Unix timestamp so client can show elapsed seconds
 
 class StatusMessage(BaseModel):
     type: ServerMessageType = Field(ServerMessageType.STATUS, Literal=True)

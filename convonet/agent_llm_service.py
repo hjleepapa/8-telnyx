@@ -32,9 +32,17 @@ class AgentRequest(BaseModel):
     model: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
 
+class TransferContext(BaseModel):
+    """Context for call-center UI when call is transferred to human agent."""
+    conversation_history: List[Dict[str, str]] = []  # [{"role": "user"|"assistant", "content": "..."}]
+    user_id: Optional[str] = None
+    user_name: Optional[str] = None
+
+
 class AgentResponse(BaseModel):
     response: str
     transfer_marker: Optional[str] = None
+    transfer_context: Optional[TransferContext] = None  # Call history for agent UI when transfer_marker is set
     processing_time_ms: float
 
 class ProviderUpdate(BaseModel):
@@ -71,9 +79,12 @@ async def _process_agent_impl(request: AgentRequest) -> AgentResponse:
         )
         elapsed_ms = (time.time() - start_time) * 1000
         if isinstance(result, dict):
+            tc = result.get("transfer_context")
+            transfer_context = TransferContext(**tc) if isinstance(tc, dict) and tc else None
             return AgentResponse(
                 response=result.get("response", ""),
                 transfer_marker=result.get("transfer_marker"),
+                transfer_context=transfer_context,
                 processing_time_ms=elapsed_ms
             )
         return AgentResponse(
