@@ -7,9 +7,7 @@
         <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="text-center">
                 <h1 class="text-4xl font-bold text-gray-800 mb-4">Convonet Voice AI Productivity System</h1>
-                <p class="text-xl text-gray-600 mb-4">Multi-LLM (Claude, Gemini, OpenAI) + LiveKit WebRTC + Domain
-                    Agents (Productivity, Mortgage, Healthcare) + MCP Tools + Team Collaboration + Call Transfer + Agent
-                    Monitor + Sentry</p>
+                <p class="text-xl text-gray-600 mb-4">Google Cloud Run · FastAPI microservices · WebRTC/WebSocket voice (no LiveKit) · Multi-LLM (Claude, Gemini, OpenAI) · Domain Agents (Productivity, Mortgage, Healthcare) · MCP Tools · Agent Monitor · Call Transfer (Twilio/FusionPBX) · Sentry</p>
 
                 <!-- GitHub Repository Link -->
                 <div class="mb-6 flex justify-center items-center gap-4">
@@ -31,7 +29,7 @@
 
                 <div class="flex justify-center flex-wrap gap-2">
                     <span class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">FastAPI</span>
-                    <span class="bg-sky-100 text-sky-800 px-3 py-1 rounded-full text-sm font-medium">Flask</span>
+                    <span class="bg-amber-100 text-amber-800 px-3 py-1 rounded-full text-sm font-medium">Google Cloud Run</span>
                     <span
                         class="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-medium">LangGraph</span>
                     <span class="bg-purple-100 text-purple-800 px-3 py-1 rounded-full text-sm font-medium">MCP (38
@@ -40,8 +38,8 @@
                         class="bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-sm font-medium">LangChain</span>
                     <span class="bg-red-100 text-red-800 px-3 py-1 rounded-full text-sm font-medium">Claude · Gemini ·
                         OpenAI</span>
-                    <span class="bg-sky-100 text-sky-800 px-3 py-1 rounded-full text-sm font-medium">LiveKit
-                        WebRTC</span>
+                    <span class="bg-sky-100 text-sky-800 px-3 py-1 rounded-full text-sm font-medium">WebSocket
+                        Voice</span>
                     <span class="bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full text-sm font-medium">Google
                         Calendar</span>
                     <span class="bg-pink-100 text-pink-800 px-3 py-1 rounded-full text-sm font-medium">Twilio
@@ -128,80 +126,59 @@
                         <div class="mt-6 space-y-3">
                             <div class="flex justify-center">
                                 <div class="text-xs text-gray-600 bg-gray-100 px-4 py-2 rounded-lg max-w-4xl w-full">
-                                    <strong>WebRTC Flow:</strong> User Browser → FastAPI Gateway (Direct/Legacy) →
-                                    LiveKit WebRTC → PIN Auth (PostgreSQL)
-                                    → Streaming STT (Deepgram) → LangGraph → Multi-LLM (Claude/Gemini/OpenAI) → Domain
-                                    Agents → Tool Calling → Streaming TTS (Deepgram/ElevenLabs/Cartesia) → User
+                                    <strong>Voice Flow (GCP):</strong> Browser → voice-gateway WebSocket (<code class="bg-gray-200 px-1 rounded">/webrtc/ws</code>) → PIN Auth (PostgreSQL or env) → Batch STT (Deepgram) → agent-llm-service HTTP (<code class="bg-gray-200 px-1 rounded">/agent/process</code>) → LangGraph · Multi-LLM · MCP Tools → TTS (Deepgram) → transcript_final, agent_final, audio_chunk → User. No LiveKit on GCP.
                                 </div>
                             </div>
                             <div class="flex justify-center">
                                 <div class="text-xs text-gray-600 bg-pink-50 px-4 py-2 rounded-lg max-w-4xl w-full">
-                                    <strong>Transfer Flow:</strong> User Request → LangGraph (Detect Intent) → Twilio
-                                    API → FusionPBX (Extension 2001) → Agent Dashboard (JsSIP) → User Info Popup → Live
-                                    Conversation
+                                    <strong>Transfer Flow:</strong> User request → agent-llm (transfer intent) → voice-gateway (Twilio) → FusionPBX (Extension 2001) → Agent Dashboard (JsSIP at /call-center) → Live conversation
                                 </div>
                             </div>
                         </div>
 
-                        <!-- Hybrid Architecture Section -->
+                        <!-- GCP Cloud Run Architecture -->
                         <div class="mt-12 bg-indigo-50 p-6 rounded-lg border-2 border-indigo-200">
                             <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
                                 <div>
-                                    <h4 class="text-lg font-semibold mb-4 text-gray-800 italic">Evolution to FastAPI
-                                    </h4>
+                                    <h4 class="text-lg font-semibold mb-4 text-gray-800">Google Cloud Run Microservices</h4>
                                     <p class="text-sm text-gray-700 mb-4">
-                                        To ensure enterprise-grade scalability and native asynchronous support for
-                                        real-time voice,
-                                        the system has evolved from a pure Flask monolith to a <strong>FastAPI Hybrid
-                                            Gateway</strong>.
+                                        Convonet runs as <strong>four FastAPI microservices</strong> on Google Cloud Run, exposed under a single domain <strong>v2.convonetai.com</strong> with path-based routing.
                                     </p>
                                     <ul class="text-sm text-gray-600 space-y-2">
-                                        <li>• <strong>ASGI Master Gateway:</strong> FastAPI serves as the primary entry
-                                            point (asgi_main.py), handling high-concurrency connections and native
-                                            WebSockets.</li>
-                                        <li>• <strong>Flask Sub-system:</strong> The legacy Flask application remains
-                                            fully functional, mounted as a sub-app via <code
-                                                class="bg-gray-200 px-1 rounded">WSGIMiddleware</code>.</li>
-                                        <li>• <strong>Legacy Compatibility:</strong> Socket.IO connections are
-                                            stabilized using a forced polling transport fallback, ensuring reliable
-                                            session state through the WSGI bridge.</li>
-                                        <li>• <strong>Uvicorn Deployment:</strong> The system now runs on the Uvicorn
-                                            ASGI server, providing superior performance over traditional WSGI workers.
-                                        </li>
+                                        <li>• <strong>voice-gateway-service:</strong> WebSocket <code class="bg-gray-200 px-1 rounded">/webrtc/ws</code>, Twilio webhooks; STT → agent-llm HTTP → TTS (no LiveKit).</li>
+                                        <li>• <strong>agent-llm-service:</strong> <code class="bg-gray-200 px-1 rounded">POST /agent/process</code>, LangGraph, Multi-LLM, MCP tools, intent routing (Todo/Mortgage/Healthcare).</li>
+                                        <li>• <strong>call-center-service:</strong> Landing, /call-center, /voice_assistant, /mortgage_dashboard, /agent-monitor, /tool-execution, doc pages.</li>
+                                        <li>• <strong>crm-integration-service:</strong> SuiteCRM (patient, meeting, case, note).</li>
                                     </ul>
                                 </div>
                                 <div class="bg-white p-6 rounded-lg border shadow-sm">
-                                    <h4 class="text-lg font-semibold mb-4 text-center text-gray-800">Request Routing
-                                        Flow</h4>
+                                    <h4 class="text-lg font-semibold mb-4 text-center text-gray-800">Path-Based Routing (v2.convonetai.com)</h4>
                                     <div class="space-y-4">
                                         <div class="flex items-center justify-between border-b pb-2">
-                                            <span class="text-xs font-mono text-blue-600">/fastapi/*</span>
+                                            <span class="text-xs font-mono text-blue-600">/ , /call-center, /voice_assistant, /agent-monitor, ...</span>
                                             <span class="text-xs text-gray-500">→</span>
-                                            <span class="text-xs font-semibold text-gray-800">Native FastAPI
-                                                Routes</span>
+                                            <span class="text-xs font-semibold text-gray-800">call-center-service</span>
                                         </div>
                                         <div class="flex items-center justify-between border-b pb-2">
-                                            <span class="text-xs font-mono text-green-600">/webrtc/*</span>
+                                            <span class="text-xs font-mono text-green-600">/webrtc/* , /twilio/*</span>
                                             <span class="text-xs text-gray-500">→</span>
-                                            <span class="text-xs font-semibold text-gray-800">Legacy Flask (WSGI)</span>
+                                            <span class="text-xs font-semibold text-gray-800">voice-gateway-service</span>
                                         </div>
                                         <div class="flex items-center justify-between border-b pb-2">
-                                            <span class="text-xs font-mono text-purple-600">/socket.io/</span>
+                                            <span class="text-xs font-mono text-purple-600">/agent/* , /convonet_todo/*</span>
                                             <span class="text-xs text-gray-500">→</span>
-                                            <span class="text-xs font-semibold text-gray-800">Socket.IO (via
-                                                WSGIMiddleware)</span>
+                                            <span class="text-xs font-semibold text-gray-800">agent-llm-service</span>
                                         </div>
                                         <div class="flex items-center justify-between">
-                                            <span class="text-xs font-mono text-gray-600">/* (All Root)</span>
+                                            <span class="text-xs font-mono text-gray-600">/patient/* , /meeting/create, ...</span>
                                             <span class="text-xs text-gray-500">→</span>
-                                            <span class="text-xs font-semibold text-gray-800">Legacy Flask
-                                                Monolith</span>
+                                            <span class="text-xs font-semibold text-gray-800">crm-integration-service</span>
                                         </div>
                                     </div>
                                     <div class="mt-6 text-center">
                                         <span
                                             class="inline-block px-3 py-1 bg-green-100 text-green-800 text-xs font-bold rounded-full">
-                                            Verified Stable in Production
+                                            Single domain · no CORS
                                         </span>
                                     </div>
                                 </div>
@@ -215,14 +192,7 @@
                         </div>
                         <div class="mt-6 text-center">
                             <p class="text-sm text-gray-600">
-                                <strong>Architecture Flow:</strong> Enterprise voice AI system with multi-LLM (Claude,
-                                Gemini, OpenAI), LiveKit WebRTC, domain-specific agents (Productivity, Mortgage,
-                                Healthcare),
-                                PIN authentication (PostgreSQL), team collaboration, Agent Monitor for real-time
-                                tool/voice timing,
-                                intelligent call transfer to FusionPBX via Twilio, streaming STT/TTS (Deepgram,
-                                ElevenLabs, Cartesia),
-                                and Sentry error monitoring with automatic thread reset recovery.
+                                <strong>Architecture Flow:</strong> Four FastAPI microservices on Google Cloud Run (v2.convonetai.com). Voice via WebSocket to voice-gateway (no LiveKit): PIN auth (PostgreSQL or env), batch STT/TTS (Deepgram), HTTP to agent-llm for LangGraph and multi-LLM (Claude, Gemini, OpenAI), domain agents (Productivity, Mortgage, Healthcare), MCP tools. Agent Monitor (tool calls, voice_timing) and call transfer (Twilio → FusionPBX). Sentry for monitoring.
                             </p>
                             <p class="text-sm text-blue-600 mt-3">
                                 <a href="{{ url_for('convonet_system_architecture') }}"
@@ -242,58 +212,39 @@
     <h3 class="text-2xl font-semibold mb-6 text-gray-800">Overview</h3>
     <div class="bg-gray-50 p-6 rounded-lg">
         <p class="text-gray-700 mb-4">
-            The Convonet Voice AI Productivity System is an enterprise-grade platform that combines
-            multi-LLM AI (Claude, Gemini, OpenAI), LiveKit WebRTC voice, domain-specific agents (Productivity, Mortgage,
-            Healthcare),
-            team collaboration, and intelligent call center integration. Built for hackathon demonstrations,
-            it showcases advanced features including PIN authentication, role-based access control,
-            Agent Monitor for real-time tool/voice timing, call transfer to FusionPBX, and Sentry monitoring.
+            The Convonet Voice AI Productivity System is an enterprise-grade platform running on <strong>Google Cloud Run</strong> as four FastAPI microservices. It combines multi-LLM AI (Claude, Gemini, OpenAI), WebSocket-based voice (no LiveKit on GCP), domain-specific agents (Productivity, Mortgage, Healthcare), and intelligent call center integration. Voice flows through the voice-gateway WebSocket at <code class="bg-gray-100 px-1 rounded">/webrtc/ws</code>: PIN authentication (PostgreSQL or env), batch STT/TTS (Deepgram), and HTTP to agent-llm for LangGraph and MCP tools.
             <br><br>
-            The system enables teams to manage todos, assign tasks, and collaborate in real-time
-            through web dashboards, voice commands, and seamless transfer to human agents. Voice runs on
-            LiveKit WebRTC with streaming STT (Deepgram) and TTS (Deepgram, ElevenLabs, Cartesia).
-            All data syncs with Google Calendar via OAuth2, with intelligent caching for sub-second voice responses.
+            The system enables teams to manage todos, mortgage workflows, and healthcare intakes via voice and web dashboards, with seamless transfer to human agents (Twilio → FusionPBX). Agent Monitor shows tool calls and voice response timing. All services are exposed under <strong>v2.convonetai.com</strong> with path-based routing; Redis and PostgreSQL (e.g. Render) back session and application data.
         </p>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
             <div class="bg-white p-4 rounded border">
                 <h4 class="font-semibold text-gray-800 mb-2">Core Technologies</h4>
                 <ul class="text-sm text-gray-600 space-y-1">
-                    <li>• LangGraph for agent orchestration with tools_condition</li>
-                    <li>• Multi-LLM: Claude, Gemini, OpenAI</li>
-                    <li>• Model Context Protocol (MCP) - 38 tools (36 DB + 2 transfer)</li>
-                    <li>• LangChain for LLM integration & tool binding</li>
-                    <li>• FastAPI + ASGI Master Gateway</li>
-                    <li>• Flask + WSGIMiddleware (Legacy Sub-system)</li>
-                    <li>• LiveKit WebRTC for real-time voice</li>
-                    <li>• Deepgram STT; TTS: Deepgram, ElevenLabs, Cartesia</li>
-                    <li>• SQLAlchemy ORM with PostgreSQL (multi-tenant)</li>
-                    <li>• PIN authentication (4-6 digit voice PIN)</li>
-                    <li>• Agent Monitor: real-time tool/voice timing</li>
-                    <li>• Twilio Programmable Voice with Media Streams</li>
-                    <li>• Google Calendar OAuth2 integration (optimized)</li>
-                    <li>• FusionPBX SIP integration for call transfer</li>
-                    <li>• Sentry.io error monitoring & performance tracking</li>
-                    <li>• JsSIP WebRTC for browser-based softphone</li>
-                    <li>• Render.com deployment with Uvicorn (ASGI)</li>
+                    <li>• FastAPI microservices on Google Cloud Run</li>
+                    <li>• LangGraph for agent orchestration; Multi-LLM: Claude, Gemini, OpenAI</li>
+                    <li>• Model Context Protocol (MCP) – 38 tools (todo, mortgage, healthcare, transfer)</li>
+                    <li>• WebSocket voice: voice-gateway at /webrtc/ws (no LiveKit on GCP)</li>
+                    <li>• Deepgram batch STT and TTS; optional ElevenLabs, Cartesia</li>
+                    <li>• PostgreSQL (e.g. Render): users_anthropic, todos, mortgage</li>
+                    <li>• PIN authentication (users_anthropic.voice_pin or VOICE_PIN env)</li>
+                    <li>• Agent Monitor: tool calls and voice_timing (Redis-backed)</li>
+                    <li>• Twilio and FusionPBX for call transfer; JsSIP at /call-center</li>
+                    <li>• Single domain v2.convonetai.com with path-based routing</li>
+                    <li>• Sentry error monitoring</li>
                 </ul>
             </div>
             <div class="bg-white p-4 rounded border">
                 <h4 class="font-semibold text-gray-800 mb-2">Key Features</h4>
                 <ul class="text-sm text-gray-600 space-y-1">
-                    <li>• Domain-specific agents: Productivity, Mortgage, Healthcare</li>
-                    <li>• LiveKit WebRTC voice with streaming STT/TTS</li>
-                    <li>• Agent Monitor: real-time tool calls & voice timing</li>
-                    <li>• Multi-tenant team collaboration with role hierarchy</li>
-                    <li>• PIN-based voice authentication (4-6 digits)</li>
-                    <li>• Intelligent call transfer: AI → FusionPBX Extension 2001</li>
-                    <li>• Multi-TTS: Deepgram, ElevenLabs, Cartesia</li>
-                    <li>• Sentry error monitoring & performance tracking</li>
-                    <li>• Optimized timeouts (8s/10s/12s) for Twilio compatibility</li>
-                    <li>• 38 MCP tools (todos, calendar, teams, transfer)</li>
-                    <li>• WebRTC call center with JsSIP softphone</li>
-                    <li>• Google Calendar OAuth2 sync (background)</li>
-                    <li>• FusionPBX integration on Google Cloud VM</li>
-                    <li>• Production deployment on Render with auto-scaling</li>
+                    <li>• Domain agents: Productivity (Todo), Mortgage, Healthcare (intent-based routing)</li>
+                    <li>• WebSocket voice pipeline: STT → agent-llm HTTP → TTS; metadata (voice_timing) for Agent Monitor</li>
+                    <li>• Agent Monitor: real-time tool calls and voice response timing (call-center-service)</li>
+                    <li>• PIN-based voice authentication (DB or env)</li>
+                    <li>• Call transfer: AI → Twilio → FusionPBX Extension 2001 → JsSIP dashboard</li>
+                    <li>• 38 MCP tools; mortgage dashboard and tool-execution dashboard</li>
+                    <li>• Call center UI at /call-center (SIP config via SIP_DOMAIN, SIP_WSS_PORT)</li>
+                    <li>• CRM integration service for SuiteCRM (patient, meeting, case, note)</li>
+                    <li>• Production: Cloud Run with scale-to-zero; Redis and PostgreSQL external</li>
                 </ul>
             </div>
         </div>
@@ -305,7 +256,7 @@
     <h3 class="text-2xl font-semibold mb-6 text-gray-800">Recent Updates & Improvements (February 2026)</h3>
     <div class="bg-gradient-to-r from-blue-50 to-purple-50 p-6 rounded-lg border-2 border-blue-200">
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <!-- FastAPI Hybrid Gateway -->
+            <!-- GCP Cloud Run Microservices -->
             <div class="bg-white p-5 rounded-lg shadow-sm">
                 <div class="flex items-center mb-3">
                     <span class="bg-indigo-100 p-2 rounded-full mr-3">
@@ -314,17 +265,17 @@
                                 d="M13 10V3L4 14h7v7l9-11h-7z"></path>
                         </svg>
                     </span>
-                    <h4 class="text-lg font-semibold text-gray-800">FastAPI Hybrid Gateway</h4>
+                    <h4 class="text-lg font-semibold text-gray-800">GCP Cloud Run Microservices</h4>
                 </div>
                 <ul class="text-sm text-gray-600 space-y-1.5">
-                    <li>✓ ASGI Master Gateway (asgi_main.py)</li>
-                    <li>✓ Flask mounted via WSGIMiddleware</li>
-                    <li>✓ Native FastAPI Voice Gateway</li>
-                    <li>✓ Uvicorn production deployment</li>
-                    <li>✓ Optimized Socket.IO polling fallback</li>
+                    <li>✓ Four FastAPI services: voice-gateway, agent-llm, call-center, crm-integration</li>
+                    <li>✓ Single domain v2.convonetai.com with path-based routing</li>
+                    <li>✓ Voice via WebSocket /webrtc/ws (no LiveKit on GCP)</li>
+                    <li>✓ Agent-llm: /agent/process, LangGraph, MCP tools</li>
+                    <li>✓ Scale-to-zero; Redis and PostgreSQL (e.g. Render) external</li>
                 </ul>
                 <div class="mt-3 text-xs text-gray-500">
-                    <strong>Files:</strong> asgi_main.py, fastapi_voice_gateway.py
+                    <strong>Files:</strong> voice_gateway_service.py, agent_llm_service.py, call_center_service.py, cloudbuild.yaml
                 </div>
             </div>
             <!-- Call Transfer Feature -->
@@ -350,7 +301,7 @@
                 </div>
             </div>
 
-            <!-- LiveKit WebRTC + Agent Monitor -->
+            <!-- WebSocket Voice + Agent Monitor -->
             <div class="bg-white p-5 rounded-lg shadow-sm">
                 <div class="flex items-center mb-3">
                     <span class="bg-sky-100 p-2 rounded-full mr-3">
@@ -360,17 +311,17 @@
                             </path>
                         </svg>
                     </span>
-                    <h4 class="text-lg font-semibold text-gray-800">LiveKit WebRTC + Agent Monitor</h4>
+                    <h4 class="text-lg font-semibold text-gray-800">WebSocket Voice + Agent Monitor</h4>
                 </div>
                 <ul class="text-sm text-gray-600 space-y-1.5">
-                    <li>✓ LiveKit real-time voice (WebRTC)</li>
-                    <li>✓ Streaming STT (Deepgram) & TTS (Deepgram/ElevenLabs/Cartesia)</li>
-                    <li>✓ Domain agents: Productivity, Mortgage, Healthcare</li>
-                    <li>✓ Agent Monitor: tool calls & voice timing</li>
-                    <li>✓ Processing music during agent response</li>
+                    <li>✓ Voice-gateway WebSocket /webrtc/ws (no LiveKit on GCP)</li>
+                    <li>✓ Batch STT (Deepgram) → agent-llm HTTP → TTS (Deepgram)</li>
+                    <li>✓ Metadata (voice_timing, source) sent to agent for Agent Monitor</li>
+                    <li>✓ Domain agents: Productivity, Mortgage, Healthcare (intent routing)</li>
+                    <li>✓ Agent Monitor: tool calls and voice response timing (Redis)</li>
                 </ul>
                 <div class="mt-3 text-xs text-gray-500">
-                    <strong>Files:</strong> webrtc_voice_server_socketio.py, agent_monitor.py, deepgram/
+                    <strong>Files:</strong> voice_gateway_service.py, agent_monitor.py, routes.py, deepgram/
                 </div>
             </div>
 

@@ -128,7 +128,7 @@
                         <p class="text-gray-700 mb-2">Cloud Run service: <code class="bg-gray-100 px-1 rounded">convonet/voice_gateway_service.py</code>. Handles WebSocket <code class="bg-gray-100 px-1 rounded">/webrtc/ws</code> and Twilio webhooks (<code class="bg-gray-100 px-1 rounded">/twilio/*</code>).</p>
                         <ul class="text-sm text-gray-600 list-disc list-inside space-y-1">
                             <li><strong>WebSocket:</strong> Session state, PIN auth (PostgreSQL <code class="bg-gray-100 px-1 rounded">users_anthropic</code> or <code class="bg-gray-100 px-1 rounded">VOICE_PIN</code> env), start/audio_chunk/stop_recording</li>
-                            <li><strong>Pipeline:</strong> Batch STT (Deepgram) → HTTP <code class="bg-gray-100 px-1 rounded">POST</code> to agent-llm-service <code class="bg-gray-100 px-1 rounded">/agent/process</code> → TTS (Deepgram) → send transcript_final, agent_final, audio_chunk to client</li>
+                            <li><strong>Pipeline:</strong> Batch STT (Deepgram) → HTTP <code class="bg-gray-100 px-1 rounded">POST</code> to agent-llm-service <code class="bg-gray-100 px-1 rounded">/agent/process</code> with <code class="bg-gray-100 px-1 rounded">metadata</code> (source: voice, voice_timing, stt_provider) for Agent Monitor → TTS (Deepgram) → send transcript_final, agent_final, audio_chunk to client</li>
                             <li>Twilio: call, verify_pin, process_audio; transfer bridge to FusionPBX</li>
                         </ul>
                     </div>
@@ -182,7 +182,7 @@
                     <!-- Agent Monitor -->
                     <div class="border-l-4 border-indigo-500 pl-4">
                         <h4 class="font-semibold text-lg text-gray-800 mb-2">Agent Monitor</h4>
-                        <p class="text-gray-700 mb-2">UI at <code class="bg-gray-100 px-1 rounded">/agent-monitor</code> (call-center-service). Observability for tool calls and voice timing; backend APIs can be stubbed or wired to agent-llm/Redis.</p>
+                        <p class="text-gray-700 mb-2">UI at <code class="bg-gray-100 px-1 rounded">/agent-monitor</code> (call-center-service). Reads from Redis: agent-llm-service writes interactions (tool_calls, metadata.voice_timing) via <code class="bg-gray-100 px-1 rounded">AgentMonitor.track_interaction()</code>; call-center-service exposes <code class="bg-gray-100 px-1 rounded">/agent-monitor/api/stats</code> and <code class="bg-gray-100 px-1 rounded">/agent-monitor/api/interactions</code>.</p>
                     </div>
 
                     <!-- Tools & External APIs -->

@@ -39,7 +39,7 @@
    |── stop_recording ─>|                    |              |                    |
    |                    |── STT (batch) ───>|              |                    |
    |                    |<── transcript ─────|              |                    |
-   |                    |── POST /agent/process(transcript, user_id) ──────────>|
+   |                    |── POST /agent/process(transcript, user_id, metadata: voice_timing, source) ─>|
    |                    |                    |              | LangGraph, LLM,    |
    |                    |                    |              | MCP tools          |
    |                    |<── response ─────────────────────|                    |
@@ -201,7 +201,7 @@
                                 <span class="bg-green-600 text-white rounded-full w-8 h-8 flex items-center justify-center font-bold mr-4 flex-shrink-0">10</span>
                                 <div>
                                     <h4 class="font-semibold text-gray-800 mb-1">Voice Gateway → Agent LLM Service: POST /agent/process</h4>
-                                    <p class="text-sm text-gray-700">Voice gateway sends an HTTP <code class="bg-gray-100 px-1 rounded">POST</code> to <code class="bg-gray-100 px-1 rounded">AGENT_LLM_URL/agent/process</code> with transcript, <code class="bg-gray-100 px-1 rounded">user_id</code>, <code class="bg-gray-100 px-1 rounded">session_id</code>. Agent-llm-service runs LangGraph, selects domain agent (Todo/Mortgage/Healthcare) by intent, calls Multi-LLM and MCP tools, and returns the response text (and optional <code class="bg-gray-100 px-1 rounded">transfer_marker</code>).</p>
+                                    <p class="text-sm text-gray-700">Voice gateway sends an HTTP <code class="bg-gray-100 px-1 rounded">POST</code> to <code class="bg-gray-100 px-1 rounded">AGENT_LLM_URL/agent/process</code> with transcript, <code class="bg-gray-100 px-1 rounded">user_id</code>, <code class="bg-gray-100 px-1 rounded">session_id</code>, and <code class="bg-gray-100 px-1 rounded">metadata</code> (source: voice, t0, voice_timing, stt_provider) for Agent Monitor. Agent-llm-service runs LangGraph, selects domain agent (Todo/Mortgage/Healthcare) by intent, calls Multi-LLM and MCP tools, tracks the interaction (tool_calls, voice_timing) in Redis, and returns the response text (and optional <code class="bg-gray-100 px-1 rounded">transfer_marker</code>).</p>
                                 </div>
                             </div>
                         </div>
