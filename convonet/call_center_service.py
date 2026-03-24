@@ -137,7 +137,7 @@ async def agent_monitor_ui(request: Request):
 async def tool_execution_ui(request: Request):
     """Tool execution dashboard UI."""
     return templates.TemplateResponse(
-        "templates/tool_execution_dashboard.html",
+        "tool_execution_dashboard.html",
         {"request": request, "url_for": _url_for},
     )
 
@@ -155,7 +155,7 @@ async def convonet_tech_spec(request: Request):
 async def convonet_system_architecture(request: Request):
     """System architecture diagram page."""
     return templates.TemplateResponse(
-        "templates/convonet_system_architecture.html",
+        "convonet_system_architecture.html",
         {"request": request, "url_for": _url_for},
     )
 

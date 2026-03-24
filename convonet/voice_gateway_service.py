@@ -303,7 +303,7 @@ VOICE_PIN = os.getenv("VOICE_PIN") or os.getenv("TEST_VOICE_PIN", "1234")
 # STT/TTS providers for WebSocket voice (voice-gateway only; agent-llm does not synthesize).
 # Env must be a single id, e.g. elevenlabs — not "deepgram|elevenlabs|cartesia" (doc paste).
 _STT_ALLOWED = frozenset({"deepgram", "elevenlabs", "cartesia", "speechmatics"})
-_TTS_ALLOWED = frozenset({"deepgram", "elevenlabs", "cartesia"})
+_TTS_ALLOWED = frozenset({"deepgram", "elevenlabs", "cartesia", "speechmatics"})
 
 
 def _normalize_stt_provider(raw: Optional[str], default: str = "deepgram") -> str:
@@ -456,6 +456,17 @@ def _voice_tts_synthesize(agent_text: str, provider_override: Optional[str] = No
         vid = (os.getenv("CARTESIA_VOICE_ID") or "").strip() or None
         return cs.synthesize_rest_api(agent_text, voice_id=vid, wrap_wav_for_browser=True)
 
+    if p == "speechmatics":
+        from convonet.speechmatics import synthesize_speechmatics_tts
+
+        audio = synthesize_speechmatics_tts(agent_text)
+        if not audio:
+            logger.warning("Speechmatics TTS failed; falling back to Deepgram")
+            from convonet.deepgram import get_deepgram_service
+
+            return get_deepgram_service().synthesize_speech(agent_text, voice=DEEPGRAM_TTS_VOICE)
+        return audio
+
     logger.warning("Unknown VOICE_TTS_PROVIDER=%s; using Deepgram", p)
     from convonet.deepgram import get_deepgram_service
 
@@ -463,9 +474,9 @@ def _voice_tts_synthesize(agent_text: str, provider_override: Optional[str] = No
 
 
 def _voice_tts_mime(provider_override: Optional[str] = None) -> str:
-    """MIME for browser <Audio> data URLs (Cartesia REST returns WAV; Deepgram/ElevenLabs MP3)."""
+    """MIME for browser <Audio> data URLs (Cartesia/Speechmatics: WAV; Deepgram/ElevenLabs: MP3)."""
     p = _normalize_tts_provider(provider_override or VOICE_TTS_PROVIDER, "deepgram")
-    if p == "cartesia":
+    if p in ("cartesia", "speechmatics"):
         return "audio/wav"
     return "audio/mpeg"
 

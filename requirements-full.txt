@@ -192,6 +192,9 @@ deepgram-sdk>=3.0.0
 # ElevenLabs SDK for TTS with voice cloning, emotions, and multilingual support
 elevenlabs>=1.0.0
 
+# Speechmatics preview TTS (optional SDK; HTTP fallback exists in convonet.speechmatics.tts)
+speechmatics-tts
+
 # RAG (Retrieval-Augmented Generation) dependencies
 chromadb>=0.4.0  # Vector database for embeddings
 sentence-transformers>=2.2.0  # Alternative embedding model

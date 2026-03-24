@@ -42,6 +42,7 @@ google-auth-oauthlib>=1.2.2
 deepgram-sdk>=3.0.0
 elevenlabs>=1.0.0
 cartesia>=1.0.0
+speechmatics-tts
 livekit==0.17.5
 twilio>=8.0.0
 numpy>=2.2.4

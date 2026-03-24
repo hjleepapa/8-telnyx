@@ -37,6 +37,7 @@
                         <option value="deepgram">Deepgram</option>
                         <option value="elevenlabs">ElevenLabs</option>
                         <option value="cartesia">Cartesia</option>
+                        <option value="speechmatics">Speechmatics</option>
                     </select>
                 </label>
             </div>
@@ -72,8 +73,7 @@
             let audioChunks = [];
             let stream = null;
             let processingTimerId = null;
-            let holdMusicCtx = null;
-            let holdMusicOsc = null;
+            let processingAudio = null;
             let isProcessing = false;
             let vadAnalyser = null;
             let vadDataArray = null;
@@ -117,13 +117,12 @@
             }
 
             function stopHoldMusic() {
-                if (holdMusicOsc) {
-                    try { holdMusicOsc.stop(); } catch (e) {}
-                    holdMusicOsc = null;
-                }
-                if (holdMusicCtx) {
-                    try { holdMusicCtx.close(); } catch (e) {}
-                    holdMusicCtx = null;
+                if (processingAudio) {
+                    try {
+                        processingAudio.pause();
+                        processingAudio.currentTime = 0;
+                    } catch (e) {}
+                    processingAudio = null;
                 }
                 if (processingTimerId) {
                     clearInterval(processingTimerId);
@@ -142,15 +141,10 @@
                 updateElapsed();
                 processingTimerId = setInterval(updateElapsed, 1000);
                 try {
-                    holdMusicCtx = new (window.AudioContext || window.webkitAudioContext)();
-                    holdMusicOsc = holdMusicCtx.createOscillator();
-                    var gain = holdMusicCtx.createGain();
-                    gain.gain.value = 0.02;
-                    holdMusicOsc.connect(gain);
-                    gain.connect(holdMusicCtx.destination);
-                    holdMusicOsc.frequency.value = 220;
-                    holdMusicOsc.type = 'sine';
-                    holdMusicOsc.start();
+                    processingAudio = new Audio('/static/assets/audio/processing.mp3');
+                    processingAudio.loop = true;
+                    processingAudio.volume = 0.5;
+                    processingAudio.play().catch(function (e) { log('Processing audio failed: ' + e.message); });
                 } catch (e) { log('Hold music: ' + e.message); }
             }
 
