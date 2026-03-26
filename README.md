@@ -183,6 +183,8 @@ Implementation lives in [`telnyx_restaurant/mcp_server/`](telnyx_restaurant/mcp_
     ├── requirements.txt
     ├── .env.example
     ├── app.py
+    ├── static/
+    │   └── index.html        # Hanok Table (Korean menu) landing + Telnyx AI widget
     ├── routers/
     │   └── webhook.py
     └── mcp_server/
@@ -222,6 +224,7 @@ cp telnyx_restaurant/.env.example telnyx_restaurant/.env
 uvicorn telnyx_restaurant.app:app --reload --host 0.0.0.0 --port 8080
 ```
 
+- **Restaurant site + Telnyx web widget:** open `http://localhost:8080/` — Hanok Table (Korean cuisine) with **EN / 한국어** toggle (choice saved in `localStorage` as `hanok-lang`) and the Telnyx `<telnyx-ai-agent>` web component (script: `unpkg.com/@telnyx/ai-agent-widget@next`).
 - **Health:** `GET http://localhost:8080/health`
 - **Webhook (demo):** `POST http://localhost:8080/webhooks/telnyx/variables` with JSON body such as `{"caller_number": "+15551234567"}`
 

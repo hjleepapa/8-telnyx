@@ -1,0 +1,969 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Hanok Table — modern Korean dining in a Seoul-inspired kitchen. Book by phone or chat with our Telnyx AI host."
+    />
+    <title>Hanok Table | Korean Dining</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,500;0,600;1,500&family=Source+Sans+3:wght@300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script
+      async
+      src="https://unpkg.com/@telnyx/ai-agent-widget@next"
+    ></script>
+    <style>
+      :root {
+        --ink: #1a1210;
+        --paper: #f7f3ed;
+        --cream: #ebe4d8;
+        --gochujang: #b83c2d;
+        --gochujang-deep: #8c2a20;
+        --gold: #c4a35a;
+        --muted: #5c534c;
+        --card: #fffef9;
+        --shadow: rgba(26, 18, 16, 0.12);
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        font-family: "Source Sans 3", system-ui, sans-serif;
+        background: var(--paper);
+        color: var(--ink);
+        line-height: 1.6;
+      }
+
+      html[lang="ko"] body {
+        font-family: "Noto Sans KR", "Source Sans 3", system-ui, sans-serif;
+      }
+
+      html[lang="ko"] .brand strong,
+      html[lang="ko"] .hero h1,
+      html[lang="ko"] section h2.section-title,
+      html[lang="ko"] .banner h2 {
+        font-family: "Noto Sans KR", "Playfair Display", Georgia, serif;
+      }
+
+      .wrap {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 0 1.25rem;
+      }
+
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 50;
+        background: rgba(247, 243, 237, 0.92);
+        backdrop-filter: blur(10px);
+        border-bottom: 1px solid var(--cream);
+      }
+
+      .nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.85rem 0;
+        flex-wrap: wrap;
+      }
+
+      .nav-end {
+        display: flex;
+        align-items: center;
+        gap: 1rem 1.25rem;
+        flex-wrap: wrap;
+      }
+
+      .brand {
+        display: flex;
+        flex-direction: column;
+        gap: 0.1rem;
+      }
+
+      .brand strong {
+        font-family: "Playfair Display", Georgia, serif;
+        font-size: 1.35rem;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+
+      .brand span {
+        font-size: 0.78rem;
+        color: var(--muted);
+        font-weight: 400;
+      }
+
+      .nav-links {
+        display: flex;
+        gap: 1.25rem;
+        list-style: none;
+        font-size: 0.9rem;
+      }
+
+      .nav-links a {
+        color: var(--ink);
+        text-decoration: none;
+        font-weight: 500;
+      }
+
+      .nav-links a:hover {
+        color: var(--gochujang);
+      }
+
+      .lang-toggle {
+        display: inline-flex;
+        border-radius: 8px;
+        border: 1px solid var(--cream);
+        overflow: hidden;
+        background: var(--card);
+        box-shadow: 0 1px 3px var(--shadow);
+      }
+
+      .lang-btn {
+        padding: 0.45rem 0.85rem;
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        color: var(--muted);
+        transition: background 0.15s ease, color 0.15s ease;
+      }
+
+      .lang-btn:hover {
+        color: var(--gochujang-deep);
+        background: rgba(184, 60, 45, 0.08);
+      }
+
+      .lang-btn.active {
+        background: var(--gochujang);
+        color: #fff;
+      }
+
+      .lang-btn:focus-visible {
+        outline: 2px solid var(--gochujang);
+        outline-offset: 2px;
+      }
+
+      .hero {
+        position: relative;
+        padding: 4.5rem 0 4rem;
+        overflow: hidden;
+      }
+
+      .hero::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background: radial-gradient(
+            120% 80% at 85% 10%,
+            rgba(184, 60, 45, 0.14),
+            transparent 55%
+          ),
+          radial-gradient(
+            90% 60% at 0% 100%,
+            rgba(196, 163, 90, 0.18),
+            transparent 50%
+          );
+        pointer-events: none;
+      }
+
+      .hero-grid {
+        position: relative;
+        display: grid;
+        gap: 2.5rem;
+        align-items: center;
+      }
+
+      @media (min-width: 900px) {
+        .hero-grid {
+          grid-template-columns: 1.1fr 0.9fr;
+        }
+      }
+
+      .hero h1 {
+        font-family: "Playfair Display", Georgia, serif;
+        font-size: clamp(2.25rem, 4vw, 3.25rem);
+        font-weight: 600;
+        line-height: 1.15;
+        margin-bottom: 1rem;
+      }
+
+      .hero .tagline-accent {
+        font-size: 1.05rem;
+        color: var(--gochujang-deep);
+        font-weight: 600;
+        margin-bottom: 0.5rem;
+      }
+
+      .hero p.lead {
+        color: var(--muted);
+        max-width: 36rem;
+        margin-bottom: 1.5rem;
+      }
+
+      .pill-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-bottom: 1.75rem;
+      }
+
+      .pill {
+        font-size: 0.78rem;
+        padding: 0.35rem 0.75rem;
+        border-radius: 999px;
+        background: var(--cream);
+        color: var(--ink);
+        font-weight: 500;
+      }
+
+      .cta-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        align-items: center;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.75rem 1.35rem;
+        border-radius: 6px;
+        font-weight: 600;
+        font-size: 0.9rem;
+        text-decoration: none;
+        border: none;
+        cursor: pointer;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      .btn-primary {
+        background: var(--gochujang);
+        color: #fff;
+        box-shadow: 0 8px 24px var(--shadow);
+      }
+
+      .btn-primary:hover {
+        background: var(--gochujang-deep);
+        transform: translateY(-1px);
+      }
+
+      .btn-ghost {
+        background: transparent;
+        color: var(--ink);
+        border: 1px solid var(--cream);
+      }
+
+      .widget-hint {
+        font-size: 0.85rem;
+        color: var(--muted);
+        max-width: 24rem;
+      }
+
+      .widget-hint strong {
+        color: var(--gochujang-deep);
+      }
+
+      .hero-card {
+        background: var(--card);
+        border-radius: 16px;
+        padding: 1.75rem;
+        box-shadow: 0 24px 60px var(--shadow);
+        border: 1px solid var(--cream);
+      }
+
+      .hero-card h2 {
+        font-size: 1rem;
+        font-weight: 700;
+        margin-bottom: 1rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .hero-card h2::before {
+        content: "";
+        width: 4px;
+        height: 1.1rem;
+        background: var(--gold);
+        border-radius: 2px;
+      }
+
+      .hours {
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+
+      .hours dt {
+        font-weight: 600;
+        color: var(--ink);
+        margin-top: 0.65rem;
+      }
+
+      .hours dd {
+        margin: 0.15rem 0 0 0;
+      }
+
+      section {
+        padding: 3.75rem 0;
+      }
+
+      section h2.section-title {
+        font-family: "Playfair Display", Georgia, serif;
+        font-size: 2rem;
+        margin-bottom: 0.35rem;
+      }
+
+      .section-kicker {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: var(--gochujang);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin-bottom: 0.35rem;
+      }
+
+      html[lang="ko"] .section-kicker {
+        text-transform: none;
+        letter-spacing: 0.02em;
+      }
+
+      .section-lead {
+        color: var(--muted);
+        max-width: 40rem;
+        margin-bottom: 2rem;
+      }
+
+      .menu-grid {
+        display: grid;
+        gap: 1.25rem;
+      }
+
+      @media (min-width: 640px) {
+        .menu-grid {
+          grid-template-columns: repeat(2, 1fr);
+        }
+      }
+
+      @media (min-width: 960px) {
+        .menu-grid {
+          grid-template-columns: repeat(3, 1fr);
+        }
+      }
+
+      .dish {
+        background: var(--card);
+        border-radius: 14px;
+        padding: 1.35rem;
+        border: 1px solid var(--cream);
+        box-shadow: 0 10px 30px rgba(26, 18, 16, 0.06);
+        transition: transform 0.18s ease, box-shadow 0.18s ease;
+      }
+
+      .dish:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 16px 40px rgba(26, 18, 16, 0.1);
+      }
+
+      .dish .dish-title {
+        font-size: 1.15rem;
+        font-weight: 700;
+        margin-bottom: 0.2rem;
+      }
+
+      .dish .dish-sub {
+        font-family: "Playfair Display", Georgia, serif;
+        font-size: 0.95rem;
+        color: var(--gochujang-deep);
+        margin-bottom: 0.5rem;
+        font-style: italic;
+      }
+
+      html[lang="ko"] .dish .dish-sub {
+        font-family: "Noto Sans KR", sans-serif;
+        font-style: normal;
+        font-weight: 500;
+      }
+
+      .dish p {
+        font-size: 0.88rem;
+        color: var(--muted);
+      }
+
+      .tag {
+        display: inline-block;
+        margin-top: 0.65rem;
+        font-size: 0.72rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--gold);
+      }
+
+      html[lang="ko"] .tag {
+        text-transform: none;
+        letter-spacing: 0.03em;
+      }
+
+      .banner {
+        background: linear-gradient(
+          120deg,
+          var(--gochujang-deep),
+          var(--gochujang)
+        );
+        color: #fff;
+        padding: 2.5rem 0;
+        text-align: center;
+      }
+
+      .banner p {
+        max-width: 36rem;
+        margin: 0.75rem auto 0;
+        opacity: 0.95;
+        font-size: 0.95rem;
+      }
+
+      .banner h2 {
+        font-family: "Playfair Display", Georgia, serif;
+        font-size: 1.75rem;
+      }
+
+      footer {
+        padding: 2.5rem 0;
+        border-top: 1px solid var(--cream);
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+
+      footer .foot-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1.5rem;
+        justify-content: space-between;
+        align-items: flex-start;
+      }
+
+      footer strong {
+        color: var(--ink);
+      }
+
+      .widget-spacer {
+        height: 4rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="wrap nav">
+        <div class="brand">
+          <strong data-i18n="brand_name">Hanok Table</strong>
+          <span data-i18n="brand_tag">Seoul-inspired kitchen · Est. 2024</span>
+        </div>
+        <div class="nav-end">
+          <ul class="nav-links">
+            <li>
+              <a href="#menu" data-i18n="nav_menu">Menu</a>
+            </li>
+            <li>
+              <a href="#experience" data-i18n="nav_exp">Experience</a>
+            </li>
+            <li>
+              <a href="#reserve" data-i18n="nav_reserve">Reservations</a>
+            </li>
+          </ul>
+          <div
+            class="lang-toggle"
+            role="group"
+            aria-label="Choose language"
+          >
+            <button
+              type="button"
+              class="lang-btn active"
+              data-set-lang="en"
+              aria-pressed="true"
+            >
+              EN
+            </button>
+            <button
+              type="button"
+              class="lang-btn"
+              data-set-lang="ko"
+              aria-pressed="false"
+            >
+              한국어
+            </button>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="wrap hero-grid">
+          <div>
+            <p class="tagline-accent" data-i18n="tagline">
+              Balance of fire and fermentation — the care of a full Korean table
+            </p>
+            <h1 data-i18n-html="hero_h1">
+              Modern dining with<br />the depth of Korean flavor
+            </h1>
+            <p class="lead" data-i18n-html="hero_lead">
+              From stone-pot bibimbap to charcoal hanwoo ribs — seasonally
+              changing banchan, fresh ssam greens, and house-fermented kimchi
+              round out an authentic <em>han-sang</em>. Book by phone or use the
+              <strong>Telnyx AI assistant</strong> in the chat widget at the
+              lower-right of this page.
+            </p>
+            <div class="pill-row">
+              <span class="pill" data-i18n="pill_1">Bibimbap</span>
+              <span class="pill" data-i18n="pill_2">Kimchi jjigae</span>
+              <span class="pill" data-i18n="pill_3">Bulgogi</span>
+              <span class="pill" data-i18n="pill_4">Korean BBQ</span>
+            </div>
+            <div class="cta-row">
+              <a class="btn btn-primary" href="#reserve" data-i18n="cta_reserve"
+                >How to reserve</a
+              >
+              <a class="btn btn-ghost" href="#menu" data-i18n="cta_menu"
+                >Signature dishes</a
+              >
+            </div>
+            <p
+              class="widget-hint"
+              style="margin-top: 1.25rem"
+              data-i18n-html="widget_hint"
+            >
+              <strong>AI host:</strong> Open the chat widget to ask about hours,
+              seating, allergies, or party size. It is the same assistant
+              experience as our Telnyx Voice AI line.
+            </p>
+          </div>
+          <aside class="hero-card">
+            <h2 data-i18n="tasting_title">Chef’s tasting · tonight</h2>
+            <dl class="hours">
+              <dt data-i18n="tasting_dt_1">First · Banchan flight</dt>
+              <dd data-i18n-html="tasting_dd_1">
+                Aged kimchi, braised lotus root, spinach <em>namul</em>,
+                stir-fried anchovy — all prepped each morning.
+              </dd>
+              <dt data-i18n="tasting_dt_2">Main</dt>
+              <dd data-i18n="tasting_dd_2">
+                Charcoal hanwoo galbi (rib cap) with lettuce, perilla, and
+                ssamjang.
+              </dd>
+              <dt data-i18n="tasting_dt_3">Finish</dt>
+              <dd data-i18n="tasting_dd_3">
+                Yuzu créme brûlée with omija berry tea.
+              </dd>
+              <dt style="margin-top: 1rem" data-i18n="hours_label">Hours</dt>
+              <dd data-i18n="hours_value">
+                Tue–Sun 11:30 a.m.–10:00 p.m. · Closed Mondays
+              </dd>
+            </dl>
+          </aside>
+        </div>
+      </section>
+
+      <section id="menu">
+        <div class="wrap">
+          <p class="section-kicker" data-i18n="menu_kicker">Signature</p>
+          <h2 class="section-title" data-i18n="menu_title">Korean favorites</h2>
+          <p class="section-lead" data-i18n="menu_lead">
+            Plates that respect fermenting, pickling, and grilling — reinterpreted
+            with local produce. Mention vegetarian or gluten-free needs to the
+            AI host when you book.
+          </p>
+          <div class="menu-grid">
+            <article class="dish">
+              <div class="dish-title" data-i18n="d1_t">Dolsot bibimbap</div>
+              <div class="dish-sub" data-i18n="d1_s">Stone pot rice bowl</div>
+              <p data-i18n="d1_p">
+                Eight seasonal vegetables, black soy rice, gochujang sauce, and
+                toasted sesame oil — with crackling scorched rice from the hot pot.
+              </p>
+              <span class="tag" data-i18n="d1_tag">Vegetarian option</span>
+            </article>
+            <article class="dish">
+              <div class="dish-title" data-i18n="d2_t">Aged kimchi jjigae</div>
+              <div class="dish-sub" data-i18n="d2_s">Spicy kimchi stew</div>
+              <p data-i18n="d2_p">
+                Three-week aged kimchi, pork shoulder, tofu, and zucchini in a
+                rich, fiery broth.
+              </p>
+              <span class="tag" data-i18n="d2_tag">Spicy · comfort</span>
+            </article>
+            <article class="dish">
+              <div class="dish-title" data-i18n="d3_t">Soy-marinated bulgogi</div>
+              <div class="dish-sub" data-i18n="d3_s">Sweet-savory grilled beef</div>
+              <p data-i18n="d3_p">
+                Ribeye marinated with pear and apple, then seared with onion and
+                mushrooms.
+              </p>
+              <span class="tag" data-i18n="d3_tag">Mild · family favorite</span>
+            </article>
+            <article class="dish">
+              <div class="dish-title" data-i18n="d4_t">
+                Charcoal hanwoo BBQ set
+              </div>
+              <div class="dish-sub" data-i18n="d4_s">Premium Korean barbecue</div>
+              <p data-i18n="d4_p">
+                Rib cap, short rib, and brisket with grilled garlic, ssam basket,
+                and house ssamjang.
+              </p>
+              <span class="tag" data-i18n="d4_tag">Chef’s cut · shareable</span>
+            </article>
+            <article class="dish">
+              <div class="dish-title" data-i18n="d5_t">Haemul pajeon</div>
+              <div class="dish-sub" data-i18n="d5_s">Seafood scallion pancake</div>
+              <p data-i18n="d5_p">
+                Tongyeong oysters, squid, and scallions — shatter-crisp edges and
+                a soft center.
+              </p>
+              <span class="tag" data-i18n="d5_tag">Crispy · makgeolli pairing</span>
+            </article>
+            <article class="dish">
+              <div class="dish-title" data-i18n="d6_t">Naengmyeon &amp; mandu</div>
+              <div class="dish-sub" data-i18n="d6_s">Cold noodles · dumplings</div>
+              <p data-i18n="d6_p">
+                Broth or spicy mixed naengmyeon plus pork-kimchi dumplings — a
+                lighter lunch pairing.
+              </p>
+              <span class="tag" data-i18n="d6_tag">Lunch specials</span>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="experience" style="background: var(--cream)">
+        <div class="wrap">
+          <p class="section-kicker" data-i18n="exp_kicker">Hanok rhythm</p>
+          <h2 class="section-title" data-i18n="exp_title">The pace of the meal</h2>
+          <p class="section-lead" data-i18n="exp_lead">
+            A full table is a small celebration. Tea to open the palate, layers
+            of flavor from banchan, comfort in a spoonful of stew — we pace each
+            course for conversation, not the clock.
+          </p>
+          <div class="menu-grid">
+            <article class="dish">
+              <div class="dish-title" data-i18n="e1_t">Jang &amp; ferment</div>
+              <div class="dish-sub" data-i18n="e1_s">Our jang cellar</div>
+              <p data-i18n="e1_p">
+                Doenjang, gochujang, and ganjang are made in-house from beans and
+                salt sourced from traditional producers.
+              </p>
+            </article>
+            <article class="dish">
+              <div class="dish-title" data-i18n="e2_t">Charcoal &amp; smoke</div>
+              <div class="dish-sub" data-i18n="e2_s">The grill room</div>
+              <p data-i18n="e2_p">
+                Roasts and BBQ hit a hardwood charcoal fire so the crust meets
+                lettuce wraps at just the right moment.
+              </p>
+            </article>
+            <article class="dish">
+              <div class="dish-title" data-i18n="e3_t">Seasonal banchan</div>
+              <div class="dish-sub" data-i18n="e3_s">Market-led sides</div>
+              <p data-i18n="e3_p">
+                Mountain greens and peak-season seafood rotate weekly — come back
+                to see what’s new on the tray.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <div class="banner" id="reserve">
+        <div class="wrap">
+          <h2 data-i18n="banner_title">Reservations &amp; contact</h2>
+          <p data-i18n="banner_p">
+            You can always call us to book. On this site, use the Telnyx AI agent
+            widget to share time, party size, and special requests — a manager
+            will follow up to confirm.
+          </p>
+        </div>
+      </div>
+
+      <div class="widget-spacer" aria-hidden="true"></div>
+    </main>
+
+    <footer>
+      <div class="wrap foot-grid">
+        <div>
+          <strong data-i18n="brand_name">Hanok Table</strong><br />
+          <span data-i18n="footer_demo">Demo venue for Telnyx Voice AI · Sample menu copy</span>
+        </div>
+        <div>
+          <span data-i18n-html="footer_api">Webhook API: <code>/webhooks/telnyx/variables</code><br />Health: <code>/health</code></span>
+        </div>
+      </div>
+    </footer>
+
+    <telnyx-ai-agent
+      agent-id="assistant-d1dd3ba4-2c4a-4d11-9140-9b3e7d016997"
+      environment="production"
+    ></telnyx-ai-agent>
+
+    <script>
+      (function () {
+        const STRINGS = {
+          en: {
+            doc_title: "Hanok Table | Korean Dining",
+            meta_desc:
+              "Hanok Table — modern Korean dining in a Seoul-inspired kitchen. Book by phone or chat with our Telnyx AI host.",
+            brand_name: "Hanok Table",
+            brand_tag: "Seoul-inspired kitchen · Est. 2024",
+            nav_menu: "Menu",
+            nav_exp: "Experience",
+            nav_reserve: "Reservations",
+            tagline:
+              "Balance of fire and fermentation — the care of a full Korean table",
+            hero_h1: "Modern dining with<br />the depth of Korean flavor",
+            hero_lead:
+              "From stone-pot bibimbap to charcoal hanwoo ribs — seasonally changing banchan, fresh ssam greens, and house-fermented kimchi round out an authentic <em>han-sang</em>. Book by phone or use the <strong>Telnyx AI assistant</strong> in the chat widget at the lower-right of this page.",
+            pill_1: "Bibimbap",
+            pill_2: "Kimchi jjigae",
+            pill_3: "Bulgogi",
+            pill_4: "Korean BBQ",
+            cta_reserve: "How to reserve",
+            cta_menu: "Signature dishes",
+            widget_hint:
+              "<strong>AI host:</strong> Open the chat widget to ask about hours, seating, allergies, or party size. It is the same assistant experience as our Telnyx Voice AI line.",
+            tasting_title: "Chef’s tasting · tonight",
+            tasting_dt_1: "First · Banchan flight",
+            tasting_dd_1:
+              "Aged kimchi, braised lotus root, spinach <em>namul</em>, stir-fried anchovy — all prepped each morning.",
+            tasting_dt_2: "Main",
+            tasting_dd_2:
+              "Charcoal hanwoo galbi (rib cap) with lettuce, perilla, and ssamjang.",
+            tasting_dt_3: "Finish",
+            tasting_dd_3: "Yuzu créme brûlée with omija berry tea.",
+            hours_label: "Hours",
+            hours_value: "Tue–Sun 11:30 a.m.–10:00 p.m. · Closed Mondays",
+            menu_kicker: "Signature",
+            menu_title: "Korean favorites",
+            menu_lead:
+              "Plates that respect fermenting, pickling, and grilling — reinterpreted with local produce. Mention vegetarian or gluten-free needs to the AI host when you book.",
+            d1_t: "Dolsot bibimbap",
+            d1_s: "Stone pot rice bowl",
+            d1_p:
+              "Eight seasonal vegetables, black soy rice, gochujang sauce, and toasted sesame oil — with crackling scorched rice from the hot pot.",
+            d1_tag: "Vegetarian option",
+            d2_t: "Aged kimchi jjigae",
+            d2_s: "Spicy kimchi stew",
+            d2_p:
+              "Three-week aged kimchi, pork shoulder, tofu, and zucchini in a rich, fiery broth.",
+            d2_tag: "Spicy · comfort",
+            d3_t: "Soy-marinated bulgogi",
+            d3_s: "Sweet-savory grilled beef",
+            d3_p:
+              "Ribeye marinated with pear and apple, then seared with onion and mushrooms.",
+            d3_tag: "Mild · family favorite",
+            d4_t: "Charcoal hanwoo BBQ set",
+            d4_s: "Premium Korean barbecue",
+            d4_p:
+              "Rib cap, short rib, and brisket with grilled garlic, ssam basket, and house ssamjang.",
+            d4_tag: "Chef’s cut · shareable",
+            d5_t: "Haemul pajeon",
+            d5_s: "Seafood scallion pancake",
+            d5_p:
+              "Tongyeong oysters, squid, and scallions — shatter-crisp edges and a soft center.",
+            d5_tag: "Crispy · makgeolli pairing",
+            d6_t: "Naengmyeon & mandu",
+            d6_s: "Cold noodles · dumplings",
+            d6_p:
+              "Broth or spicy mixed naengmyeon plus pork-kimchi dumplings — a lighter lunch pairing.",
+            d6_tag: "Lunch specials",
+            exp_kicker: "Hanok rhythm",
+            exp_title: "The pace of the meal",
+            exp_lead:
+              "A full table is a small celebration. Tea to open the palate, layers of flavor from banchan, comfort in a spoonful of stew — we pace each course for conversation, not the clock.",
+            e1_t: "Jang & ferment",
+            e1_s: "Our jang cellar",
+            e1_p:
+              "Doenjang, gochujang, and ganjang are made in-house from beans and salt sourced from traditional producers.",
+            e2_t: "Charcoal & smoke",
+            e2_s: "The grill room",
+            e2_p:
+              "Roasts and BBQ hit a hardwood charcoal fire so the crust meets lettuce wraps at just the right moment.",
+            e3_t: "Seasonal banchan",
+            e3_s: "Market-led sides",
+            e3_p:
+              "Mountain greens and peak-season seafood rotate weekly — come back to see what’s new on the tray.",
+            banner_title: "Reservations & contact",
+            banner_p:
+              "You can always call us to book. On this site, use the Telnyx AI agent widget to share time, party size, and special requests — a manager will follow up to confirm.",
+            footer_demo: "Demo venue for Telnyx Voice AI · Sample menu copy",
+            footer_api:
+              'Webhook API: <code>/webhooks/telnyx/variables</code><br />Health: <code>/health</code>',
+          },
+          ko: {
+            doc_title: "한옥 테이블 Hanok Table | 한식 다이닝",
+            meta_desc:
+              "한옥 테이블 — 서울 감성의 현대 한식. 전화 예약 또는 Telnyx AI 호스트와 채팅으로 문의하세요.",
+            brand_name: "한옥 테이블 · Hanok Table",
+            brand_tag: "서울 감성 키친 · 2024 오픈",
+            nav_menu: "메뉴",
+            nav_exp: "체험",
+            nav_reserve: "예약",
+            tagline: "발효와 불의 균형, 한상 차림의 정성",
+            hero_h1: "한식의 깊이를<br />담은 모던 다이닝",
+            hero_lead:
+              "비빔밥에서 숯불 한우 갈비까지—계절 반찬, 쌈 채소, 집에서 담근 김치로 완성하는 정통 한상을 경험하세요. 예약은 전화로도 가능하며, 이 페이지 우측 하단 <strong>Telnyx AI 어시스턴트</strong> 채팅 위젯도 이용하실 수 있습니다.",
+            pill_1: "비빔밥 · Bibimbap",
+            pill_2: "김치찌개 · Kimchi jjigae",
+            pill_3: "불고기 · Bulgogi",
+            pill_4: "한우 구이 · Korean BBQ",
+            cta_reserve: "예약 안내",
+            cta_menu: "시그니처 메뉴",
+            widget_hint:
+              "<strong>AI 호스트:</strong> 채팅 위젯에서 영업 시간, 좌석, 알레르기, 인원 등을 말씀해 주세요. Telnyx 음성 AI와 동일한 어시스턴트입니다.",
+            tasting_title: "오늘의 추천 · 셰프 테이스팅",
+            tasting_dt_1: "전채 · 반찬 플라이트",
+            tasting_dd_1:
+              "묵은지, 연근 조림, 시금치 나물, 멸치볶음 — 모두 매일 아침 준비합니다.",
+            tasting_dt_2: "메인",
+            tasting_dd_2:
+              "숯불 한우 갈비 살치살 · 상추·깻잎·쌈장과 함께",
+            tasting_dt_3: "마무리",
+            tasting_dd_3: "유자 크림 브륄레 · 오미자 차",
+            hours_label: "영업 시간",
+            hours_value: "화–일 11:30–22:00 · 월요일 휴무",
+            menu_kicker: "시그니처",
+            menu_title: "시그니처 한식 메뉴",
+            menu_lead:
+              "발효·절임·구이의 기본에 충실하면서도 현지 재료로 재해석한 플레이트입니다. 채식·글루텐 프리 요청은 예약 시 AI 호스트에게 남겨 주세요.",
+            d1_t: "전통 비빔밥",
+            d1_s: "Dolsot bibimbap",
+            d1_p:
+              "계절 나물 여덟 가지, 서리태 쌀밥, 고추장 양념과 참기름. 돌솥 누룽지까지.",
+            d1_tag: "Vegetarian option",
+            d2_t: "묵은지 김치찌개",
+            d2_s: "Aged kimchi jjigae",
+            d2_p:
+              "3주 숙성 묵은지, 돼지 목살, 두부와 애호박. 얼큰하고 깊이 있는 국물.",
+            d2_tag: "매운맛 · comfort",
+            d3_t: "양념 불고기",
+            d3_s: "Soy-marinated bulgogi",
+            d3_p:
+              "배즙·사과로 숙성한 양념에 재운 채끝. 양파와 버섯을 함께 볶아냅니다.",
+            d3_tag: "순한 맛 · 가족 추천",
+            d4_t: "숯불 한우 모둠",
+            d4_s: "Charcoal hanwoo BBQ set",
+            d4_p:
+              "살치살·갈비·차돌. 쌈 채소와 쌈장, 마늘 구이, 상추·깻잎 바구니.",
+            d4_tag: "셰프 추천 · sharing",
+            d5_t: "해물 파전",
+            d5_s: "Haemul pajeon",
+            d5_p:
+              "통영 생굴, 오징어, 실파. 바삭한 가장자리와 촉촉한 안쪽의 대비.",
+            d5_tag: "바삭 · 막걸리 페어링",
+            d6_t: "냉면 & 만두",
+            d6_s: "Naengmyeon · Mandu",
+            d6_p:
+              "육수 냉면과 비빔 냉면, 돼지고기 김치만두—가벼운 점심에 어울립니다.",
+            d6_tag: "런치 스페셜",
+            exp_kicker: "한옥의 리듬",
+            exp_title: "식사의 리듬",
+            exp_lead:
+              "한상은 작은 축제입니다. 따뜻한 차로 입을 돋우고, 반찬으로 쌓이는 풍미, 국물 한 숟가락의 위로—대화에 맞춰 코스를 천천히 이어 갑니다.",
+            e1_t: "발효 밭",
+            e1_s: "Jang & ferment",
+            e1_p:
+              "된장·고추장·간장은 시골 장독대 콩과 소금으로 직접 담근 재래식 장류입니다.",
+            e2_t: "불과 숯",
+            e2_s: "Charcoal & smoke",
+            e2_p:
+              "로스구이는 참숯 화구에서. 고기 표면의 그윽한 향이 쌈과 만나야 완성됩니다.",
+            e3_t: "계절의 반찬",
+            e3_s: "Seasonal banchan",
+            e3_p:
+              "시장 산나물·제철 해산물로 매주 바뀌는 찬 차림을 즐겨 주세요.",
+            banner_title: "예약 & 문의",
+            banner_p:
+              "전화로도 예약 가능합니다. 이 사이트에서는 Telnyx AI 에이전트 위젯으로 시간·인원·특별 요청을 남겨 주실 수 있으며, 확인 안내는 매니저가 연락드립니다.",
+            footer_demo: "Telnyx Voice AI 데모 공간 · 샘플 메뉴 문구",
+            footer_api:
+              '웹훅 API: <code>/webhooks/telnyx/variables</code><br />헬스: <code>/health</code>',
+          },
+        };
+
+        const STORAGE_KEY = "hanok-lang";
+
+        function applyLang(lang) {
+          const t = STRINGS[lang] || STRINGS.en;
+          document.documentElement.lang = lang === "ko" ? "ko" : "en";
+          document.title = t.doc_title;
+          const meta = document.querySelector('meta[name="description"]');
+          if (meta) meta.setAttribute("content", t.meta_desc);
+
+          document.querySelectorAll("[data-i18n]").forEach(function (el) {
+            var key = el.getAttribute("data-i18n");
+            if (t[key] !== undefined) el.textContent = t[key];
+          });
+          document.querySelectorAll("[data-i18n-html]").forEach(function (el) {
+            var key = el.getAttribute("data-i18n-html");
+            if (t[key] !== undefined) el.innerHTML = t[key];
+          });
+
+          document.querySelectorAll(".lang-btn").forEach(function (btn) {
+            var on = btn.getAttribute("data-set-lang") === lang;
+            btn.classList.toggle("active", on);
+            btn.setAttribute("aria-pressed", on ? "true" : "false");
+          });
+
+          try {
+            localStorage.setItem(STORAGE_KEY, lang);
+          } catch (e) {}
+        }
+
+        function initLang() {
+          var saved = null;
+          try {
+            saved = localStorage.getItem(STORAGE_KEY);
+          } catch (e) {}
+          var nav =
+            typeof navigator !== "undefined" ? navigator.language || "" : "";
+          var guess =
+            saved === "ko" || saved === "en"
+              ? saved
+              : nav.toLowerCase().startsWith("ko")
+                ? "ko"
+                : "en";
+          applyLang(guess);
+        }
+
+        document.querySelectorAll(".lang-btn").forEach(function (btn) {
+          btn.addEventListener("click", function () {
+            var lang = btn.getAttribute("data-set-lang");
+            if (lang === "en" || lang === "ko") applyLang(lang);
+          });
+        });
+
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", initLang);
+        } else {
+          initLang();
+        }
+      })();
+    </script>
+  </body>
+</html>
