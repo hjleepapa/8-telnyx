@@ -201,6 +201,12 @@ Implementation lives in [`telnyx_restaurant/mcp_server/`](telnyx_restaurant/mcp_
 3. **Cloudflare:** `CNAME` that hostname to the target Render provides; proxy on/off per Telnyx/MCP requirements (long-lived streams may need DNS-only — confirm with Telnyx).
 4. **Telnyx Portal:** Point **dynamic webhook** URL and **MCP** URL at your HTTPS endpoints; assign **phone number**.
 
+**Render checklist (fixes `{"detail":"Not Found"}` on `/`):**
+
+- **Root Directory:** leave **empty** (repository root), not `telnyx_restaurant`, so the start command `uvicorn telnyx_restaurant.app:app` can import the package.
+- **Build / deploy:** trigger a fresh deploy after pushing; `/health` can work on an older revision while `/` was added later.
+- **URLs:** home is [https://telnyx.convonetai.com/](https://telnyx.convonetai.com/) (or your Render URL); alternate [https://telnyx.convonetai.com/index.html](https://telnyx.convonetai.com/index.html). If `index.html` is missing on disk, the app now returns an HTML error page explaining the path instead of a generic JSON 404.
+
 Document in your submission:
 
 - **Public webhook URL** (exact path)
