@@ -1,6 +1,8 @@
 """FastAPI entrypoint: health, telemetry, Telnyx dynamic webhooks, and static site."""
 
 import logging
+import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -13,11 +15,27 @@ logger = logging.getLogger(__name__)
 
 _STATIC = Path(__file__).resolve().parent / "static"
 _INDEX = _STATIC / "index.html"
+_APP_REV = os.environ.get("RENDER_GIT_COMMIT", os.environ.get("APP_GIT_REVISION", "local"))
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Log deploy fingerprint so Render logs show whether `/` route is from this build."""
+    log = logging.getLogger("uvicorn.error")
+    log.warning(
+        "Hanok Table: rev=%s index_exists=%s app_py=%s",
+        _APP_REV[:12] if _APP_REV else "?",
+        _INDEX.is_file(),
+        Path(__file__).resolve(),
+    )
+    yield
+
 
 app = FastAPI(
     title="Telnyx Restaurant Reservation API",
     description="Dynamic webhooks and REST backing store for MCP tools (Telnyx AI challenge).",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.include_router(webhook.router, prefix="/webhooks/telnyx", tags=["telnyx"])

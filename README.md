@@ -260,6 +260,12 @@ uvicorn telnyx_restaurant.app:app --reload --host 0.0.0.0 --port 8080
 - Authenticate webhook requests if Telnyx provides signatures or shared secrets; store secrets in Render env vars.
 - Rate-limit and validate tool inputs server-side; never trust the model for authorization.
 
+### Log noise: `.env`, `.git`, GraphQL probes
+
+Public sites are scanned constantly. User-Agents such as `l9scan` ([LeakIX](https://leakix.net)) probe for `/.env`, `/.git/config`, `/graphql`, admin paths, etc. **HTTP 404 on those URLs is normal and good** — it means those files and endpoints are not exposed. Your `.env` must **never** be in the image or repo (keep it gitignored; use Render **Environment** only).
+
+After deploy, check Render logs for: `Hanok Table: rev=… index_exists=True` — if `index_exists=False`, the static site was not deployed in the build; if **`GET /` still returns JSON 404** while `index_exists=True`, fix Cloudflare/Render routing (redeploy, correct root directory / start command).
+
 ---
 
 ## License
