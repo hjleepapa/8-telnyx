@@ -1,5 +1,1 @@
-# Minimal production deps for Render/build pipelines
--r requirements-render.txt
-
-# Full dependency set for local/dev or optional features
-# (Use: pip install -r requirements-full.txt)
+-r telnyx_restaurant/requirements.txt
