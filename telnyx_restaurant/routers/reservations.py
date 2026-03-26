@@ -6,7 +6,7 @@ import secrets
 import string
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -66,7 +66,6 @@ def list_reservations(
 @router.post("", response_model=ReservationRead)
 def create_reservation(
     body: ReservationCreate,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     code = _gen_confirmation_code()
@@ -99,13 +98,13 @@ def create_reservation(
         preorder_discount_cents=discount,
         food_total_cents=total,
         source_channel=body.source_channel,
+        reminder_call_status="reminder_queued",
     )
     db.add(row)
     db.commit()
     db.refresh(row)
 
     schedule_demo_reminder_call(
-        background_tasks,
         reservation_id=row.id,
         guest_phone=row.guest_phone,
         guest_name=row.guest_name,

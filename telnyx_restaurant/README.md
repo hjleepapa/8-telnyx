@@ -43,6 +43,10 @@ curl -s -X POST http://localhost:8080/webhooks/telnyx/variables \
 
 The same `guest_phone` may be stored as `+1925…` or `925…` in Postgres; the webhook normalizes North American numbers before lookup.
 
+### Demo outbound reminder (5s after booking)
+
+Requires **Render env vars** `TELNYX_API_KEY`, `TELNYX_CONNECTION_ID` (Call Control Application id for `POST https://api.telnyx.com/v2/calls`), and `TELNYX_FROM_NUMBER` (+E.164). After each successful `POST /api/reservations`, the server schedules a dial in **5 seconds** (thread timer). Check **`reminder_call_status`** on the row in `/admin/reservations`: `demo_skipped_no_telnyx_config` means env is missing; `telnyx_error_http_*` includes a Telnyx API error (see service logs). `client_state` is sent **base64**-encoded per Telnyx Call Control.
+
 ## Telnyx AI Assistant (paste into instructions)
 
 If `has_upcoming_reservation` is **true**, acknowledge their upcoming booking using `next_reservation_code` and `next_reservation_at`; if **false**, do **not** say they have no account—past visits may still appear (`vip_tier` **returning** or food fields); offer a new reservation or lookup by confirmation code instead.

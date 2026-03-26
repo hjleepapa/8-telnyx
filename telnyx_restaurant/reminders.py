@@ -2,34 +2,47 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
-import time
+import threading
 import urllib.error
 import urllib.request
 
-from fastapi import BackgroundTasks
-
 from telnyx_restaurant.config import database_url, telnyx_api_key, telnyx_connection_id, telnyx_from_number
+from telnyx_restaurant.phone_normalize import to_e164_us
 
 logger = logging.getLogger(__name__)
 
 
 def schedule_demo_reminder_call(
-    background_tasks: BackgroundTasks,
     *,
     reservation_id: int,
     guest_phone: str,
     guest_name: str,
     confirmation_code: str,
 ) -> None:
-    background_tasks.add_task(
-        _demo_reminder_worker,
+    """Use a thread timer so the job still runs after the HTTP response (BackgroundTasks can be flaky)."""
+
+    gp = guest_phone.strip()
+    gn = guest_name.strip()
+    cc = confirmation_code
+
+    def _fire() -> None:
+        try:
+            _demo_reminder_worker(reservation_id, gp, gn, cc)
+        except Exception:
+            logger.exception("Hanok reminder worker crashed for reservation_id=%s", reservation_id)
+
+    logger.info(
+        "Hanok: demo reminder scheduled in 5s (reservation_id=%s code=%s to=%s)",
         reservation_id,
-        guest_phone.strip(),
-        guest_name.strip(),
-        confirmation_code,
+        cc,
+        gp,
     )
+    t = threading.Timer(5.0, _fire)
+    t.daemon = True
+    t.start()
 
 
 def _demo_reminder_worker(
@@ -38,10 +51,10 @@ def _demo_reminder_worker(
     guest_name: str,
     confirmation_code: str,
 ) -> None:
-    time.sleep(5)
     first = (guest_name or "Guest").split()[0]
+    to_e164 = to_e164_us(guest_phone)
     status = _place_telnyx_reminder_call(
-        to_e164=guest_phone,
+        to_e164=to_e164,
         confirmation_code=confirmation_code,
         guest_first_name=first,
     )
@@ -77,26 +90,35 @@ def _place_telnyx_reminder_call(
 ) -> str:
     key = telnyx_api_key()
     conn = telnyx_connection_id()
-    from_num = telnyx_from_number()
-    if not key or not conn or not from_num:
-        logger.info(
-            "Demo reminder (no Telnyx dial env): would call %s for reservation %s",
+    from_raw = telnyx_from_number()
+    if not key or not conn or not from_raw:
+        logger.warning(
+            "Hanok demo reminder skipped: set TELNYX_API_KEY, TELNYX_CONNECTION_ID (Call Control App id), "
+            "and TELNYX_FROM_NUMBER on the server. Would have dialed %s for %s.",
             to_e164,
             confirmation_code,
         )
         return "demo_skipped_no_telnyx_config"
 
+    to_norm = to_e164_us(to_e164)
+    from_norm = to_e164_us(from_raw)
+    if not to_norm.startswith("+") or len(to_norm) < 10:
+        logger.warning("Hanok reminder: invalid destination E.164: %r", to_e164)
+        return "demo_skipped_bad_destination"
+
+    state_obj = {
+        "hanok_reminder": True,
+        "confirmation_code": confirmation_code,
+        "guest_first_name": guest_first_name,
+    }
+    # Telnyx Call Control expects client_state as base64-encoded payload
+    client_state = base64.b64encode(json.dumps(state_obj).encode("utf-8")).decode("ascii")
+
     body: dict[str, str] = {
         "connection_id": conn,
-        "to": to_e164,
-        "from": from_num,
-        "client_state": json.dumps(
-            {
-                "hanok_reminder": True,
-                "confirmation_code": confirmation_code,
-                "guest_first_name": guest_first_name,
-            }
-        ),
+        "to": to_norm,
+        "from": from_norm,
+        "client_state": client_state,
     }
     try:
         req = urllib.request.Request(
@@ -111,11 +133,12 @@ def _place_telnyx_reminder_call(
         )
         with urllib.request.urlopen(req, timeout=45) as resp:
             resp.read()
+        logger.info("Hanok reminder: Telnyx POST /v2/calls accepted for %s", confirmation_code)
         return "telnyx_call_initiated"
     except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", errors="replace")[:500]
-        logger.warning("Telnyx reminder HTTP %s: %s", e.code, detail)
+        detail = e.read().decode("utf-8", errors="replace")[:800]
+        logger.warning("Hanok reminder: Telnyx HTTP %s: %s", e.code, detail)
         return f"telnyx_error_http_{e.code}"
     except Exception:
-        logger.exception("Telnyx reminder call failed")
+        logger.exception("Hanok reminder: Telnyx call failed")
         return "telnyx_error_exception"
