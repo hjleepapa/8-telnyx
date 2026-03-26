@@ -49,6 +49,44 @@ def _gen_confirmation_code() -> str:
     return f"HNK-{part}"
 
 
+def _guest_name_matches(stored_full: str, hint: str) -> bool:
+    """Case-insensitive match: full substring, first-name, or shared tokens."""
+    s = (stored_full or "").strip().casefold()
+    h = hint.strip().casefold()
+    if not h:
+        return False
+    if not s:
+        return False
+    if h == s or h in s or s in h:
+        return True
+    s_parts = s.split()
+    h_parts = h.split()
+    if h_parts and s_parts and h_parts[0] == s_parts[0]:
+        return True
+    return bool(set(h_parts) & set(s_parts))
+
+
+def _candidate_pool_for_phone(
+    db: Session, variants: list[str], now: datetime
+) -> list[Reservation]:
+    rows = list(
+        db.execute(
+            select(Reservation)
+            .where(
+                Reservation.guest_phone.in_(variants),
+                Reservation.status != ReservationStatus.cancelled.value,
+            )
+            .order_by(Reservation.starts_at.desc())
+        )
+        .scalars()
+        .all()
+    )
+    upcoming = [r for r in rows if r.starts_at >= now]
+    if upcoming:
+        return sorted(upcoming, key=lambda r: r.starts_at)
+    return sorted(rows, key=lambda r: r.starts_at, reverse=True)
+
+
 @router.get("/menu/items")
 def list_menu_items():
     """Public menu with prices for the online reservation pre-order step."""
@@ -123,12 +161,19 @@ def lookup_reservation_by_guest_phone(
         min_length=3,
         description="Guest phone as collected on the call or from dynamic variables (any common US format).",
     ),
+    guest_name: str | None = Query(
+        None,
+        min_length=1,
+        max_length=255,
+        description="Required when more than one active reservation shares this phone (disambiguate).",
+    ),
     db: Session = Depends(get_db),
 ):
     """Find a reservation by `guest_phone` (voice assistant). Does not require confirmation code.
 
-    Prefers the next upcoming non-cancelled row; otherwise returns the most recent row for that line.
-    Map Telnyx `telnyx_end_user_target` (or caller ID) into query param `phone` from the tool.
+    Prefers upcoming non-cancelled rows (nearest first), else most recent. If several rows share the
+    phone, pass `guest_name` (spoken or on file) so we can pick the right one.
+    Map Telnyx `telnyx_end_user_target` into query param `phone` from the tool.
     """
     if "{{" in phone or "}}" in phone:
         raise HTTPException(
@@ -138,34 +183,49 @@ def lookup_reservation_by_guest_phone(
                 "caller number (e.g. telnyx_end_user_target), not literal {{…}} in the URL."
             ),
         )
+    if guest_name and ("{{" in guest_name or "}}" in guest_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Unsubstituted template in guest_name query.",
+        )
     variants = phone_lookup_variants(phone.strip())
     if not variants:
         raise HTTPException(status_code=400, detail="Invalid or empty phone value.")
 
     now = datetime.now(UTC)
-    row = db.execute(
-        select(Reservation)
-        .where(
-            Reservation.guest_phone.in_(variants),
-            Reservation.starts_at >= now,
-            Reservation.status != ReservationStatus.cancelled.value,
-        )
-        .order_by(Reservation.starts_at.asc())
-        .limit(1)
-    ).scalar_one_or_none()
-    if not row:
-        row = db.execute(
-            select(Reservation)
-            .where(Reservation.guest_phone.in_(variants))
-            .order_by(Reservation.starts_at.desc())
-            .limit(1)
-        ).scalar_one_or_none()
-    if not row:
+    pool = _candidate_pool_for_phone(db, variants, now)
+    if not pool:
         raise HTTPException(
             status_code=404,
             detail="No reservation found for this phone number.",
         )
-    return row
+
+    if len(pool) == 1:
+        return pool[0]
+
+    # Multiple rows on this line: need a name match unless caller already unique by schedule
+    hint = (guest_name or "").strip()
+    if not hint:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Multiple reservations share this phone number. Ask which name the booking is under, "
+                "then call again with query parameter guest_name (e.g. first name or full name as on the reservation)."
+            ),
+        )
+
+    matched = [r for r in pool if _guest_name_matches(r.guest_name, hint)]
+    if len(matched) == 1:
+        return matched[0]
+    if not matched:
+        raise HTTPException(
+            status_code=404,
+            detail="No reservation on this phone matches that guest name.",
+        )
+    raise HTTPException(
+        status_code=409,
+        detail="Multiple reservations still match this phone and name; ask for the confirmation code (HNK-…).",
+    )
 
 
 @router.get("/by-code/{code}", response_model=ReservationRead)

@@ -10,7 +10,7 @@ Implement your **Model Context Protocol** server here (Python `mcp` SDK or Node 
 | `create_reservation` | `POST /api/reservations` (body may include `preorder: [{menu_item_id, quantity}]`, `source_channel: "voice"`) |
 | `list_menu_items` | `GET /api/reservations/menu/items` (prices for pre-order tool UX) |
 | `get_reservation` | `GET /api/reservations/by-code/{code}` (path param must be real code—not `{{code}}` in the URL) |
-| `find_reservation_by_phone` | `GET /api/reservations/lookup-by-phone?phone=…` — bind `phone` to dynamic variable `telnyx_end_user_target` (caller ID) so the agent does not need the confirmation code |
+| `find_reservation_by_phone` | `GET /api/reservations/lookup-by-phone?phone=…&guest_name=…` — bind `phone` to caller; **guest_name** optional unless several active bookings share that number (then required to disambiguate) |
 | `update_reservation_status` | `PATCH /api/reservations/by-code/{code}/status` (body: `{ "status": "cancelled" }`) — avoids numeric id; use tool **path** param for `code`, not literal `{{code}}` in the URL |
 | `modify_reservation` | `PATCH /api/reservations/{id}` |
 | `cancel_reservation` | `DELETE /api/reservations/{id}` |
