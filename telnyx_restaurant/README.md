@@ -43,6 +43,10 @@ curl -s -X POST http://localhost:8080/webhooks/telnyx/variables \
 
 The same `guest_phone` may be stored as `+1925…` or `925…` in Postgres; the webhook normalizes North American numbers before lookup.
 
+## Telnyx AI Assistant (paste into instructions)
+
+If `has_upcoming_reservation` is **true**, acknowledge their upcoming booking using `next_reservation_code` and `next_reservation_at`; if **false**, do **not** say they have no account—past visits may still appear (`vip_tier` **returning** or food fields); offer a new reservation or lookup by confirmation code instead.
+
 ## MCP server
 
 See [`mcp_server/README.md`](mcp_server/README.md).
