@@ -465,6 +465,57 @@
       .widget-spacer {
         height: 4rem;
       }
+
+      .banner .banner-inner {
+        max-width: 44rem;
+        margin: 0 auto;
+        text-align: center;
+      }
+      .banner-inner h2 {
+        text-align: center;
+      }
+      .banner-sub {
+        margin-top: 0.85rem;
+        opacity: 0.94;
+        font-size: 0.92rem;
+        line-height: 1.55;
+      }
+      .banner-cta-row {
+        margin-top: 1.35rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+        justify-content: center;
+      }
+      .btn-banner {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.65rem 1.25rem;
+        border-radius: 8px;
+        font-weight: 700;
+        font-size: 0.88rem;
+        text-decoration: none;
+        border: none;
+        cursor: pointer;
+        background: #fff;
+        color: var(--gochujang-deep);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+        transition: transform 0.15s ease;
+      }
+      .btn-banner:hover {
+        transform: translateY(-1px);
+      }
+      .btn-banner-ghost {
+        background: transparent;
+        color: #fff;
+        border: 2px solid rgba(255, 255, 255, 0.92);
+        box-shadow: none;
+      }
+      .banner-inner a[style] {
+        color: #fff;
+        font-weight: 700;
+      }
     </style>
   </head>
   <body>
@@ -688,12 +739,34 @@
       </section>
 
       <div class="banner" id="reserve">
-        <div class="wrap">
+        <div class="wrap banner-inner">
           <h2 data-i18n="banner_title">Reservations &amp; contact</h2>
-          <p data-i18n="banner_p">
-            You can always call us to book. On this site, use the Telnyx AI agent
-            widget to share time, party size, and special requests — a manager
-            will follow up to confirm.
+          <p data-i18n-html="banner_p">
+            You can always call us at
+            <a href="tel:+19252092477" style="color: #fff">+1-925-209-2477</a> to
+            book. On this site, use the Telnyx AI agent widget to share time,
+            party size, and special requests — a manager will follow up to
+            confirm.
+          </p>
+          <p data-i18n-html="banner_sub" class="banner-sub">
+            To reserve online with an instant confirmation code and optional
+            pre-order (<strong>7% off</strong> food), use
+            <strong>Reserve online</strong> — your items show on the guest status
+            page and in the admin dashboard for prep.
+          </p>
+          <p class="banner-cta-row">
+            <a
+              class="btn-banner"
+              href="/reserve-online.html"
+              data-i18n="cta_online_reserve"
+              >Reserve online</a
+            >
+            <a
+              class="btn-banner btn-banner-ghost"
+              href="tel:+19252092477"
+              data-i18n="cta_call_restaurant"
+              >Call +1-925-209-2477</a
+            >
           </p>
         </div>
       </div>
@@ -817,7 +890,11 @@
               "Mountain greens and peak-season seafood rotate weekly — come back to see what’s new on the tray.",
             banner_title: "Reservations & contact",
             banner_p:
-              "You can always call us to book. On this site, use the Telnyx AI agent widget to share time, party size, and special requests — a manager will follow up to confirm.",
+              'You can always call us at <a href="tel:+19252092477" style="color:#fff;text-decoration:underline">+1-925-209-2477</a> to book. On this site, use the Telnyx AI agent widget to share time, party size, and special requests — a manager will follow up to confirm.',
+            banner_sub:
+              'To reserve online with an instant confirmation code and optional pre-order (<strong>7% off</strong> food), use <strong>Reserve online</strong> — items appear on the guest status page and in admin for kitchen prep.',
+            cta_online_reserve: "Reserve online",
+            cta_call_restaurant: "Call +1-925-209-2477",
             footer_demo: "Demo venue for Telnyx Voice AI · Sample menu copy",
             footer_api:
               'Webhook: <code>/webhooks/telnyx/variables</code> · Health: <code>/health</code> · <a href="/admin/reservations" style="color: inherit; font-weight: 600">Reservations admin</a>',
@@ -906,7 +983,11 @@
               "시장 산나물·제철 해산물로 매주 바뀌는 찬 차림을 즐겨 주세요.",
             banner_title: "예약 & 문의",
             banner_p:
-              "전화로도 예약 가능합니다. 이 사이트에서는 Telnyx AI 에이전트 위젯으로 시간·인원·특별 요청을 남겨 주실 수 있으며, 확인 안내는 매니저가 연락드립니다.",
+              '<a href="tel:+19252092477" style="color:#fff;text-decoration:underline">+1-925-209-2477</a>로 전화 예약도 가능합니다. 이 사이트에서는 Telnyx AI 에이전트 위젯으로 시간·인원·특별 요청을 남기시면 매니저가 확인 연락을 드립니다.',
+            banner_sub:
+              '온라인으로 바로 예약하려면 <strong>온라인 예약</strong>을 눌러 확인 코드와 선택 메뉴(프리오더 시 음식 <strong>7% 할인</strong>)를 남겨 주세요. 주방 준비·관리자 대시보드에도 동일하게 표시됩니다.',
+            cta_online_reserve: "온라인 예약",
+            cta_call_restaurant: "전화 +1-925-209-2477",
             footer_demo: "Telnyx Voice AI 데모 공간 · 샘플 메뉴 문구",
             footer_api:
               '웹훅: <code>/webhooks/telnyx/variables</code> · 헬스: <code>/health</code> · <a href="/admin/reservations" style="color: inherit; font-weight: 600">예약 관리</a>',

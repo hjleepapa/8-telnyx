@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Reserve online · Hanok Table</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&family=Playfair+Display:wght@600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #1a1210;
+        --paper: #f7f3ed;
+        --cream: #ebe4d8;
+        --gochujang: #b83c2d;
+        --gochujang-deep: #8c2a20;
+        --muted: #5c534c;
+        --card: #fffef9;
+        --ok: #2d6a4f;
+        --bad: #9b2226;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: "Source Sans 3", system-ui, sans-serif;
+        background: var(--paper);
+        color: var(--ink);
+        line-height: 1.55;
+        min-height: 100vh;
+      }
+      header {
+        background: linear-gradient(120deg, var(--gochujang-deep), var(--gochujang));
+        color: #fff;
+        padding: 1.25rem 1.5rem;
+      }
+      .header-inner {
+        max-width: 720px;
+        margin: 0 auto;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+      header h1 {
+        font-family: "Playfair Display", Georgia, serif;
+        font-size: 1.35rem;
+        font-weight: 600;
+      }
+      header p {
+        font-size: 0.85rem;
+        opacity: 0.92;
+      }
+      header a {
+        color: #fff;
+        font-weight: 600;
+      }
+      .wrap {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 1.75rem 1.25rem 3rem;
+      }
+      .callout {
+        background: var(--card);
+        border: 1px solid var(--cream);
+        border-radius: 12px;
+        padding: 1rem 1.15rem;
+        margin-bottom: 1.5rem;
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+      .callout strong {
+        color: var(--gochujang-deep);
+      }
+      fieldset {
+        border: 1px solid var(--cream);
+        border-radius: 12px;
+        padding: 1.25rem 1.15rem;
+        margin-bottom: 1.25rem;
+        background: #fff;
+      }
+      legend {
+        font-weight: 700;
+        padding: 0 0.35rem;
+        font-size: 0.95rem;
+      }
+      label {
+        display: block;
+        font-size: 0.82rem;
+        font-weight: 600;
+        margin: 0.75rem 0 0.25rem;
+        color: var(--muted);
+      }
+      input[type="text"],
+      input[type="tel"],
+      input[type="datetime-local"],
+      input[type="number"],
+      textarea {
+        width: 100%;
+        padding: 0.55rem 0.65rem;
+        border: 1px solid var(--cream);
+        border-radius: 8px;
+        font: inherit;
+      }
+      textarea {
+        min-height: 4rem;
+        resize: vertical;
+      }
+      .menu-line {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        padding: 0.5rem 0;
+        border-bottom: 1px solid var(--cream);
+        font-size: 0.88rem;
+      }
+      .menu-line:last-child {
+        border-bottom: none;
+      }
+      .menu-line input[type="number"] {
+        width: 4.5rem;
+        text-align: center;
+      }
+      .totals {
+        margin-top: 1rem;
+        padding-top: 0.85rem;
+        border-top: 2px dashed var(--cream);
+        font-size: 0.9rem;
+      }
+      .totals div {
+        display: flex;
+        justify-content: space-between;
+        margin: 0.25rem 0;
+      }
+      .totals .disc {
+        color: var(--ok);
+        font-weight: 600;
+      }
+      .totals .grand {
+        font-weight: 700;
+        font-size: 1.05rem;
+        margin-top: 0.5rem;
+      }
+      .actions {
+        margin-top: 1.5rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem;
+      }
+      button[type="submit"] {
+        padding: 0.8rem 1.5rem;
+        border: none;
+        border-radius: 8px;
+        background: var(--gochujang);
+        color: #fff;
+        font-weight: 700;
+        font-size: 0.95rem;
+        cursor: pointer;
+      }
+      button[type="submit"]:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+      .err {
+        color: var(--bad);
+        font-size: 0.88rem;
+        margin-top: 0.75rem;
+      }
+      .ok-panel {
+        display: none;
+        background: #e8f5e9;
+        border: 1px solid #a5d6a7;
+        color: #1b4332;
+        border-radius: 12px;
+        padding: 1.25rem;
+        margin-top: 1rem;
+      }
+      .ok-panel.visible {
+        display: block;
+      }
+      .ok-panel code {
+        background: rgba(255, 255, 255, 0.7);
+        padding: 0.15rem 0.45rem;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="header-inner">
+        <div>
+          <h1>Reserve online</h1>
+          <p>Pre-order food for <strong>7% off</strong> your food item total</p>
+        </div>
+        <a href="/">← Home</a>
+      </div>
+    </header>
+    <div class="wrap">
+      <p class="callout">
+        Questions? Call <strong><a href="tel:+19252092477" style="color: inherit">+1-925-209-2477</a></strong
+        >. This demo posts to <code>/api/reservations</code> and schedules a Telnyx reminder call ~5s later when
+        dial credentials are configured on the server.
+      </p>
+
+      <form id="res-form">
+        <fieldset>
+          <legend>Reservation</legend>
+          <label for="guest_name">Name</label>
+          <input id="guest_name" name="guest_name" type="text" required autocomplete="name" />
+
+          <label for="guest_phone">Phone (E.164, e.g. +1925…)</label>
+          <input id="guest_phone" name="guest_phone" type="tel" required autocomplete="tel" />
+
+          <label for="party_size">Party size</label>
+          <input id="party_size" name="party_size" type="number" min="1" max="20" value="2" required />
+
+          <label for="starts_at">Date &amp; time</label>
+          <input id="starts_at" name="starts_at" type="datetime-local" required />
+
+          <label for="special_requests">Special requests (optional)</label>
+          <textarea id="special_requests" name="special_requests" maxlength="2000"></textarea>
+        </fieldset>
+
+        <fieldset id="menu-fieldset">
+          <legend>Optional pre-order (7% discount on food)</legend>
+          <p style="font-size: 0.85rem; color: var(--muted); margin-bottom: 0.5rem">
+            Quantities you set here are sent with the reservation so the kitchen can prep.
+          </p>
+          <div id="menu-root" class="callout" style="margin: 0; background: #faf8f4">
+            Loading menu…
+          </div>
+          <div class="totals" id="totals" hidden>
+            <div><span>Food subtotal</span> <span id="t-sub">$0.00</span></div>
+            <div class="disc"><span>Pre-order discount (7%)</span> <span id="t-disc">−$0.00</span></div>
+            <div class="grand"><span>Food due (pre-order)</span> <span id="t-total">$0.00</span></div>
+          </div>
+        </fieldset>
+
+        <div class="actions">
+          <button type="submit" id="submit-btn">Submit reservation</button>
+        </div>
+        <p class="err" id="form-err" hidden></p>
+      </form>
+
+      <div class="ok-panel" id="ok-panel" role="status">
+        <p><strong>Reservation saved.</strong></p>
+        <p>Confirmation code: <code id="ok-code"></code></p>
+        <p>
+          <a id="ok-status-link" href="#">View status &amp; food total →</a>
+        </p>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        const DISCOUNT = 0.07;
+        let menuItems = [];
+
+        const menuRoot = document.getElementById("menu-root");
+        const totalsEl = document.getElementById("totals");
+        const tSub = document.getElementById("t-sub");
+        const tDisc = document.getElementById("t-disc");
+        const tTotal = document.getElementById("t-total");
+        const form = document.getElementById("res-form");
+        const formErr = document.getElementById("form-err");
+        const submitBtn = document.getElementById("submit-btn");
+        const okPanel = document.getElementById("ok-panel");
+        const okCode = document.getElementById("ok-code");
+        const okLink = document.getElementById("ok-status-link");
+
+        function money(cents) {
+          return "$" + (cents / 100).toFixed(2);
+        }
+
+        function recalc() {
+          let sub = 0;
+          for (const it of menuItems) {
+            const inp = document.getElementById("qty-" + it.id);
+            const q = inp ? Math.max(0, parseInt(inp.value, 10) || 0) : 0;
+            sub += q * it.price_cents;
+          }
+          const disc = sub > 0 ? Math.round(sub * DISCOUNT) : 0;
+          const total = sub - disc;
+          tSub.textContent = money(sub);
+          tDisc.textContent = "−" + money(disc);
+          tTotal.textContent = money(total);
+          totalsEl.hidden = sub === 0;
+        }
+
+        function renderMenu() {
+          if (!menuItems.length) {
+            menuRoot.textContent = "Menu unavailable. You can still book without pre-order.";
+            return;
+          }
+          menuRoot.innerHTML = "";
+          for (const it of menuItems) {
+            const row = document.createElement("div");
+            row.className = "menu-line";
+            row.innerHTML =
+              "<span><strong>" +
+              escapeHtml(it.name_en) +
+              "</strong> · " +
+              escapeHtml(it.price_display) +
+              "</span>";
+            const qty = document.createElement("input");
+            qty.type = "number";
+            qty.min = "0";
+            qty.max = "99";
+            qty.value = "0";
+            qty.id = "qty-" + it.id;
+            qty.setAttribute("aria-label", "Quantity " + it.name_en);
+            qty.addEventListener("input", recalc);
+            row.appendChild(qty);
+            menuRoot.appendChild(row);
+          }
+          recalc();
+        }
+
+        function escapeHtml(s) {
+          const d = document.createElement("div");
+          d.textContent = s;
+          return d.innerHTML;
+        }
+
+        function collectPreorder() {
+          const preorder = [];
+          for (const it of menuItems) {
+            const inp = document.getElementById("qty-" + it.id);
+            const q = inp ? Math.max(0, parseInt(inp.value, 10) || 0) : 0;
+            if (q > 0) preorder.push({ menu_item_id: it.id, quantity: q });
+          }
+          return preorder;
+        }
+
+        fetch("/api/reservations/menu/items")
+          .then(function (r) {
+            return r.json();
+          })
+          .then(function (data) {
+            menuItems = Array.isArray(data) ? data : [];
+            renderMenu();
+          })
+          .catch(function () {
+            menuRoot.textContent = "Could not load menu. Reservation without pre-order still works.";
+          });
+
+        form.addEventListener("submit", function (e) {
+          e.preventDefault();
+          formErr.hidden = true;
+          okPanel.classList.remove("visible");
+          submitBtn.disabled = true;
+
+          const startsInput = document.getElementById("starts_at").value;
+          if (!startsInput) {
+            formErr.textContent = "Pick a date and time.";
+            formErr.hidden = false;
+            submitBtn.disabled = false;
+            return;
+          }
+          const starts = new Date(startsInput);
+          if (isNaN(starts.getTime())) {
+            formErr.textContent = "Invalid date.";
+            formErr.hidden = false;
+            submitBtn.disabled = false;
+            return;
+          }
+
+          const body = {
+            guest_name: document.getElementById("guest_name").value.trim(),
+            guest_phone: document.getElementById("guest_phone").value.trim(),
+            party_size: parseInt(document.getElementById("party_size").value, 10),
+            starts_at: starts.toISOString(),
+            special_requests:
+              document.getElementById("special_requests").value.trim() || null,
+            preorder: collectPreorder(),
+            source_channel: "online",
+          };
+
+          fetch("/api/reservations", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          })
+            .then(function (r) {
+              return r.json().then(function (j) {
+                return { ok: r.ok, status: r.status, body: j };
+              });
+            })
+            .then(function (res) {
+              if (!res.ok) {
+                const d = res.body && res.body.detail;
+                var msg = "Request failed";
+                if (typeof d === "string") msg = d;
+                else if (Array.isArray(d)) msg = d.map(function (x) {
+                  return x.msg || JSON.stringify(x);
+                }).join("; ");
+                else if (d) msg = JSON.stringify(d);
+                throw new Error(msg);
+              }
+              return res.body;
+            })
+            .then(function (data) {
+              okCode.textContent = data.confirmation_code;
+              okLink.href =
+                "/reservation/status?code=" + encodeURIComponent(data.confirmation_code);
+              okPanel.classList.add("visible");
+              form.reset();
+              menuItems.forEach(function (it) {
+                const inp = document.getElementById("qty-" + it.id);
+                if (inp) inp.value = "0";
+              });
+              recalc();
+              menuRoot.scrollIntoView({ behavior: "smooth" });
+            })
+            .catch(function (err) {
+              formErr.textContent = err.message || "Could not save reservation.";
+              formErr.hidden = false;
+            })
+            .finally(function () {
+              submitBtn.disabled = false;
+            });
+        });
+
+        /* default datetime: tomorrow 19:00 local */
+        (function defaultTime() {
+          const inp = document.getElementById("starts_at");
+          const d = new Date();
+          d.setDate(d.getDate() + 1);
+          d.setHours(19, 0, 0, 0);
+          const pad = function (n) {
+            return (n < 10 ? "0" : "") + n;
+          };
+          inp.value =
+            d.getFullYear() +
+            "-" +
+            pad(d.getMonth() + 1) +
+            "-" +
+            pad(d.getDate()) +
+            "T" +
+            pad(d.getHours()) +
+            ":" +
+            pad(d.getMinutes());
+        })();
+      })();
+    </script>
+  </body>
+</html>

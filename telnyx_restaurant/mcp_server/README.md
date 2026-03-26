@@ -7,12 +7,22 @@ Implement your **Model Context Protocol** server here (Python `mcp` SDK or Node 
 | Tool | Backend call |
 |------|----------------|
 | `search_availability` | `GET /api/availability?...` (to be added on FastAPI app) |
-| `create_reservation` | `POST /api/reservations` |
-| `get_reservation` | `GET /api/reservations/{id}` |
+| `create_reservation` | `POST /api/reservations` (body may include `preorder: [{menu_item_id, quantity}]`, `source_channel: "voice"`) |
+| `list_menu_items` | `GET /api/reservations/menu/items` (prices for pre-order tool UX) |
+| `get_reservation` | `GET /api/reservations/{id}` or `GET /api/reservations/by-code/{code}` |
 | `modify_reservation` | `PATCH /api/reservations/{id}` |
 | `cancel_reservation` | `DELETE /api/reservations/{id}` |
 
 Keep business rules in the **REST API**; MCP should validate inputs and forward errors as structured tool results.
+
+### Dynamic webhook variables (Telnyx assistant templates)
+
+`POST /webhooks/telnyx/variables` enriches responses from the DB when `caller_number` / `from` matches `guest_phone`. Useful keys for demos:
+
+- `reservation_preorder_summary`, `reservation_food_total_display`, `reservation_has_preorder`, `reservation_source_channel`
+- `demo_reminder_note` — explains that **each new reservation** schedules an **outbound Telnyx reminder ~5 seconds** later when `TELNYX_API_KEY`, `TELNYX_CONNECTION_ID`, and `TELNYX_FROM_NUMBER` are set on the web service.
+
+Wire the same assistant / connection used for that outbound leg so **inbound** dynamic variables and **MCP tools** stay aligned with the booking record.
 
 ## Deployment
 

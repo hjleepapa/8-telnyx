@@ -30,3 +30,21 @@ def database_url() -> str | None:
 def admin_dashboard_token() -> str | None:
     """If set, GET /admin/reservations requires ?token=..."""
     return os.environ.get("ADMIN_DASHBOARD_TOKEN") or None
+
+
+def telnyx_api_key() -> str | None:
+    """Bearer token for Telnyx REST (outbound reminder demo)."""
+    v = (os.environ.get("TELNYX_API_KEY") or os.environ.get("TELNYX_API_TOKEN") or "").strip()
+    return v or None
+
+
+def telnyx_connection_id() -> str | None:
+    """Call Control App ID / connection UUID for `POST /v2/calls`."""
+    v = (os.environ.get("TELNYX_CONNECTION_ID") or "").strip()
+    return v or None
+
+
+def telnyx_from_number() -> str | None:
+    """Verified or permitted caller ID (+E.164) for outbound calls."""
+    v = (os.environ.get("TELNYX_FROM_NUMBER") or "").strip()
+    return v or None

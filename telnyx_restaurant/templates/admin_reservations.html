@@ -144,6 +144,21 @@
         border-radius: 12px;
         border: 1px dashed var(--cream);
       }
+      .table-scroll {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+      }
+      .money-sub {
+        display: block;
+        font-size: 0.72rem;
+        color: var(--muted);
+        margin-top: 0.2rem;
+      }
+      .preorder-cell {
+        max-width: 14rem;
+        font-size: 0.8rem;
+        line-height: 1.35;
+      }
     </style>
   </head>
   <body>
@@ -165,6 +180,7 @@
       {% if row_count == 0 %}
       <div class="empty">No rows yet. Redeploy triggers demo seed when the table is empty.</div>
       {% else %}
+      <div class="table-scroll">
       <table>
         <thead>
           <tr>
@@ -174,6 +190,10 @@
             <th>Party</th>
             <th>Time (UTC)</th>
             <th>Status</th>
+            <th>Pre-order</th>
+            <th>Food total</th>
+            <th>Src</th>
+            <th>Reminder</th>
             <th>Notes</th>
           </tr>
         </thead>
@@ -192,6 +212,15 @@
                 >{{ s }}</span
               >
             </td>
+            <td class="preorder-cell">{{ r.preorder_summary }}</td>
+            <td>
+              {% if r.food_total_cents > 0 %}
+                <strong>${{ '%.2f' % (r.food_total_cents / 100) }}</strong>
+                <span class="money-sub">sub ${{ '%.2f' % (r.food_subtotal_cents / 100) }}, −7% ${{ '%.2f' % (r.preorder_discount_cents / 100) }}</span>
+              {% else %}—{% endif %}
+            </td>
+            <td><code>{{ r.source_channel }}</code></td>
+            <td><small>{% if r.reminder_call_status %}{{ r.reminder_call_status }}{% else %}—{% endif %}</small></td>
             <td>
               {% if r.special_requests %}{{ r.special_requests }}{% else %}—{% endif %}
             </td>
@@ -199,6 +228,7 @@
           {% endfor %}
         </tbody>
       </table>
+      </div>
       {% endif %}
     </div>
   </body>

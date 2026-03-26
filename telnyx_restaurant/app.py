@@ -15,6 +15,8 @@ logger = logging.getLogger(__name__)
 
 _STATIC = Path(__file__).resolve().parent / "static"
 _INDEX = _STATIC / "index.html"
+_RESERVE_ONLINE = _STATIC / "reserve_online.html"
+_RESERVATION_STATUS = _STATIC / "reservation_status.html"
 _APP_REV = os.environ.get("RENDER_GIT_COMMIT", os.environ.get("APP_GIT_REVISION", "local"))
 
 
@@ -89,3 +91,27 @@ def _home_page_html() -> str:
 def serve_home() -> HTMLResponse:
     """Hanok Table landing page (EN/KO) with Telnyx AI agent widget."""
     return HTMLResponse(content=_home_page_html())
+
+
+def _read_static_html(path: Path, label: str) -> HTMLResponse:
+    if not path.is_file():
+        logger.error("Missing static HTML: %s (%s)", path, label)
+        return HTMLResponse(
+            f"<!DOCTYPE html><html><body><h1>Missing {label}</h1><p>Expected <code>{path}</code></p></body></html>",
+            status_code=404,
+        )
+    return HTMLResponse(content=path.read_text(encoding="utf-8"))
+
+
+@app.get("/reserve-online", response_class=HTMLResponse)
+@app.get("/reserve-online.html", response_class=HTMLResponse)
+def serve_reserve_online() -> HTMLResponse:
+    """Pre-order form, 7% food discount, posts to REST API."""
+    return _read_static_html(_RESERVE_ONLINE, "reserve_online.html")
+
+
+@app.get("/reservation/status", response_class=HTMLResponse)
+@app.get("/reservation-status.html", response_class=HTMLResponse)
+def serve_reservation_status() -> HTMLResponse:
+    """Guest-facing status & food totals (confirmation code)."""
+    return _read_static_html(_RESERVATION_STATUS, "reservation_status.html")

@@ -6,7 +6,7 @@ import logging
 from collections.abc import Generator
 
 from fastapi import HTTPException
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from telnyx_restaurant.config import database_url
@@ -47,6 +47,50 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
+def _ensure_reservation_columns(engine) -> None:
+    """Add columns when table already existed (e.g. Render) before new fields."""
+    try:
+        insp = inspect(engine)
+        if not insp.has_table("reservations"):
+            return
+        cols = {c["name"] for c in insp.get_columns("reservations")}
+    except Exception:
+        logger.exception("Could not inspect reservations table")
+        return
+
+    statements: list[str] = []
+    if "preorder_json" not in cols:
+        statements.append("ALTER TABLE reservations ADD COLUMN preorder_json TEXT")
+    if "food_subtotal_cents" not in cols:
+        statements.append(
+            "ALTER TABLE reservations ADD COLUMN food_subtotal_cents INTEGER NOT NULL DEFAULT 0"
+        )
+    if "preorder_discount_cents" not in cols:
+        statements.append(
+            "ALTER TABLE reservations ADD COLUMN preorder_discount_cents INTEGER NOT NULL DEFAULT 0"
+        )
+    if "food_total_cents" not in cols:
+        statements.append(
+            "ALTER TABLE reservations ADD COLUMN food_total_cents INTEGER NOT NULL DEFAULT 0"
+        )
+    if "source_channel" not in cols:
+        statements.append(
+            "ALTER TABLE reservations ADD COLUMN source_channel VARCHAR(32) NOT NULL DEFAULT 'online'"
+        )
+    if "reminder_call_status" not in cols:
+        statements.append("ALTER TABLE reservations ADD COLUMN reminder_call_status VARCHAR(128)")
+
+    if not statements:
+        return
+    try:
+        with engine.begin() as conn:
+            for stmt in statements:
+                conn.execute(text(stmt))
+        logger.info("Applied %s reservation column migration(s)", len(statements))
+    except Exception:
+        logger.exception("Reservation column migration failed — run manual ALTER if needed")
+
+
 def init_db() -> bool:
     """Create tables if DB URL is set. Returns True if models were synced."""
     global _engine, SessionLocal
@@ -58,6 +102,7 @@ def init_db() -> bool:
         return False
     try:
         Base.metadata.create_all(bind=engine)
+        _ensure_reservation_columns(engine)
     except Exception:
         logger.exception("Database create_all failed — check DB_URI / network / sslmode")
         _engine = None

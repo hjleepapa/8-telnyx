@@ -4,7 +4,9 @@ FastAPI app deployed to **Render** (or run locally) for:
 
 - **Dynamic webhook variables** — `POST /webhooks/telnyx/variables`
 - **Health** — `GET /health`
-- **Future:** REST routes for reservations consumed by the MCP server
+- **Reservations API** — `POST /api/reservations` (optional `preorder`, `source_channel`), `GET /api/reservations/menu/items`, `GET /api/reservations/by-code/{code}`
+- **Guests** — `/reserve-online.html`, `/reservation/status?code=HNK-…`
+- **Admin** — `/admin/reservations`
 
 ## Run (from repository root)
 

@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Reservation status · Hanok Table</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&family=Playfair+Display:wght@600&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #1a1210;
+        --paper: #f7f3ed;
+        --cream: #ebe4d8;
+        --gochujang: #b83c2d;
+        --gochujang-deep: #8c2a20;
+        --muted: #5c534c;
+        --card: #fffef9;
+        --bad: #9b2226;
+        --ok: #2d6a4f;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: "Source Sans 3", system-ui, sans-serif;
+        background: var(--paper);
+        color: var(--ink);
+        line-height: 1.55;
+        min-height: 100vh;
+      }
+      header {
+        background: linear-gradient(120deg, var(--gochujang-deep), var(--gochujang));
+        color: #fff;
+        padding: 1.25rem 1.5rem;
+      }
+      .header-inner {
+        max-width: 560px;
+        margin: 0 auto;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+      header h1 {
+        font-family: "Playfair Display", Georgia, serif;
+        font-size: 1.25rem;
+      }
+      header a {
+        color: #fff;
+        font-weight: 600;
+      }
+      .wrap {
+        max-width: 560px;
+        margin: 0 auto;
+        padding: 1.75rem 1.25rem 3rem;
+      }
+      .panel {
+        background: var(--card);
+        border: 1px solid var(--cream);
+        border-radius: 14px;
+        padding: 1.35rem;
+        margin-top: 1rem;
+        box-shadow: 0 8px 28px rgba(26, 18, 16, 0.07);
+      }
+      .row {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.35rem 0;
+        font-size: 0.92rem;
+        border-bottom: 1px solid var(--cream);
+      }
+      .row:last-child {
+        border-bottom: none;
+      }
+      .row span:first-child {
+        color: var(--muted);
+        font-weight: 600;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      code {
+        font-family: ui-monospace, monospace;
+        background: var(--cream);
+        padding: 0.1rem 0.4rem;
+        border-radius: 4px;
+        font-size: 0.9em;
+      }
+      .status-pill {
+        display: inline-block;
+        padding: 0.2rem 0.65rem;
+        border-radius: 999px;
+        font-weight: 700;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        background: #d8f3dc;
+        color: var(--ok);
+      }
+      .lookup {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        margin-top: 0.75rem;
+      }
+      .lookup input {
+        flex: 1;
+        min-width: 12rem;
+        padding: 0.55rem 0.65rem;
+        border: 1px solid var(--cream);
+        border-radius: 8px;
+        font: inherit;
+      }
+      .lookup button {
+        padding: 0.55rem 1rem;
+        border: none;
+        border-radius: 8px;
+        background: var(--gochujang);
+        color: #fff;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .err {
+        color: var(--bad);
+        margin-top: 1rem;
+        font-size: 0.9rem;
+      }
+      .food-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 0.75rem;
+        font-size: 0.88rem;
+      }
+      .food-table th,
+      .food-table td {
+        text-align: left;
+        padding: 0.45rem 0.25rem;
+        border-bottom: 1px solid var(--cream);
+      }
+      .food-table th {
+        color: var(--muted);
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      .muted {
+        color: var(--muted);
+        font-size: 0.85rem;
+        margin-top: 0.75rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="header-inner">
+        <h1>Reservation status</h1>
+        <a href="/">← Home</a>
+      </div>
+    </header>
+    <div class="wrap">
+      <p style="color: var(--muted); font-size: 0.9rem">
+        Enter the confirmation code from email or the success screen after booking online or by phone.
+      </p>
+      <div class="lookup">
+        <input type="text" id="code-input" placeholder="e.g. HNK-7K2M" autocomplete="off" />
+        <button type="button" id="lookup-btn">Look up</button>
+      </div>
+
+      <p class="err" id="err" hidden></p>
+
+      <div class="panel" id="result" hidden>
+        <div class="row">
+          <span>Code</span>
+          <span><code id="rv-code"></code></span>
+        </div>
+        <div class="row">
+          <span>Status</span>
+          <span><span class="status-pill" id="rv-status"></span></span>
+        </div>
+        <div class="row">
+          <span>Guest</span>
+          <span id="rv-name"></span>
+        </div>
+        <div class="row">
+          <span>Party</span>
+          <span id="rv-party"></span>
+        </div>
+        <div class="row">
+          <span>Time (ISO)</span>
+          <span id="rv-time" style="font-size: 0.82rem; text-align: right"></span>
+        </div>
+        <div id="food-block" hidden>
+          <p class="muted" style="margin-top: 1rem"><strong>Pre-ordered food</strong> (with 7% pre-order discount)</p>
+          <table class="food-table" id="food-table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th>Qty</th>
+                <th>Line</th>
+              </tr>
+            </thead>
+            <tbody id="food-body"></tbody>
+          </table>
+          <div class="row" style="margin-top: 0.5rem">
+            <span>Food subtotal</span>
+            <span id="rv-sub"></span>
+          </div>
+          <div class="row">
+            <span>Discount</span>
+            <span id="rv-disc"></span>
+          </div>
+          <div class="row">
+            <span><strong>Food total</strong></span>
+            <span id="rv-food-total"><strong></strong></span>
+          </div>
+        </div>
+        <p class="muted" id="no-food" hidden>No pre-order on this reservation.</p>
+        <p class="muted" id="reminder-note" style="margin-top: 1rem">
+          Demo: a reminder outbound call is queued ~5 seconds after booking when the server has Telnyx dial
+          credentials.
+        </p>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        function money(cents) {
+          return "$" + (cents / 100).toFixed(2);
+        }
+
+        function loadCode(code) {
+          const err = document.getElementById("err");
+          const result = document.getElementById("result");
+          err.hidden = true;
+          result.hidden = true;
+
+          if (!code || !code.trim()) {
+            err.textContent = "Enter a confirmation code.";
+            err.hidden = false;
+            return;
+          }
+
+          fetch("/api/reservations/by-code/" + encodeURIComponent(code.trim()))
+            .then(function (r) {
+              return r.json().then(function (j) {
+                return { ok: r.ok, body: j };
+              });
+            })
+            .then(function (res) {
+              if (!res.ok) {
+                throw new Error(res.body.detail || "Not found");
+              }
+              return res.body;
+            })
+            .then(function (d) {
+              document.getElementById("rv-code").textContent = d.confirmation_code;
+              document.getElementById("rv-status").textContent = d.status;
+              document.getElementById("rv-name").textContent = d.guest_name;
+              document.getElementById("rv-party").textContent = String(d.party_size);
+              document.getElementById("rv-time").textContent = d.starts_at;
+
+              const tbody = document.getElementById("food-body");
+              tbody.innerHTML = "";
+              const items = d.preorder_items || [];
+              const foodBlock = document.getElementById("food-block");
+              const noFood = document.getElementById("no-food");
+              if (items.length) {
+                foodBlock.hidden = false;
+                noFood.hidden = true;
+                items.forEach(function (line) {
+                  const tr = document.createElement("tr");
+                  tr.innerHTML =
+                    "<td>" +
+                    escapeHtml(line.name_en || line.menu_item_id) +
+                    "</td><td>" +
+                    line.quantity +
+                    "</td><td>" +
+                    money(line.line_total_cents || 0) +
+                    "</td>";
+                  tbody.appendChild(tr);
+                });
+                document.getElementById("rv-sub").textContent = money(d.food_subtotal_cents || 0);
+                document.getElementById("rv-disc").textContent = "−" + money(d.preorder_discount_cents || 0);
+                document.getElementById("rv-food-total").innerHTML =
+                  "<strong>" + money(d.food_total_cents || 0) + "</strong>";
+              } else {
+                foodBlock.hidden = true;
+                noFood.hidden = false;
+              }
+
+              result.hidden = false;
+            })
+            .catch(function (e) {
+              err.textContent = e.message || "Lookup failed.";
+              err.hidden = false;
+            });
+        }
+
+        function escapeHtml(s) {
+          const d = document.createElement("div");
+          d.textContent = s;
+          return d.innerHTML;
+        }
+
+        document.getElementById("lookup-btn").addEventListener("click", function () {
+          loadCode(document.getElementById("code-input").value);
+        });
+
+        document.getElementById("code-input").addEventListener("keydown", function (ev) {
+          if (ev.key === "Enter") loadCode(document.getElementById("code-input").value);
+        });
+
+        var qp = new URLSearchParams(window.location.search).get("code");
+        if (qp) {
+          document.getElementById("code-input").value = qp;
+          loadCode(qp);
+        }
+      })();
+    </script>
+  </body>
+</html>

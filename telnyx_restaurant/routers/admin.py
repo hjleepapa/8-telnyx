@@ -12,8 +12,14 @@ from sqlalchemy import select
 from telnyx_restaurant.config import admin_dashboard_token, database_url
 from telnyx_restaurant.db import get_engine
 from telnyx_restaurant.models import Reservation
+from telnyx_restaurant.preorder_calc import preorder_summary_text
 
 router = APIRouter(tags=["admin"])
+
+
+def _preorder_summary_short(r: Reservation) -> str:
+    text = preorder_summary_text(r.preorder_items)
+    return text if text else "—"
 
 _TEMPLATES = Jinja2Templates(
     directory=str(Path(__file__).resolve().parent.parent / "templates")
@@ -28,18 +34,17 @@ def admin_reservations(
     expected = admin_dashboard_token()
     if expected and token != expected:
         return _TEMPLATES.TemplateResponse(
+            request,
             "admin_gate.html",
-            {
-                "request": request,
-                "has_token_param": token is not None,
-            },
+            {"has_token_param": token is not None},
             status_code=401,
         )
 
     if not database_url():
         return _TEMPLATES.TemplateResponse(
+            request,
             "admin_no_db.html",
-            {"request": request},
+            {},
             status_code=503,
         )
 
@@ -65,14 +70,20 @@ def admin_reservations(
                 "starts_at": r.starts_at,
                 "status": r.status,
                 "special_requests": r.special_requests,
+                "preorder_summary": _preorder_summary_short(r),
+                "food_subtotal_cents": r.food_subtotal_cents,
+                "preorder_discount_cents": r.preorder_discount_cents,
+                "food_total_cents": r.food_total_cents,
+                "source_channel": r.source_channel,
+                "reminder_call_status": r.reminder_call_status,
             }
             for r in rows
         ]
         statuses = sorted({r["status"] for r in reservations})
         return _TEMPLATES.TemplateResponse(
+            request,
             "admin_reservations.html",
             {
-                "request": request,
                 "reservations": reservations,
                 "statuses": statuses,
                 "row_count": len(reservations),

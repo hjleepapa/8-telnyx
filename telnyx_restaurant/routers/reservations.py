@@ -6,12 +6,15 @@ import secrets
 import string
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from telnyx_restaurant.db import get_db
+from telnyx_restaurant.menu_catalog import MENU_ITEMS
 from telnyx_restaurant.models import Reservation, ReservationStatus
+from telnyx_restaurant.preorder_calc import serialize_preorder
+from telnyx_restaurant.reminders import schedule_demo_reminder_call
 from telnyx_restaurant.schemas_res import (
     ReservationCreate,
     ReservationRead,
@@ -26,6 +29,12 @@ def _gen_confirmation_code() -> str:
     return f"HNK-{part}"
 
 
+@router.get("/menu/items")
+def list_menu_items():
+    """Public menu with prices for the online reservation pre-order step."""
+    return [m.as_public() for m in MENU_ITEMS]
+
+
 @router.get("", response_model=list[ReservationRead])
 def list_reservations(
     status: str | None = None,
@@ -38,7 +47,11 @@ def list_reservations(
 
 
 @router.post("", response_model=ReservationRead)
-def create_reservation(body: ReservationCreate, db: Session = Depends(get_db)):
+def create_reservation(
+    body: ReservationCreate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     code = _gen_confirmation_code()
     for _ in range(10):
         if not db.execute(
@@ -46,10 +59,16 @@ def create_reservation(body: ReservationCreate, db: Session = Depends(get_db)):
         ).first():
             break
         code = _gen_confirmation_code()
+
+    try:
+        preorder_json, subtotal, discount, total = serialize_preorder(body.preorder)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
     row = Reservation(
         confirmation_code=code,
         guest_name=body.guest_name,
-        guest_phone=body.guest_phone,
+        guest_phone=body.guest_phone.strip(),
         party_size=body.party_size,
         starts_at=(
             body.starts_at
@@ -58,10 +77,23 @@ def create_reservation(body: ReservationCreate, db: Session = Depends(get_db)):
         ),
         status=ReservationStatus.confirmed.value,
         special_requests=body.special_requests,
+        preorder_json=preorder_json,
+        food_subtotal_cents=subtotal,
+        preorder_discount_cents=discount,
+        food_total_cents=total,
+        source_channel=body.source_channel,
     )
     db.add(row)
     db.commit()
     db.refresh(row)
+
+    schedule_demo_reminder_call(
+        background_tasks,
+        reservation_id=row.id,
+        guest_phone=row.guest_phone,
+        guest_name=row.guest_name,
+        confirmation_code=row.confirmation_code,
+    )
     return row
 
 
