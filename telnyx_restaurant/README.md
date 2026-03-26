@@ -41,6 +41,8 @@ curl -s -X POST http://localhost:8080/webhooks/telnyx/variables \
   -d '{"caller_number": "+15550000001"}' | jq
 ```
 
+The same `guest_phone` may be stored as `+1925…` or `925…` in Postgres; the webhook normalizes North American numbers before lookup.
+
 ## MCP server
 
 See [`mcp_server/README.md`](mcp_server/README.md).

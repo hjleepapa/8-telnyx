@@ -1,7 +1,11 @@
 """Telnyx Dynamic Webhook Variables — return JSON for assistant templates.
 
-Map keys to variables configured in Telnyx Portal. Accepts a generic JSON body;
-use `caller_number` or `from` (Telnyx-style) for lookup.
+Map keys to variables configured in Telnyx Portal.
+
+Caller resolution (in order): flat `caller_number` / `from`, then
+`data.payload.telnyx_end_user_target` (official assistant.initialization shape).
+
+Lookup matches `guest_phone` using normalized variants (+1 / 11-digit / 10-digit US).
 """
 
 from __future__ import annotations
@@ -15,7 +19,9 @@ from sqlalchemy import select
 from telnyx_restaurant.config import database_url
 from telnyx_restaurant.db import get_engine
 from telnyx_restaurant.models import Reservation, ReservationStatus
+from telnyx_restaurant.phone_normalize import phone_lookup_variants
 from telnyx_restaurant.preorder_calc import preorder_summary_text
+from telnyx_restaurant.webhook_payload import extract_caller_number
 
 router = APIRouter()
 
@@ -63,6 +69,9 @@ def _demo_profile_for_caller(caller_number: str | None) -> dict[str, Any]:
 def _profile_from_db(caller: str | None) -> dict[str, Any] | None:
     if not caller or not database_url():
         return None
+    variants = phone_lookup_variants(caller)
+    if not variants:
+        return None
     get_engine()
     from telnyx_restaurant.db import SessionLocal
 
@@ -74,7 +83,7 @@ def _profile_from_db(caller: str | None) -> dict[str, Any] | None:
         row = db.execute(
             select(Reservation)
             .where(
-                Reservation.guest_phone == caller,
+                Reservation.guest_phone.in_(variants),
                 Reservation.starts_at >= now,
                 Reservation.status != ReservationStatus.cancelled.value,
             )
@@ -84,7 +93,7 @@ def _profile_from_db(caller: str | None) -> dict[str, Any] | None:
         if not row:
             any_row = db.execute(
                 select(Reservation)
-                .where(Reservation.guest_phone == caller)
+                .where(Reservation.guest_phone.in_(variants))
                 .order_by(Reservation.starts_at.desc())
                 .limit(1)
             ).scalar_one_or_none()
@@ -142,11 +151,7 @@ async def dynamic_webhook_variables(
 ) -> dict[str, Any]:
     """Return personalization variables for the AI Assistant instruction templates."""
     data = payload or {}
-    caller = data.get("caller_number") or data.get("from")
-    if isinstance(caller, str):
-        caller = caller.strip()
-    else:
-        caller = None
+    caller = extract_caller_number(data)
 
     db_profile = _profile_from_db(caller)
     profile = db_profile if db_profile else _demo_profile_for_caller(caller)
