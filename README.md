@@ -215,6 +215,19 @@ Document in your submission:
 
 ---
 
+## PostgreSQL (Render)
+
+1. In [Render](https://render.com/), open your **PostgreSQL** instance and copy **Internal Database URL** (same-region as your web service) or **External URL** if connecting from your laptop.
+2. On the **Web Service** → **Environment**, add:
+   - **`DB_URI`** — full `postgresql://...` string (same value many panels label `DATABASE_URL`).
+3. Redeploy. On startup the app runs `create_all` for the `reservations` table and **seeds three demo rows** only when the table is empty.
+4. **Dashboard:** [https://telnyx.convonetai.com/admin/reservations](https://telnyx.convonetai.com/admin/reservations) (optionally add `?token=...` if you set `ADMIN_DASHBOARD_TOKEN`).
+5. **API:** `GET https://telnyx.convonetai.com/api/reservations`
+
+Never commit credentials. If a connection string was exposed, **rotate the database password** in Render and update `DB_URI`.
+
+---
+
 ## Local development
 
 Run from the **repository root** so `telnyx_restaurant` imports resolve.

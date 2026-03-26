@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from telnyx_restaurant.routers import webhook
+from telnyx_restaurant.routers import admin, reservations, webhook
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ _APP_REV = os.environ.get("RENDER_GIT_COMMIT", os.environ.get("APP_GIT_REVISION"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Log deploy fingerprint so Render logs show whether `/` route is from this build."""
+    """Log deploy fingerprint; create tables and optional demo seed."""
     log = logging.getLogger("uvicorn.error")
     log.warning(
         "Hanok Table: rev=%s index_exists=%s app_py=%s",
@@ -28,6 +28,22 @@ async def lifespan(app: FastAPI):
         _INDEX.is_file(),
         Path(__file__).resolve(),
     )
+    try:
+        from telnyx_restaurant.db import SessionLocal, init_db
+        from telnyx_restaurant.seed import seed_demo_reservations
+
+        if init_db() and SessionLocal is not None:
+            db = SessionLocal()
+            try:
+                n = seed_demo_reservations(db)
+                if n:
+                    log.warning("Seeded %s demo reservations (empty table)", n)
+            except Exception:
+                log.exception("Demo seed failed — check DB_URI and DB permissions")
+            finally:
+                db.close()
+    except Exception:
+        log.exception("Database startup skipped — app will run without Postgres until DB is reachable")
     yield
 
 
@@ -39,6 +55,8 @@ app = FastAPI(
 )
 
 app.include_router(webhook.router, prefix="/webhooks/telnyx", tags=["telnyx"])
+app.include_router(reservations.router)
+app.include_router(admin.router)
 
 if _STATIC.is_dir():
     app.mount(

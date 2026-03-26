@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Reservations · Hanok Table Admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #1a1210;
+        --paper: #f7f3ed;
+        --cream: #e8e0d4;
+        --gochujang: #b83c2d;
+        --muted: #5c534c;
+        --ok: #2d6a4f;
+        --warn: #bc6c25;
+        --bad: #9b2226;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family: "DM Sans", system-ui, sans-serif;
+        background: var(--paper);
+        color: var(--ink);
+        line-height: 1.5;
+        min-height: 100vh;
+      }
+      .top {
+        background: linear-gradient(120deg, #8c2a20, var(--gochujang));
+        color: #fff;
+        padding: 1.25rem 1.5rem;
+      }
+      .top-inner {
+        max-width: 1200px;
+        margin: 0 auto;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+      .top h1 {
+        font-size: 1.25rem;
+        font-weight: 700;
+      }
+      .top p {
+        font-size: 0.85rem;
+        opacity: 0.92;
+      }
+      .top a {
+        color: #fff;
+        text-decoration: underline;
+        font-weight: 600;
+        font-size: 0.9rem;
+      }
+      .wrap {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 1.5rem;
+      }
+      .meta {
+        font-size: 0.85rem;
+        color: var(--muted);
+        margin-bottom: 1rem;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #fff;
+        border-radius: 12px;
+        overflow: hidden;
+        box-shadow: 0 8px 32px rgba(26, 18, 16, 0.08);
+        border: 1px solid var(--cream);
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 0.75rem 1rem;
+        font-size: 0.88rem;
+        border-bottom: 1px solid var(--cream);
+      }
+      th {
+        background: #faf7f2;
+        font-weight: 600;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+      }
+      tr:last-child td {
+        border-bottom: none;
+      }
+      tr:hover td {
+        background: #fffdf9;
+      }
+      code {
+        font-family: ui-monospace, monospace;
+        font-size: 0.82rem;
+        background: var(--cream);
+        padding: 0.15rem 0.4rem;
+        border-radius: 4px;
+      }
+      .badge {
+        display: inline-block;
+        padding: 0.2rem 0.55rem;
+        border-radius: 999px;
+        font-size: 0.72rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .badge-confirmed {
+        background: #d8f3dc;
+        color: var(--ok);
+      }
+      .badge-pending {
+        background: #ffe5d0;
+        color: var(--warn);
+      }
+      .badge-seated {
+        background: #caf0f8;
+        color: #0077b6;
+      }
+      .badge-completed {
+        background: #e2eafc;
+        color: #1d3557;
+      }
+      .badge-cancelled {
+        background: #ffddd2;
+        color: var(--bad);
+      }
+      .empty {
+        padding: 3rem;
+        text-align: center;
+        color: var(--muted);
+        background: #fff;
+        border-radius: 12px;
+        border: 1px dashed var(--cream);
+      }
+    </style>
+  </head>
+  <body>
+    <header class="top">
+      <div class="top-inner">
+        <div>
+          <h1>Hanok Table — Reservations</h1>
+          <p>Live status from PostgreSQL · Demo data</p>
+        </div>
+        <a href="/">← Restaurant site</a>
+      </div>
+    </header>
+    <div class="wrap">
+      <p class="meta">
+        {{ row_count }} reservation{% if row_count != 1 %}s{% endif %}.
+        API:
+        <code>GET /api/reservations</code>
+      </p>
+      {% if row_count == 0 %}
+      <div class="empty">No rows yet. Redeploy triggers demo seed when the table is empty.</div>
+      {% else %}
+      <table>
+        <thead>
+          <tr>
+            <th>Code</th>
+            <th>Guest</th>
+            <th>Phone</th>
+            <th>Party</th>
+            <th>Time (UTC)</th>
+            <th>Status</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in reservations %}
+          <tr>
+            <td><code>{{ r.confirmation_code }}</code></td>
+            <td>{{ r.guest_name }}</td>
+            <td>{{ r.guest_phone }}</td>
+            <td>{{ r.party_size }}</td>
+            <td>{{ r.starts_at.strftime('%Y-%m-%d %H:%M') }}</td>
+            <td>
+              {% set s = r.status %}
+              <span
+                class="badge {% if s == 'confirmed' %}badge-confirmed{% elif s == 'pending' %}badge-pending{% elif s == 'seated' %}badge-seated{% elif s == 'completed' %}badge-completed{% else %}badge-cancelled{% endif %}"
+                >{{ s }}</span
+              >
+            </td>
+            <td>
+              {% if r.special_requests %}{{ r.special_requests }}{% else %}—{%
+              endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+    </div>
+  </body>
+</html>

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Admin access</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 32rem;
+        margin: 3rem auto;
+        padding: 0 1rem;
+      }
+      code {
+        background: #eee;
+        padding: 0.1rem 0.35rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Unauthorized</h1>
+    <p>
+      Set <code>ADMIN_DASHBOARD_TOKEN</code> on the server, then open:
+    </p>
+    <p>
+      <code>/admin/reservations?token=YOUR_TOKEN</code>
+    </p>
+    {% if has_token_param %}
+    <p>Token query did not match.</p>
+    {% endif %}
+    <p><a href="/">← Home</a></p>
+  </body>
+</html>
