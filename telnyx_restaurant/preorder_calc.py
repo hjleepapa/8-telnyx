@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from telnyx_restaurant.menu_catalog import MENU_BY_ID, PREORDER_DISCOUNT_RATE
+from telnyx_restaurant.menu_catalog import MENU_BY_ID, PREORDER_DISCOUNT_RATE, resolve_menu_item_id
 from telnyx_restaurant.schemas_res import PreorderLineIn
 
 
@@ -15,9 +15,8 @@ def lines_from_input(lines: list[PreorderLineIn]) -> list[dict[str, Any]]:
     for line in lines:
         if line.quantity <= 0:
             continue
-        if line.menu_item_id not in MENU_BY_ID:
-            raise ValueError(f"Unknown menu item: {line.menu_item_id}")
-        agg[line.menu_item_id] = agg.get(line.menu_item_id, 0) + line.quantity
+        mid = resolve_menu_item_id(line.menu_item_id, line.dish_name)
+        agg[mid] = agg.get(mid, 0) + line.quantity
 
     out: list[dict[str, Any]] = []
     for menu_id, qty in sorted(agg.items()):
