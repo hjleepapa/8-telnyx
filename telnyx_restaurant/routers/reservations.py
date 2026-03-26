@@ -6,12 +6,13 @@ import secrets
 import string
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from telnyx_restaurant.db import get_db
 from telnyx_restaurant.menu_catalog import MENU_ITEMS
+from telnyx_restaurant.phone_normalize import phone_lookup_variants
 from telnyx_restaurant.models import Reservation, ReservationStatus
 from telnyx_restaurant.preorder_calc import serialize_preorder
 from telnyx_restaurant.reminders import schedule_demo_reminder_call
@@ -34,8 +35,10 @@ def _reject_unsubstituted_path_value(value: str, *, field: str = "code") -> str:
             status_code=400,
             detail=(
                 f"Unsubstituted URL template in {field}: {v!r}. "
-                "Use the tool Path parameter (e.g. confirmation_code) so Telnyx "
-                "fills the value—not literal {{code}} in the webhook URL."
+                "In Telnyx, define a real Path/query parameter (e.g. confirmation_code) on the tool—"
+                "do not type {{code}} in the URL. To find a booking without the code, use "
+                "GET /api/reservations/lookup-by-phone?phone={{caller_number}} "
+                "(map phone to telnyx_end_user_target from dynamic variables)."
             ),
         )
     return v
@@ -110,6 +113,58 @@ def create_reservation(
         guest_name=row.guest_name,
         confirmation_code=row.confirmation_code,
     )
+    return row
+
+
+@router.get("/lookup-by-phone", response_model=ReservationRead)
+def lookup_reservation_by_guest_phone(
+    phone: str = Query(
+        ...,
+        min_length=3,
+        description="Guest phone as collected on the call or from dynamic variables (any common US format).",
+    ),
+    db: Session = Depends(get_db),
+):
+    """Find a reservation by `guest_phone` (voice assistant). Does not require confirmation code.
+
+    Prefers the next upcoming non-cancelled row; otherwise returns the most recent row for that line.
+    Map Telnyx `telnyx_end_user_target` (or caller ID) into query param `phone` from the tool.
+    """
+    if "{{" in phone or "}}" in phone:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Unsubstituted template in phone query. Use a tool query/path parameter bound to the "
+                "caller number (e.g. telnyx_end_user_target), not literal {{…}} in the URL."
+            ),
+        )
+    variants = phone_lookup_variants(phone.strip())
+    if not variants:
+        raise HTTPException(status_code=400, detail="Invalid or empty phone value.")
+
+    now = datetime.now(UTC)
+    row = db.execute(
+        select(Reservation)
+        .where(
+            Reservation.guest_phone.in_(variants),
+            Reservation.starts_at >= now,
+            Reservation.status != ReservationStatus.cancelled.value,
+        )
+        .order_by(Reservation.starts_at.asc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if not row:
+        row = db.execute(
+            select(Reservation)
+            .where(Reservation.guest_phone.in_(variants))
+            .order_by(Reservation.starts_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+    if not row:
+        raise HTTPException(
+            status_code=404,
+            detail="No reservation found for this phone number.",
+        )
     return row
 
 
