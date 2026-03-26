@@ -54,14 +54,28 @@ def admin_reservations(
         rows = db.execute(
             select(Reservation).order_by(Reservation.starts_at.desc())
         ).scalars().all()
-        statuses = sorted({r.status for r in rows})
+        # Plain dicts: TemplateResponse renders after this function returns and the
+        # session is closed; ORM instances would detach and break Jinja access.
+        reservations = [
+            {
+                "confirmation_code": r.confirmation_code,
+                "guest_name": r.guest_name,
+                "guest_phone": r.guest_phone,
+                "party_size": r.party_size,
+                "starts_at": r.starts_at,
+                "status": r.status,
+                "special_requests": r.special_requests,
+            }
+            for r in rows
+        ]
+        statuses = sorted({r["status"] for r in reservations})
         return _TEMPLATES.TemplateResponse(
             "admin_reservations.html",
             {
                 "request": request,
-                "reservations": rows,
+                "reservations": reservations,
                 "statuses": statuses,
-                "row_count": len(rows),
+                "row_count": len(reservations),
             },
         )
     finally:

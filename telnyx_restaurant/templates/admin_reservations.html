@@ -193,8 +193,7 @@
               >
             </td>
             <td>
-              {% if r.special_requests %}{{ r.special_requests }}{% else %}—{%
-              endif %}
+              {% if r.special_requests %}{{ r.special_requests }}{% else %}—{% endif %}
             </td>
           </tr>
           {% endfor %}
