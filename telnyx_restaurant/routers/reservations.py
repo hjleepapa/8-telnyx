@@ -24,6 +24,23 @@ from telnyx_restaurant.schemas_res import (
 router = APIRouter(prefix="/api/reservations", tags=["reservations"])
 
 
+def _reject_unsubstituted_path_value(value: str, *, field: str = "code") -> str:
+    """Telnyx/webhook misconfig often leaves {{code}} in the path; fail loudly."""
+    v = (value or "").strip()
+    if not v:
+        raise HTTPException(status_code=400, detail=f"Missing {field}.")
+    if "{{" in v or "}}" in v:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsubstituted URL template in {field}: {v!r}. "
+                "Use the tool Path parameter (e.g. confirmation_code) so Telnyx "
+                "fills the value—not literal {{code}} in the webhook URL."
+            ),
+        )
+    return v
+
+
 def _gen_confirmation_code() -> str:
     part = "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(4))
     return f"HNK-{part}"
@@ -99,11 +116,32 @@ def create_reservation(
 
 @router.get("/by-code/{code}", response_model=ReservationRead)
 def get_reservation_by_code(code: str, db: Session = Depends(get_db)):
+    code = _reject_unsubstituted_path_value(code)
     row = db.execute(
         select(Reservation).where(Reservation.confirmation_code == code)
     ).scalar_one_or_none()
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
+    return row
+
+
+@router.patch("/by-code/{code}/status", response_model=ReservationRead)
+def update_status_by_code(
+    code: str,
+    body: ReservationStatusUpdate,
+    db: Session = Depends(get_db),
+):
+    """Update status using HNK-… code (single Telnyx webhook; no numeric id)."""
+    code = _reject_unsubstituted_path_value(code)
+    row = db.execute(
+        select(Reservation).where(Reservation.confirmation_code == code)
+    ).scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+    row.status = body.status
+    row.updated_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(row)
     return row
 
 

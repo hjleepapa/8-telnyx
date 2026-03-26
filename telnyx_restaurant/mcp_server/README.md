@@ -9,7 +9,8 @@ Implement your **Model Context Protocol** server here (Python `mcp` SDK or Node 
 | `search_availability` | `GET /api/availability?...` (to be added on FastAPI app) |
 | `create_reservation` | `POST /api/reservations` (body may include `preorder: [{menu_item_id, quantity}]`, `source_channel: "voice"`) |
 | `list_menu_items` | `GET /api/reservations/menu/items` (prices for pre-order tool UX) |
-| `get_reservation` | `GET /api/reservations/{id}` or `GET /api/reservations/by-code/{code}` |
+| `get_reservation` | `GET /api/reservations/by-code/{code}` |
+| `update_reservation_status` | `PATCH /api/reservations/by-code/{code}/status` (body: `{ "status": "cancelled" }`) — avoids numeric id; use tool **path** param for `code`, not literal `{{code}}` in the URL |
 | `modify_reservation` | `PATCH /api/reservations/{id}` |
 | `cancel_reservation` | `DELETE /api/reservations/{id}` |
 
