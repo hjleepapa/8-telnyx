@@ -45,12 +45,13 @@ def _reject_modifying_cancelled(row: Reservation) -> None:
 def _apply_reservation_update(row: Reservation, body: ReservationUpdate) -> None:
     if not body.model_fields_set:
         return
-    if "guest_name" in body.model_fields_set:
+    # Telnyx/tools often include JSON nulls for untouched fields; never write NULL into NOT NULL columns.
+    if "guest_name" in body.model_fields_set and body.guest_name is not None:
         row.guest_name = body.guest_name  # type: ignore[assignment]
-    if "guest_phone" in body.model_fields_set:
-        gp = body.guest_phone  # type: ignore[union-attr]
-        row.guest_phone = to_e164_us(gp) if gp else gp
-    if "party_size" in body.model_fields_set:
+    if "guest_phone" in body.model_fields_set and body.guest_phone is not None:
+        gp = body.guest_phone.strip()  # type: ignore[union-attr]
+        row.guest_phone = to_e164_us(gp) if gp else row.guest_phone
+    if "party_size" in body.model_fields_set and body.party_size is not None:
         row.party_size = body.party_size  # type: ignore[assignment]
     if "starts_at" in body.model_fields_set:
         st = body.starts_at
