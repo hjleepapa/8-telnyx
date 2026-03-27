@@ -73,9 +73,9 @@ There is **no** `GET /api/availability` in this repo yet; availability can be mo
 | GET | `/by-code/{code}` | Fetch by **HNK-…** code (real code in path; not literal `{{code}}`). |
 | PATCH | `/amend` | **Voice/tool-friendly patch:** body includes **`confirmation_code`** (or `code`, `next_reservation_code`, …) **plus** any of: `preorder` / `items`, **`party_size`**, **`starts_at`**, **`status`**, `guest_name`, `guest_phone`, `special_requests`. Use when `{{reservation_id}}` is not bound in the tool URL. |
 | PATCH | `/by-code/{code}` | Partial update (party size, time, pre-order, guest fields). Ignores JSON `null` on required DB columns (e.g. does not clear `party_size`). |
-| PATCH | `/by-code/{code}/status` | Set status; body `{"status":"cancelled"}` or query **`?cancel=1`**. |
+| PATCH | `/by-code/{code}/status` | **Status** (`{"status":"cancelled"}` or **`?cancel=1`**) and, if needed, the **same fields as `/amend`** (party_size, starts_at, preorder, …) when Telnyx tools are bound to `…/status` only. |
 | PATCH | `/{id}` | Partial update by numeric id (id must be real; not `{{reservation_id}}`). |
-| PATCH | `/{id}/status` | Status update by id; supports `?cancel=1`. |
+| PATCH | `/{id}/status` | Same as **`/by-code/…/status`**: status-only or **full partial update** in the JSON body. |
 | GET | `/{id}` | Fetch one row by id. |
 
 **Pre-orders:** Lines reference **menu_item_id** (or dish names resolved to catalog ids). Stored as JSON on the row with computed subtotal, discount, and total cents.

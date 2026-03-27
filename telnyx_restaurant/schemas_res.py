@@ -133,7 +133,12 @@ _RES_KEYS_HINT = frozenset(
         "name",
         "phone",
         "starts_at",
+        "startsAt",
+        "start_time",
+        "startTime",
         "party_size",
+        "partySize",
+        "headcount",
         "preorder",
         "pre_order",
         "items",
@@ -399,8 +404,39 @@ class ReservationCreate(BaseModel):
             "end_user_phone",
         ),
     )
-    party_size: int = Field(..., ge=1, le=20)
-    starts_at: datetime
+    party_size: int = Field(
+        ...,
+        ge=1,
+        le=20,
+        validation_alias=AliasChoices(
+            "party_size",
+            "partySize",
+            "party",
+            "headcount",
+            "head_count",
+            "number_of_guests",
+            "guests",
+            "guest_count",
+            "pax",
+        ),
+    )
+    starts_at: datetime = Field(
+        ...,
+        validation_alias=AliasChoices(
+            "starts_at",
+            "startsAt",
+            "start_time",
+            "startTime",
+            "reservation_time",
+            "reservationTime",
+            "booking_time",
+            "bookingTime",
+            "scheduled_at",
+            "scheduledAt",
+            "datetime",
+            "date_time",
+        ),
+    )
     special_requests: str | None = Field(None, max_length=2000)
     preorder: list[PreorderLineIn] = Field(
         default_factory=list,
@@ -441,6 +477,12 @@ class ReservationCreate(BaseModel):
     @field_validator("party_size", mode="before")
     @classmethod
     def party_size_int(cls, v: Any) -> Any:
+        if isinstance(v, bool):
+            return int(v)
+        if isinstance(v, float):
+            if abs(v - round(v)) < 1e-9:
+                return int(round(v))
+            return v
         if isinstance(v, str) and v.strip().isdigit():
             return int(v.strip())
         return v
@@ -510,8 +552,39 @@ class ReservationUpdate(BaseModel):
             "end_user_phone",
         ),
     )
-    party_size: int | None = Field(None, ge=1, le=20)
-    starts_at: datetime | None = None
+    party_size: int | None = Field(
+        None,
+        ge=1,
+        le=20,
+        validation_alias=AliasChoices(
+            "party_size",
+            "partySize",
+            "party",
+            "headcount",
+            "head_count",
+            "number_of_guests",
+            "guests",
+            "guest_count",
+            "pax",
+        ),
+    )
+    starts_at: datetime | None = Field(
+        None,
+        validation_alias=AliasChoices(
+            "starts_at",
+            "startsAt",
+            "start_time",
+            "startTime",
+            "reservation_time",
+            "reservationTime",
+            "booking_time",
+            "bookingTime",
+            "scheduled_at",
+            "scheduledAt",
+            "datetime",
+            "date_time",
+        ),
+    )
     special_requests: str | None = Field(None, max_length=2000)
     status: str | None = Field(
         None,
@@ -555,6 +628,12 @@ class ReservationUpdate(BaseModel):
     def party_size_int(cls, v: Any) -> Any:
         if v is None:
             return None
+        if isinstance(v, bool):
+            return int(v)
+        if isinstance(v, float):
+            if abs(v - round(v)) < 1e-9:
+                return int(round(v))
+            return v
         if isinstance(v, str) and v.strip().isdigit():
             return int(v.strip())
         return v

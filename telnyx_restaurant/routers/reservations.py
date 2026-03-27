@@ -106,116 +106,102 @@ def _merge_status_from_cancel_query(
     return None
 
 
-_PREORDER_KEYS_ON_WRONG_ROUTE = frozenset(
-    {
-        "preorder",
-        "pre_order",
-        "preorder_items",
-        "items",
-        "lines",
-        "menu",
-        "cart",
-        "dishes",
-        "food",
-        "menu_items",
-        "menu_order",
-        "selected_dishes",
-        "order_items",
-        "meal_selection",
-        "basket",
-        "dish_selection",
-        "selected_items",
-    }
-)
+def _flat_apply_cancel_and_query_status(
+    flat: dict[str, Any],
+    *,
+    query_status: str | None,
+    cancel: str | None,
+) -> None:
+    merged_q = _merge_status_from_cancel_query(query_status, cancel)
+    if merged_q:
+        flat.setdefault("status", merged_q)
+    for flag in ("cancel", "Cancel", "cancel_reservation", "cancellation_requested"):
+        v = flat.get(flag)
+        if v is True:
+            flat.setdefault("status", "cancelled")
+        elif isinstance(v, str) and v.strip().casefold() in ("true", "1", "yes", "y"):
+            flat.setdefault("status", "cancelled")
 
-_DETAIL_KEYS_ON_WRONG_STATUS_ROUTE = frozenset(
-    {
-        "party_size",
-        "partysize",
-        "party",
-        "headcount",
-        "guests",
-        "pax",
-        "starts_at",
-        "start_time",
-        "reservation_time",
-        "datetime",
-        "special_requests",
-        "guest_name",
-        "guest_phone",
+
+async def _patch_at_status_url(
+    request: Request,
+    db: Session,
+    *,
+    row: Reservation,
+    query_status: str | None,
+    cancel: str | None,
+) -> Reservation:
+    """Telnyx often binds `…/status` for all updates — accept full ReservationUpdate here too."""
+    # Same JSON + form rules as POST /amend (incl. json-parse of preorder-ish form fields).
+    body = await read_json_or_form_body(request)
+    flat = _unwrap_nested_reservation_payload(dict(body))
+    for k in (
         "confirmation_code",
         "code",
-        "confirmationcode",
+        "confirmationCode",
         "hnk_code",
-    }
-)
+        "reservation_code",
+        "next_reservation_code",
+    ):
+        flat.pop(k, None)
 
+    _flat_apply_cancel_and_query_status(flat, query_status=query_status, cancel=cancel)
 
-def _reject_cart_payload_on_status_route(body: dict[str, Any]) -> None:
-    """`…/status` only accepts status/cancel — tools often POST cart or party/time to the wrong URL."""
-    if not body:
-        return
-    merged = dict(body)
-    for wrap in ("data", "payload", "body", "input", "variables"):
-        inner = merged.get(wrap)
-        if isinstance(inner, dict):
-            for k, v in inner.items():
-                merged.setdefault(k, v)
-    keys_norm = {str(k).lower() for k in merged.keys()}
-    bad_cart = _PREORDER_KEYS_ON_WRONG_ROUTE.intersection(keys_norm)
-    bad_detail = _DETAIL_KEYS_ON_WRONG_STATUS_ROUTE.intersection(keys_norm)
-    if bad_cart:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "This path only updates reservation status (pending / confirmed / cancelled / …), "
-                f"not food pre-order. Remove keys {sorted(bad_cart)}. "
-                "Use PATCH /api/reservations/amend with confirmation_code + preorder "
-                "(or PATCH /by-code/… or PATCH /{id} without /status)."
-            ),
-        )
-    if bad_detail:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "This path only changes **status**, not party size, time, guest fields, or code. "
-                f"Remove keys {sorted(bad_detail)}. "
-                "Use PATCH /api/reservations/amend with confirmation_code + party_size and/or starts_at "
-                "(ISO or YYYY-MM-DD), or PATCH /by-code/HNK-… / PATCH /{id} without /status. "
-                "Optional: same amend body can include status + preorder together."
-            ),
-        )
-
-
-def _parse_status_update(
-    body: dict[str, Any],
-    status: str | None = None,
-) -> ReservationStatusUpdate:
-    """Telnyx tools often send `{}`, nested keys, or only a query param."""
-    merged = dict(body or {})
-    # Inline JSON strings on common wrapper keys (tools sometimes double-encode).
-    for k in ("body", "payload", "data", "variables", "input", "arguments", "json"):
-        v = merged.get(k)
-        if isinstance(v, str) and v.strip().startswith("{"):
-            try:
-                inner = json.loads(v)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(inner, dict):
-                merged = {**inner, **merged}
-    if (status or "").strip():
-        merged.setdefault("status", status.strip())
+    patch: ReservationUpdate | None = None
+    patch_exc: ValidationError | None = None
     try:
-        return ReservationStatusUpdate.model_validate(merged)
+        patch = ReservationUpdate.model_validate(flat)
+    except ValidationError as e:
+        patch = None
+        patch_exc = e
+
+    if patch is not None and patch.model_fields_set:
+        if patch.model_fields_set - {"status"}:
+            _reject_modifying_cancelled(row)
+        _apply_reservation_update(row, patch)
+        db.commit()
+        db.refresh(row)
+        return row
+
+    try:
+        parsed = ReservationStatusUpdate.model_validate(flat)
     except ValidationError as exc:
+        if patch_exc is not None and flat:
+            logger.warning(
+                "PATCH …/status 422: ReservationUpdate failed keys=%s errors=%s",
+                sorted(flat.keys())[:40],
+                patch_exc.errors()[:8],
+            )
+            raise HTTPException(
+                status_code=422,
+                detail=patch_exc.errors(),
+            ) from patch_exc
+        if patch is not None and not patch.model_fields_set:
+            logger.warning(
+                "PATCH …/status 422: body produced no settable fields (all unknown/null?). "
+                "flat_keys=%s",
+                sorted(flat.keys())[:40],
+            )
+        else:
+            logger.warning(
+                "PATCH …/status 422: flat_keys=%s pydantic_tail=%s",
+                sorted(flat.keys())[:40],
+                exc.errors()[:4],
+            )
         raise HTTPException(
             status_code=422,
             detail=(
-                "Send JSON {\"status\":\"cancelled\"} (or cancel/canceled), nested {data:{...}}, "
-                "or query ?status=cancelled. "
+                "No valid fields to update. Send JSON with party_size (or partySize), starts_at (or startsAt), "
+                "preorder, guest_name, status; or ?cancel=1. Empty PATCH body always 422. "
                 f"Pydantic: {exc.errors()}"
             ),
         ) from exc
+
+    row.status = parsed.status
+    row.updated_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 async def read_status_request_payload(request: Request) -> dict[str, Any]:
@@ -246,6 +232,9 @@ async def read_status_request_payload(request: Request) -> dict[str, Any]:
             return {"status": text} if text else {}
         if isinstance(data, dict):
             return data
+        coerced = _coerce_json_root_to_dict(data)
+        if coerced:
+            return coerced
         if isinstance(data, str):
             return {"status": data}
         return {}
@@ -255,6 +244,11 @@ async def read_status_request_payload(request: Request) -> dict[str, Any]:
     except (json.JSONDecodeError, UnicodeDecodeError):
         text = raw.decode("utf-8", errors="replace").strip()
         return {"status": text} if text else {}
+    if isinstance(data, dict):
+        return data
+    coerced = _coerce_json_root_to_dict(data)
+    if coerced:
+        return coerced
     return data if isinstance(data, dict) else {"status": str(data)}
 
 
@@ -263,9 +257,14 @@ _JSON_ARRAY_SINGLE_OBJECT_KEYS = frozenset(
         "guest_name",
         "guest_phone",
         "party_size",
+        "partySize",
+        "party",
         "starts_at",
+        "startsAt",
+        "start_time",
         "name",
         "phone",
+        "status",
         "confirmation_code",
         "code",
         "confirmationCode",
@@ -738,22 +737,16 @@ async def update_status_by_code(
         description="If 1/true/yes/cancel, sets status to cancelled (no JSON body needed).",
     ),
 ):
-    """Update status using HNK-… code (single Telnyx webhook; no numeric id)."""
+    """Status and/or party time / pre-order / guest fields (miswired Telnyx tools often hit …/status)."""
     code = _normalize_confirmation_code(_reject_unsubstituted_path_value(code))
-    body = await read_status_request_payload(request)
-    _reject_cart_payload_on_status_route(body)
-    merged_q = _merge_status_from_cancel_query(status, cancel)
-    parsed = _parse_status_update(body, merged_q)
     row = db.execute(
         select(Reservation).where(Reservation.confirmation_code == code)
     ).scalar_one_or_none()
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
-    row.status = parsed.status
-    row.updated_at = datetime.now(UTC)
-    db.commit()
-    db.refresh(row)
-    return row
+    return await _patch_at_status_url(
+        request, db, row=row, query_status=status, cancel=cancel
+    )
 
 
 @router.patch("/by-code/{code}", response_model=ReservationRead)
@@ -842,20 +835,14 @@ async def update_status(
         description="If 1/true/yes/cancel, sets status to cancelled (no JSON body needed).",
     ),
 ):
-    """Register before /{reservation_id} so paths like …/6/status never hit the generic PATCH."""
+    """Register before /{reservation_id}. Same as PATCH /{id} when body includes party/time/pre-order."""
     reservation_id_int = _parse_reservation_id_path(reservation_id)
-    body = await read_status_request_payload(request)
-    _reject_cart_payload_on_status_route(body)
-    merged_q = _merge_status_from_cancel_query(status, cancel)
-    parsed = _parse_status_update(body, merged_q)
     row = db.get(Reservation, reservation_id_int)
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
-    row.status = parsed.status
-    row.updated_at = datetime.now(UTC)
-    db.commit()
-    db.refresh(row)
-    return row
+    return await _patch_at_status_url(
+        request, db, row=row, query_status=status, cancel=cancel
+    )
 
 
 @router.get("/{reservation_id}", response_model=ReservationRead)
