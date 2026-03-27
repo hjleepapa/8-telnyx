@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import secrets
 import string
 from datetime import UTC, datetime
@@ -47,6 +48,17 @@ def _reject_unsubstituted_path_value(value: str, *, field: str = "code") -> str:
 def _gen_confirmation_code() -> str:
     part = "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(4))
     return f"HNK-{part}"
+
+
+def _normalize_confirmation_code(code: str) -> str:
+    """Fix ASR/LLM dropping the hyphen: HNKWGJF → HNK-WGJF when valid."""
+    c = (code or "").strip().upper().replace(" ", "")
+    if re.fullmatch(r"HNK-[A-Z0-9]{4}", c):
+        return c
+    m = re.fullmatch(r"HNK([A-Z0-9]{4})", c)
+    if m:
+        return f"HNK-{m.group(1)}"
+    return c
 
 
 def _guest_name_matches(stored_full: str, hint: str) -> bool:
@@ -230,7 +242,7 @@ def lookup_reservation_by_guest_phone(
 
 @router.get("/by-code/{code}", response_model=ReservationRead)
 def get_reservation_by_code(code: str, db: Session = Depends(get_db)):
-    code = _reject_unsubstituted_path_value(code)
+    code = _normalize_confirmation_code(_reject_unsubstituted_path_value(code))
     row = db.execute(
         select(Reservation).where(Reservation.confirmation_code == code)
     ).scalar_one_or_none()
@@ -246,7 +258,7 @@ def update_status_by_code(
     db: Session = Depends(get_db),
 ):
     """Update status using HNK-… code (single Telnyx webhook; no numeric id)."""
-    code = _reject_unsubstituted_path_value(code)
+    code = _normalize_confirmation_code(_reject_unsubstituted_path_value(code))
     row = db.execute(
         select(Reservation).where(Reservation.confirmation_code == code)
     ).scalar_one_or_none()

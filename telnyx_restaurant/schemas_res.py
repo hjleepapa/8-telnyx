@@ -7,7 +7,7 @@ from typing import Any
 
 from datetime import datetime
 
-from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class PreorderLineIn(BaseModel):
@@ -117,4 +117,41 @@ class ReservationRead(BaseModel):
 
 
 class ReservationStatusUpdate(BaseModel):
-    status: str = Field(..., pattern="^(pending|confirmed|seated|completed|cancelled)$")
+    """Voice/webhook tools often send cancel/canceled or Status with different casing."""
+
+    model_config = ConfigDict(populate_by_name=True, str_strip_whitespace=True, extra="ignore")
+
+    status: str = Field(
+        ...,
+        validation_alias=AliasChoices("status", "Status", "state", "new_status", "reservation_status"),
+    )
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def normalize_status(cls, v: Any) -> str:
+        if v is None or (isinstance(v, str) and not str(v).strip()):
+            raise ValueError("status is required")
+        raw = str(v).strip()
+        s = raw.casefold().replace(" ", "_").replace("-", "_")
+
+        # Common LLM / US English variants → canonical
+        if s in {"cancel", "canceled", "cancellation", "void", "voided", "delete", "deleted"}:
+            return "cancelled"
+        if s in {
+            "confirm",
+            "confirmed",
+            "confirm_reservation",
+        }:
+            return "confirmed"
+        if s in {"pending", "hold", "waitlist"}:
+            return "pending"
+        if s in {"seated", "seat", "arrived", "checked_in", "check_in"}:
+            return "seated"
+        if s in {"completed", "complete", "done", "finished", "closed"}:
+            return "completed"
+        if s in {"pending", "confirmed", "seated", "completed", "cancelled"}:
+            return s
+
+        raise ValueError(
+            f"Invalid status {raw!r}; use pending, confirmed, seated, completed, or cancelled (cancel/canceled ok)."
+        )
