@@ -48,3 +48,12 @@ def telnyx_from_number() -> str | None:
     """Verified or permitted caller ID (+E.164) for outbound calls."""
     v = (os.environ.get("TELNYX_FROM_NUMBER") or "").strip()
     return v or None
+
+
+def hanok_reminder_delay_seconds() -> float:
+    """Outbound demo reminder delay after reservation is saved (default 5s; max 5 minutes)."""
+    raw = (os.environ.get("HANOK_REMINDER_DELAY_SECONDS") or "5").strip()
+    try:
+        return max(1.0, min(float(raw), 300.0))
+    except ValueError:
+        return 5.0

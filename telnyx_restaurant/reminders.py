@@ -9,7 +9,13 @@ import threading
 import urllib.error
 import urllib.request
 
-from telnyx_restaurant.config import database_url, telnyx_api_key, telnyx_connection_id, telnyx_from_number
+from telnyx_restaurant.config import (
+    database_url,
+    hanok_reminder_delay_seconds,
+    telnyx_api_key,
+    telnyx_connection_id,
+    telnyx_from_number,
+)
 from telnyx_restaurant.phone_normalize import to_e164_us
 
 logger = logging.getLogger(__name__)
@@ -34,13 +40,15 @@ def schedule_demo_reminder_call(
         except Exception:
             logger.exception("Hanok reminder worker crashed for reservation_id=%s", reservation_id)
 
+    delay = hanok_reminder_delay_seconds()
     logger.info(
-        "Hanok: demo reminder scheduled in 5s (reservation_id=%s code=%s to=%s)",
+        "Hanok: demo reminder scheduled in %.1fs (reservation_id=%s code=%s to=%s)",
+        delay,
         reservation_id,
         cc,
         gp,
     )
-    t = threading.Timer(5.0, _fire)
+    t = threading.Timer(delay, _fire)
     t.daemon = True
     t.start()
 
@@ -142,3 +150,61 @@ def _place_telnyx_reminder_call(
     except Exception:
         logger.exception("Hanok reminder: Telnyx call failed")
         return "telnyx_error_exception"
+
+
+def telnyx_speak(call_control_id: str, text: str) -> tuple[bool, str]:
+    """Play TTS on an answered Call Control leg (requires webhook to trigger on call.answered)."""
+    key = telnyx_api_key()
+    if not key or not call_control_id:
+        return False, "missing_config"
+    attempts = (
+        {"payload": text, "voice": "female", "language": "en-US"},
+        {"payload": text},
+    )
+    last_err = "exception"
+    for body in attempts:
+        try:
+            req = urllib.request.Request(
+                f"https://api.telnyx.com/v2/calls/{call_control_id}/actions/speak",
+                data=json.dumps(body).encode("utf-8"),
+                headers={
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                resp.read()
+            return True, "ok"
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")[:800]
+            logger.warning("Hanok speak: HTTP %s %s", e.code, detail)
+            last_err = f"http_{e.code}"
+        except Exception:
+            logger.exception("Hanok speak failed")
+            last_err = "exception"
+    return False, last_err
+
+
+def telnyx_hangup(call_control_id: str) -> bool:
+    key = telnyx_api_key()
+    if not key or not call_control_id:
+        return False
+    try:
+        req = urllib.request.Request(
+            f"https://api.telnyx.com/v2/calls/{call_control_id}/actions/hangup",
+            data=json.dumps({}).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            resp.read()
+        return True
+    except Exception:
+        logger.exception("Hanok hangup failed")
+        return False

@@ -150,10 +150,32 @@ class ReservationCreate(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def lift_preorder_from_wrapper(cls, data: Any) -> Any:
+    def unwrap_telnyx_payload_and_lift_preorder(cls, data: Any) -> Any:
+        """Tools often nest the booking under data/body/payload or omit preorder at top level."""
         if not isinstance(data, dict):
             return data
-        return _lift_nested_preorder_dict(data)
+        d = dict(data)
+        for key in ("data", "body", "payload", "reservation", "input", "parameters"):
+            inner = d.get(key)
+            if not isinstance(inner, dict):
+                continue
+            if any(
+                x in inner
+                for x in (
+                    "guest_name",
+                    "guest_phone",
+                    "starts_at",
+                    "party_size",
+                    "preorder",
+                    "pre_order",
+                    "items",
+                    "lines",
+                    "menu_order",
+                )
+            ):
+                d = {**inner, **{k: v for k, v in d.items() if k != key}}
+                break
+        return _lift_nested_preorder_dict(d)
 
     @field_validator("preorder", mode="before")
     @classmethod

@@ -10,10 +10,14 @@ Lookup matches `guest_phone` using normalized variants (+1 / 11-digit / 10-digit
 
 from __future__ import annotations
 
+import base64
+import json
+import logging
+import threading
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Body
+from fastapi import APIRouter, Body, Request
 from sqlalchemy import select
 
 from telnyx_restaurant.config import database_url
@@ -21,9 +25,14 @@ from telnyx_restaurant.db import get_engine
 from telnyx_restaurant.models import Reservation, ReservationStatus
 from telnyx_restaurant.phone_normalize import phone_lookup_variants
 from telnyx_restaurant.preorder_calc import preorder_summary_text
+from telnyx_restaurant.reminders import telnyx_hangup, telnyx_speak
 from telnyx_restaurant.webhook_payload import extract_caller_number
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+_hanok_cc_lock = threading.Lock()
+_hanok_cc_ids: set[str] = set()
 
 
 def _food_display(cents: int) -> str:
@@ -137,12 +146,104 @@ def _profile_from_db(caller: str | None) -> dict[str, Any] | None:
             "reservation_has_preorder": bool(lines),
             "reservation_source_channel": row.source_channel,
             "demo_reminder_note": (
-                "Demo: new bookings trigger an outbound reminder call ~5s later "
-                "(set TELNYX_API_KEY, TELNYX_CONNECTION_ID, TELNYX_FROM_NUMBER)."
+                "Demo: new bookings schedule an outbound reminder (delay via HANOK_REMINDER_DELAY_SECONDS). "
+                "Set TELNYX_API_KEY, TELNYX_CONNECTION_ID, TELNYX_FROM_NUMBER, and point the Call Control app "
+                "webhook to POST …/webhooks/telnyx/call-control so the call plays TTS when answered."
             ),
         }
     finally:
         db.close()
+
+
+def _parse_call_control_event(body: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    data = body.get("data")
+    if isinstance(data, dict):
+        et = str(data.get("event_type") or "")
+        pl = data.get("payload")
+        if isinstance(pl, dict):
+            return et, pl
+        return et, data
+    return str(body.get("event_type") or ""), body
+
+
+def _extract_call_control_id(payload: dict[str, Any]) -> str | None:
+    for key in ("call_control_id", "call_session_id"):
+        v = payload.get(key)
+        if v:
+            return str(v)
+    call = payload.get("call")
+    if isinstance(call, dict):
+        for key in ("call_control_id", "id"):
+            v = call.get(key)
+            if v:
+                return str(v)
+    return None
+
+
+def _decode_client_state(payload: dict[str, Any]) -> dict[str, Any] | None:
+    raw = payload.get("client_state")
+    if raw is None:
+        call = payload.get("call")
+        if isinstance(call, dict):
+            raw = call.get("client_state")
+    if not raw or not isinstance(raw, str):
+        return None
+    try:
+        decoded = base64.b64decode(raw, validate=False)
+        obj = json.loads(decoded.decode("utf-8"))
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        return None
+
+
+@router.post("/call-control")
+async def telnyx_call_control(request: Request) -> dict[str, str]:
+    """Hanok outbound reminder audio: add this URL on the Call Control app used by `TELNYX_CONNECTION_ID`.
+
+    Telnyx sends `call.answered`; we run `speak`, then hang up on `call.speak.ended`.
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return {"status": "ignored"}
+    if not isinstance(body, dict):
+        return {"status": "ignored"}
+
+    event_type, payload = _parse_call_control_event(body)
+    call_control_id = _extract_call_control_id(payload)
+    if not call_control_id:
+        return {"status": "ok"}
+
+    if event_type == "call.answered":
+        state = _decode_client_state(payload)
+        if not state or not state.get("hanok_reminder"):
+            return {"status": "ok"}
+        first = state.get("guest_first_name") or "there"
+        code = state.get("confirmation_code") or ""
+        msg = (
+            f"Hello {first}, this is Hanok Table with a reminder about your reservation. "
+            f"Your confirmation code is {code}. See you soon."
+        )
+        ok, tag = telnyx_speak(call_control_id, msg)
+        if ok:
+            with _hanok_cc_lock:
+                _hanok_cc_ids.add(call_control_id)
+        else:
+            logger.warning("Hanok call-control: speak failed tag=%s", tag)
+        return {"status": "spoke" if ok else "speak_failed"}
+
+    if event_type in ("call.speak.ended", "call.speak.completed", "call.speak.stopped"):
+        do_hangup = False
+        with _hanok_cc_lock:
+            if call_control_id in _hanok_cc_ids:
+                _hanok_cc_ids.discard(call_control_id)
+                do_hangup = True
+        if do_hangup:
+            telnyx_hangup(call_control_id)
+            return {"status": "hungup"}
+        return {"status": "ok"}
+
+    return {"status": "ok"}
 
 
 @router.post("/variables")
@@ -160,6 +261,7 @@ async def dynamic_webhook_variables(
     profile["_source"] = "database" if db_profile else "demo"
     if "demo_reminder_note" not in profile:
         profile["demo_reminder_note"] = (
-            "Demo: after any reservation, Hanok schedules a Telnyx reminder call 5s later when dial env is set."
+            "Demo: after a reservation, Hanok schedules an outbound reminder (HANOK_REMINDER_DELAY_SECONDS). "
+            "Use the Call Control webhook POST …/webhooks/telnyx/call-control so answered calls speak the reminder."
         )
     return profile

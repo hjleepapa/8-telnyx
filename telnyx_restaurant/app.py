@@ -69,6 +69,7 @@ if _STATIC.is_dir():
 
 
 @app.get("/health")
+@app.post("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
 

@@ -133,6 +133,57 @@ async def read_status_request_payload(request: Request) -> dict[str, Any]:
     return data if isinstance(data, dict) else {"status": str(data)}
 
 
+async def read_json_or_form_body(request: Request) -> dict[str, Any]:
+    """POST body for JSON-like APIs (create). Accepts JSON or form; no fake `status` field from plain text."""
+    hdr = (request.headers.get("content-type") or "").lower()
+    if "application/x-www-form-urlencoded" in hdr or "multipart/form-data" in hdr:
+        try:
+            form = await request.form()
+        except Exception:
+            return {}
+        out: dict[str, Any] = {}
+        for key, val in form.multi_items():
+            if hasattr(val, "read"):
+                continue
+            k = str(key)
+            v = "" if val is None else str(val)
+            if k in (
+                "preorder",
+                "items",
+                "lines",
+                "pre_order",
+                "menu_order",
+                "data",
+                "body",
+                "payload",
+            ) and v.strip().startswith(("{", "[")):
+                try:
+                    out[k] = json.loads(v)
+                except json.JSONDecodeError:
+                    out[k] = v
+            else:
+                out[k] = v
+        return out
+
+    raw = await request.body()
+    if not raw or not raw.strip():
+        return {}
+
+    ct = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if "json" in ct or ct in ("", "application/json", "text/json", "application/problem+json"):
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def _reject_unsubstituted_path_value(value: str, *, field: str = "code") -> str:
     """Telnyx/webhook misconfig often leaves {{code}} in the path; fail loudly."""
     v = (value or "").strip()
@@ -227,10 +278,16 @@ def list_reservations(
 
 
 @router.post("", response_model=ReservationRead)
-def create_reservation(
-    body: ReservationCreate,
+async def create_reservation(
+    request: Request,
     db: Session = Depends(get_db),
 ):
+    raw = await read_json_or_form_body(request)
+    try:
+        body = ReservationCreate.model_validate(raw)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+
     code = _gen_confirmation_code()
     for _ in range(10):
         if not db.execute(

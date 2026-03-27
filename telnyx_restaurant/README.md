@@ -45,7 +45,11 @@ The same `guest_phone` may be stored as `+1925…` or `925…` in Postgres; the 
 
 ### Demo outbound reminder (5s after booking)
 
-Requires **Render env vars** `TELNYX_API_KEY`, `TELNYX_CONNECTION_ID` (Call Control Application id for `POST https://api.telnyx.com/v2/calls`), and `TELNYX_FROM_NUMBER` (+E.164). After each successful `POST /api/reservations`, the server schedules a dial in **5 seconds** (thread timer). Check **`reminder_call_status`** on the row in `/admin/reservations`: `demo_skipped_no_telnyx_config` means env is missing; `telnyx_error_http_*` includes a Telnyx API error (see service logs). `client_state` is sent **base64**-encoded per Telnyx Call Control.
+Requires **Render env vars** `TELNYX_API_KEY`, `TELNYX_CONNECTION_ID` (Call Control Application id for `POST https://api.telnyx.com/v2/calls`), and `TELNYX_FROM_NUMBER` (+E.164). Optional **`HANOK_REMINDER_DELAY_SECONDS`** (default `5`, max `300`) controls how long after a successful `POST /api/reservations` the outbound dial runs.
+
+**Reminder audio:** `POST /v2/calls` only rings you until the Call Control app’s **webhook** is set to **`POST https://<your-host>/webhooks/telnyx/call-control`**. On **`call.answered`**, that endpoint runs **speak** (TTS) using the reservation details in `client_state`, then **hangs up** after **`call.speak.ended`**. If the webhook is missing or mis-pointed, you hear silence.
+
+Check **`reminder_call_status`** on the row in `/admin/reservations`: `demo_skipped_no_telnyx_config` means env is missing; `telnyx_error_http_*` includes a Telnyx API error (see service logs).
 
 ## Telnyx AI Assistant (paste into instructions)
 
