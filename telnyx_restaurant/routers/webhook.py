@@ -25,7 +25,7 @@ from telnyx_restaurant.db import get_engine
 from telnyx_restaurant.models import Reservation, ReservationStatus
 from telnyx_restaurant.phone_normalize import phone_lookup_variants
 from telnyx_restaurant.preorder_calc import preorder_summary_text
-from telnyx_restaurant.reminders import telnyx_hangup, telnyx_speak
+from telnyx_restaurant.reminders import build_reminder_speak_text, telnyx_hangup, telnyx_speak
 from telnyx_restaurant.webhook_payload import extract_caller_number
 
 router = APIRouter()
@@ -218,12 +218,7 @@ async def telnyx_call_control(request: Request) -> dict[str, str]:
         state = _decode_client_state(payload)
         if not state or not state.get("hanok_reminder"):
             return {"status": "ok"}
-        first = state.get("guest_first_name") or "there"
-        code = state.get("confirmation_code") or ""
-        msg = (
-            f"Hello {first}, this is Hanok Table with a reminder about your reservation. "
-            f"Your confirmation code is {code}. See you soon."
-        )
+        msg = build_reminder_speak_text(state)
         ok, tag = telnyx_speak(call_control_id, msg)
         if ok:
             with _hanok_cc_lock:

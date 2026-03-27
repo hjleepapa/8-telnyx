@@ -8,6 +8,7 @@ import logging
 import threading
 import urllib.error
 import urllib.request
+from typing import Any
 
 from telnyx_restaurant.config import (
     database_url,
@@ -17,8 +18,31 @@ from telnyx_restaurant.config import (
     telnyx_from_number,
 )
 from telnyx_restaurant.phone_normalize import to_e164_us
+from telnyx_restaurant.preorder_calc import preorder_summary_text
 
 logger = logging.getLogger(__name__)
+
+
+def build_reminder_speak_text(state: dict[str, Any]) -> str:
+    """Spoken script for outbound Call Control TTS (Hanok reminder)."""
+    first = state.get("guest_first_name") or "there"
+    code = state.get("confirmation_code") or ""
+    party = state.get("party_size")
+    when = (state.get("starts_at_speech") or "").strip()
+    food = (state.get("preorder_summary") or "").strip()
+
+    parts: list[str] = [
+        f"Hello {first}, this is Hanok Table with a reminder about your reservation.",
+    ]
+    if party is not None:
+        parts.append(f"Your party size is {party}.")
+    if when:
+        parts.append(f"Your reservation time is {when}.")
+    if food:
+        parts.append(f"Your pre-order includes {food}.")
+    parts.append(f"Your confirmation code is {code}.")
+    parts.append("If you need to make changes, please call the restaurant. We look forward to seeing you.")
+    return " ".join(parts)
 
 
 def schedule_demo_reminder_call(
@@ -61,11 +85,43 @@ def _demo_reminder_worker(
 ) -> None:
     first = (guest_name or "Guest").split()[0]
     to_e164 = to_e164_us(guest_phone)
-    status = _place_telnyx_reminder_call(
-        to_e164=to_e164,
-        confirmation_code=confirmation_code,
-        guest_first_name=first,
-    )
+
+    state_obj: dict[str, Any] = {
+        "hanok_reminder": True,
+        "confirmation_code": confirmation_code,
+        "guest_first_name": first,
+        "guest_full_name": (guest_name or "").strip(),
+        "party_size": None,
+        "starts_at_speech": "",
+        "preorder_summary": "",
+    }
+
+    if database_url():
+        from telnyx_restaurant.db import SessionLocal, get_engine
+        from telnyx_restaurant.models import Reservation
+
+        get_engine()
+        if SessionLocal is not None:
+            db = SessionLocal()
+            try:
+                row = db.get(Reservation, reservation_id)
+                if row:
+                    state_obj["party_size"] = row.party_size
+                    dt = row.starts_at
+                    if dt.tzinfo:
+                        state_obj["starts_at_speech"] = dt.strftime("%A, %B %d at %I:%M %p %Z")
+                    else:
+                        state_obj["starts_at_speech"] = dt.strftime("%A, %B %d at %I:%M %p")
+                    summ = preorder_summary_text(row.preorder_items)
+                    if len(summ) > 480:
+                        summ = summ[:477].rsplit(";", 1)[0] + ", and more."
+                    state_obj["preorder_summary"] = summ
+            except Exception:
+                logger.exception("Hanok reminder: failed to load reservation for speech payload")
+            finally:
+                db.close()
+
+    status = _place_telnyx_reminder_call(to_e164=to_e164, state_obj=state_obj)
     _persist_reminder_status(reservation_id, status)
 
 
@@ -93,8 +149,7 @@ def _persist_reminder_status(reservation_id: int, status: str) -> None:
 def _place_telnyx_reminder_call(
     *,
     to_e164: str,
-    confirmation_code: str,
-    guest_first_name: str,
+    state_obj: dict[str, Any],
 ) -> str:
     key = telnyx_api_key()
     conn = telnyx_connection_id()
@@ -104,7 +159,7 @@ def _place_telnyx_reminder_call(
             "Hanok demo reminder skipped: set TELNYX_API_KEY, TELNYX_CONNECTION_ID (Call Control App id), "
             "and TELNYX_FROM_NUMBER on the server. Would have dialed %s for %s.",
             to_e164,
-            confirmation_code,
+            state_obj.get("confirmation_code"),
         )
         return "demo_skipped_no_telnyx_config"
 
@@ -114,13 +169,10 @@ def _place_telnyx_reminder_call(
         logger.warning("Hanok reminder: invalid destination E.164: %r", to_e164)
         return "demo_skipped_bad_destination"
 
-    state_obj = {
-        "hanok_reminder": True,
-        "confirmation_code": confirmation_code,
-        "guest_first_name": guest_first_name,
-    }
+    payload = dict(state_obj)
+    payload["hanok_reminder"] = True
     # Telnyx Call Control expects client_state as base64-encoded payload
-    client_state = base64.b64encode(json.dumps(state_obj).encode("utf-8")).decode("ascii")
+    client_state = base64.b64encode(json.dumps(payload, default=str).encode("utf-8")).decode("ascii")
 
     body: dict[str, str] = {
         "connection_id": conn,
@@ -141,7 +193,10 @@ def _place_telnyx_reminder_call(
         )
         with urllib.request.urlopen(req, timeout=45) as resp:
             resp.read()
-        logger.info("Hanok reminder: Telnyx POST /v2/calls accepted for %s", confirmation_code)
+        logger.info(
+            "Hanok reminder: Telnyx POST /v2/calls accepted for %s",
+            state_obj.get("confirmation_code"),
+        )
         return "telnyx_call_initiated"
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", errors="replace")[:800]
