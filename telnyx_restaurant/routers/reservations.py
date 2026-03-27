@@ -33,6 +33,20 @@ from telnyx_restaurant.schemas_res import (
 router = APIRouter(prefix="/api/reservations", tags=["reservations"])
 logger = logging.getLogger(__name__)
 
+_PATCH_NO_FIELDS_DETAIL = (
+    "No recognized fields to apply after removing confirmation_code. The server did not update the row. "
+    "Include at least one of: preorder, items, menu, cart, party_size, starts_at, guest_name, "
+    "guest_phone, special_requests. Example pre-order: "
+    '{"confirmation_code":"HNK-ABCD","preorder":[{"menu_item_id":"bulgogi","quantity":1}]} '
+    "Note: JSON null for optional fields is ignored and does not count as an update."
+)
+
+
+def _require_reservation_update_fields(body: ReservationUpdate) -> None:
+    """PATCH used to return 200 with an unchanged row when the tool only sent code — LLMs then claimed success."""
+    if not body.model_fields_set:
+        raise HTTPException(status_code=422, detail=_PATCH_NO_FIELDS_DETAIL)
+
 
 def _reject_modifying_cancelled(row: Reservation) -> None:
     if row.status == ReservationStatus.cancelled.value:
@@ -43,8 +57,7 @@ def _reject_modifying_cancelled(row: Reservation) -> None:
 
 
 def _apply_reservation_update(row: Reservation, body: ReservationUpdate) -> None:
-    if not body.model_fields_set:
-        return
+    # Caller must use _require_reservation_update_fields before this when a PATCH should do work.
     # Telnyx/tools often include JSON nulls for untouched fields; never write NULL into NOT NULL columns.
     if "guest_name" in body.model_fields_set and body.guest_name is not None:
         row.guest_name = body.guest_name  # type: ignore[assignment]
@@ -316,7 +329,15 @@ def _guest_name_matches(stored_full: str, hint: str) -> bool:
     h_parts = h.split()
     if h_parts and s_parts and h_parts[0] == s_parts[0]:
         return True
-    return bool(set(h_parts) & set(s_parts))
+    if set(h_parts) & set(s_parts):
+        return True
+    # e.g. guest_name on file "HJ" vs lookup "H James" / "H. James"
+    alpha_words = re.findall(r"[A-Za-z0-9]+", h)
+    if len(alpha_words) >= 2 and len(s) <= 8 and " " not in s:
+        initials = "".join(w[0] for w in alpha_words if w).casefold()
+        if len(initials) >= 2 and initials == s:
+            return True
+    return False
 
 
 def _candidate_pool_for_phone(
@@ -632,8 +653,7 @@ def patch_reservation_by_code(
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
     _reject_modifying_cancelled(row)
-    if not body.model_fields_set:
-        return row
+    _require_reservation_update_fields(body)
     _apply_reservation_update(row, body)
     db.commit()
     db.refresh(row)
@@ -679,8 +699,7 @@ async def amend_reservation_by_body_code(
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
     _reject_modifying_cancelled(row)
-    if not body.model_fields_set:
-        return row
+    _require_reservation_update_fields(body)
     _apply_reservation_update(row, body)
     db.commit()
     db.refresh(row)
@@ -737,8 +756,7 @@ def patch_reservation(
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
     _reject_modifying_cancelled(row)
-    if not body.model_fields_set:
-        return row
+    _require_reservation_update_fields(body)
     _apply_reservation_update(row, body)
     db.commit()
     db.refresh(row)
