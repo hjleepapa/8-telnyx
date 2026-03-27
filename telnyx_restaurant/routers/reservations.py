@@ -27,6 +27,7 @@ from telnyx_restaurant.schemas_res import (
     ReservationRead,
     ReservationStatusUpdate,
     ReservationUpdate,
+    _unwrap_nested_reservation_payload,
 )
 
 router = APIRouter(prefix="/api/reservations", tags=["reservations"])
@@ -434,12 +435,10 @@ def lookup_reservation_by_phone_and_name(
     ),
     phone: str | None = Query(
         None,
-        min_length=3,
-        description="Guest phone — Telnyx tools often use `guest_phone` instead; either is accepted.",
+        description="Guest phone — Telnyx tools often use `guest_phone` instead; either is accepted (empty `phone=` is ignored).",
     ),
     guest_phone: str | None = Query(
         None,
-        min_length=3,
         description="Alias for `phone` (same value from dynamic variables / caller id).",
     ),
     db: Session = Depends(get_db),
@@ -496,12 +495,10 @@ def lookup_reservation_by_phone_and_name(
 def lookup_reservation_by_guest_phone(
     phone: str | None = Query(
         None,
-        min_length=3,
-        description="Guest phone from dynamic variables (any common US format).",
+        description="Guest phone from dynamic variables (any common US format). Empty `phone=` is ignored.",
     ),
     guest_phone: str | None = Query(
         None,
-        min_length=3,
         description="Alias for `phone` (many Telnyx tools use this name).",
     ),
     guest_name: str | None = Query(
@@ -631,6 +628,53 @@ def patch_reservation_by_code(
     row = db.execute(
         select(Reservation).where(Reservation.confirmation_code == code)
     ).scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+    _reject_modifying_cancelled(row)
+    if not body.model_fields_set:
+        return row
+    _apply_reservation_update(row, body)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.patch("/amend", response_model=ReservationRead)
+async def amend_reservation_by_body_code(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Update a booking when Telnyx cannot bind numeric `reservation_id` in the path.
+
+    JSON or form body must include **confirmation_code** (or **code**) plus any fields accepted by
+    **`PATCH /api/reservations/by-code/{code}`** (e.g. **preorder** / **items** / **menu**).
+    """
+    raw = await read_json_or_form_body(request)
+    if not isinstance(raw, dict):
+        raise HTTPException(
+            status_code=422,
+            detail="Send a JSON object or form fields with confirmation_code and fields to update.",
+        )
+    flat = _unwrap_nested_reservation_payload(dict(raw))
+    code_raw = (
+        flat.pop("confirmation_code", None)
+        or flat.pop("code", None)
+        or flat.pop("confirmationCode", None)
+        or flat.pop("hnk_code", None)
+        or flat.pop("reservation_code", None)
+        or flat.pop("next_reservation_code", None)
+    )
+    if code_raw is None or not str(code_raw).strip():
+        raise HTTPException(
+            status_code=422,
+            detail="Body must include confirmation_code (or code) with the HNK-… value from the booking.",
+        )
+    code = _normalize_confirmation_code(_reject_unsubstituted_path_value(str(code_raw).strip()))
+    try:
+        body = ReservationUpdate.model_validate(flat)
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors()) from exc
+    row = db.execute(select(Reservation).where(Reservation.confirmation_code == code)).scalar_one_or_none()
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
     _reject_modifying_cancelled(row)
