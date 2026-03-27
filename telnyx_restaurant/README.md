@@ -4,7 +4,7 @@ FastAPI app deployed to **Render** (or run locally) for:
 
 - **Dynamic webhook variables** — `POST /webhooks/telnyx/variables`
 - **Health** — `GET /health`
-- **Reservations API** — `POST /api/reservations` (optional `preorder`, `source_channel`), `GET /api/reservations/menu/items`, `GET /api/reservations/lookup-by-phone?phone=…&guest_name=…` (voice; optional name if several rows share the phone), `GET /api/reservations/by-code/{code}`, `PATCH /api/reservations/by-code/{code}/status`
+- **Reservations API** — `POST /api/reservations` (optional `preorder`, `source_channel`), `GET /api/reservations/menu/items`, `GET /api/reservations/lookup-by-phone?phone=…&guest_name=…` (voice; optional name if several rows share the phone), `GET /api/reservations/by-code/{code}`, `PATCH /api/reservations/{id}` and `PATCH /api/reservations/by-code/{code}` (party, time, pre-order, guest fields) plus `PATCH …/status` for status-only
 - **Guests** — `/reserve-online.html`, `/reservation/status?code=HNK-…`
 - **Admin** — `/admin/reservations`
 

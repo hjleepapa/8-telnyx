@@ -25,9 +25,51 @@ from telnyx_restaurant.schemas_res import (
     ReservationCreate,
     ReservationRead,
     ReservationStatusUpdate,
+    ReservationUpdate,
 )
 
 router = APIRouter(prefix="/api/reservations", tags=["reservations"])
+
+
+def _reject_modifying_cancelled(row: Reservation) -> None:
+    if row.status == ReservationStatus.cancelled.value:
+        raise HTTPException(
+            status_code=409,
+            detail="Reservation is cancelled; create a new booking or change status first.",
+        )
+
+
+def _apply_reservation_update(row: Reservation, body: ReservationUpdate) -> None:
+    if not body.model_fields_set:
+        return
+    if "guest_name" in body.model_fields_set:
+        row.guest_name = body.guest_name  # type: ignore[assignment]
+    if "guest_phone" in body.model_fields_set:
+        row.guest_phone = body.guest_phone.strip()  # type: ignore[union-attr]
+    if "party_size" in body.model_fields_set:
+        row.party_size = body.party_size  # type: ignore[assignment]
+    if "starts_at" in body.model_fields_set:
+        st = body.starts_at
+        if st is not None:
+            row.starts_at = st if st.tzinfo else st.replace(tzinfo=UTC)
+    if "special_requests" in body.model_fields_set:
+        row.special_requests = body.special_requests
+    if "preorder" in body.model_fields_set:
+        if body.preorder is None:
+            row.preorder_json = None
+            row.food_subtotal_cents = 0
+            row.preorder_discount_cents = 0
+            row.food_total_cents = 0
+        else:
+            try:
+                preorder_json, subtotal, discount, total = serialize_preorder(body.preorder)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+            row.preorder_json = preorder_json
+            row.food_subtotal_cents = subtotal
+            row.preorder_discount_cents = discount
+            row.food_total_cents = total
+    row.updated_at = datetime.now(UTC)
 
 
 def _parse_status_update(
@@ -345,11 +387,52 @@ async def update_status_by_code(
     return row
 
 
+@router.patch("/by-code/{code}", response_model=ReservationRead)
+def patch_reservation_by_code(
+    code: str,
+    body: ReservationUpdate,
+    db: Session = Depends(get_db),
+):
+    """Update party size, time, pre-order, or guest fields using confirmation code (voice-friendly)."""
+    code = _normalize_confirmation_code(_reject_unsubstituted_path_value(code))
+    row = db.execute(
+        select(Reservation).where(Reservation.confirmation_code == code)
+    ).scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+    _reject_modifying_cancelled(row)
+    if not body.model_fields_set:
+        return row
+    _apply_reservation_update(row, body)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
 @router.get("/{reservation_id}", response_model=ReservationRead)
 def get_reservation(reservation_id: int, db: Session = Depends(get_db)):
     row = db.get(Reservation, reservation_id)
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
+    return row
+
+
+@router.patch("/{reservation_id}", response_model=ReservationRead)
+def patch_reservation(
+    reservation_id: int,
+    body: ReservationUpdate,
+    db: Session = Depends(get_db),
+):
+    """Update party size, time, pre-order, or guest details (partial PATCH)."""
+    row = db.get(Reservation, reservation_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+    _reject_modifying_cancelled(row)
+    if not body.model_fields_set:
+        return row
+    _apply_reservation_update(row, body)
+    db.commit()
+    db.refresh(row)
     return row
 
 

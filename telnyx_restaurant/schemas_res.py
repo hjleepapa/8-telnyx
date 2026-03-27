@@ -76,6 +76,54 @@ class PreorderLineIn(BaseModel):
         return self
 
 
+PREORDER_ALIASES = AliasChoices(
+    "preorder",
+    "pre_order",
+    "menu_order",
+    "preOrder",
+    "preorder_items",
+    "menu_items",
+    "items",
+    "lines",
+    "order",
+    "food",
+    "selected_items",
+)
+
+
+def _lift_nested_preorder_dict(data: dict[str, Any]) -> dict[str, Any]:
+    """Inline preorder: { items: [...] } → preorder list at top level."""
+    d = dict(data)
+    inner_preorder = d.get("preorder")
+    if isinstance(inner_preorder, dict):
+        for key in ("items", "lines", "menu", "entries", "preorder"):
+            nested = inner_preorder.get(key)
+            if isinstance(nested, list):
+                d["preorder"] = nested
+                break
+    return d
+
+
+def _coerce_preorder_value_to_lines(v: Any) -> Any:
+    if isinstance(v, str):
+        s = v.strip()
+        if not s:
+            return []
+        try:
+            v = json.loads(s)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"preorder string must be valid JSON array or object: {e}") from e
+    if isinstance(v, dict):
+        for key in ("items", "lines", "preorder", "menu", "menu_items", "entries", "order"):
+            inner = v.get(key)
+            if isinstance(inner, list):
+                return inner
+        return [v]
+    if isinstance(v, list):
+        return v
+    raise ValueError("preorder must be a list of lines or a wrapped object with an items/lines list")
+
+
 class ReservationCreate(BaseModel):
     model_config = ConfigDict(populate_by_name=True, str_strip_whitespace=True)
 
@@ -86,19 +134,7 @@ class ReservationCreate(BaseModel):
     special_requests: str | None = Field(None, max_length=2000)
     preorder: list[PreorderLineIn] = Field(
         default_factory=list,
-        validation_alias=AliasChoices(
-            "preorder",
-            "pre_order",
-            "menu_order",
-            "preOrder",
-            "preorder_items",
-            "menu_items",
-            "items",
-            "lines",
-            "order",
-            "food",
-            "selected_items",
-        ),
+        validation_alias=PREORDER_ALIASES,
     )
     source_channel: str = Field(
         default="online",
@@ -115,41 +151,16 @@ class ReservationCreate(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def lift_preorder_from_wrapper(cls, data: Any) -> Any:
-        """Telnyx often sends preorder only as top-level `items` / nested { items: [...] }."""
         if not isinstance(data, dict):
             return data
-        d = dict(data)
-        inner_preorder = d.get("preorder")
-        if isinstance(inner_preorder, dict):
-            for key in ("items", "lines", "menu", "entries", "preorder"):
-                nested = inner_preorder.get(key)
-                if isinstance(nested, list):
-                    d["preorder"] = nested
-                    break
-        return d
+        return _lift_nested_preorder_dict(data)
 
     @field_validator("preorder", mode="before")
     @classmethod
     def coerce_preorder(cls, v: Any) -> Any:
         if v is None:
             return []
-        if isinstance(v, str):
-            s = v.strip()
-            if not s:
-                return []
-            try:
-                v = json.loads(s)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"preorder string must be valid JSON array or object: {e}") from e
-        if isinstance(v, dict):
-            for key in ("items", "lines", "preorder", "menu", "menu_items", "entries", "order"):
-                inner = v.get(key)
-                if isinstance(inner, list):
-                    return inner
-            return [v]
-        if isinstance(v, list):
-            return v
-        raise ValueError("preorder must be a list of lines or a wrapped object with an items/lines list")
+        return _coerce_preorder_value_to_lines(v)
 
     @field_validator("source_channel", mode="before")
     @classmethod
@@ -157,6 +168,42 @@ class ReservationCreate(BaseModel):
         if isinstance(v, str):
             return v.strip().lower()
         return v
+
+
+class ReservationUpdate(BaseModel):
+    """Partial update (party size, time, pre-order, guest fields). Omit fields you do not change."""
+
+    model_config = ConfigDict(populate_by_name=True, str_strip_whitespace=True)
+
+    guest_name: str | None = Field(None, min_length=1, max_length=255)
+    guest_phone: str | None = Field(None, min_length=3, max_length=64)
+    party_size: int | None = Field(None, ge=1, le=20)
+    starts_at: datetime | None = None
+    special_requests: str | None = Field(None, max_length=2000)
+    preorder: list[PreorderLineIn] | None = Field(None, validation_alias=PREORDER_ALIASES)
+
+    @field_validator("party_size", mode="before")
+    @classmethod
+    def party_size_int(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        if isinstance(v, str) and v.strip().isdigit():
+            return int(v.strip())
+        return v
+
+    @model_validator(mode="before")
+    @classmethod
+    def lift_preorder_from_wrapper(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        return _lift_nested_preorder_dict(data)
+
+    @field_validator("preorder", mode="before")
+    @classmethod
+    def coerce_preorder_optional(cls, v: Any) -> Any:
+        if v is None:
+            return None
+        return _coerce_preorder_value_to_lines(v)
 
 
 class ReservationRead(BaseModel):
