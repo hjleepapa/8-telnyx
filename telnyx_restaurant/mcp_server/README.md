@@ -9,8 +9,8 @@ Implement your **Model Context Protocol** server here (Python `mcp` SDK or Node 
 | `search_availability` | `GET /api/availability?...` (to be added on FastAPI app) |
 | `create_reservation` | `POST /api/reservations` (body may include `preorder: [{menu_item_id, quantity}]`, `source_channel: "voice"`) |
 | `list_menu_items` | `GET /api/reservations/menu/items` (prices for pre-order tool UX) |
-| `get_reservation` | `GET /api/reservations/by-code/{code}` (path param must be real code—not `{{code}}` in the URL) |
-| `find_reservation_by_phone` | `GET /api/reservations/lookup-by-phone?phone=…&guest_name=…` — bind `phone` to caller; **guest_name** optional unless several active bookings share that number (then required to disambiguate) |
+| `get_reservation` | Prefer **`GET /api/reservations/lookup?phone=…&guest_name=…`** (both required). Optional fallback: `GET /api/reservations/by-code/{code}` (path must be a real code, not literal `{{code}}` in the URL) |
+| `find_reservation_by_phone` | `GET /api/reservations/lookup?phone=…&guest_name=…` — **primary**: bind `phone` to caller, collect `guest_name`. Legacy: `GET /api/reservations/lookup-by-phone?phone=…` (single row only) or add `guest_name` when several rows share the phone |
 | `update_reservation_status` | `PATCH /api/reservations/by-code/{code}/status` (body: `{ "status": "cancelled" }`) — avoids numeric id; use tool **path** param for `code`, not literal `{{code}}` in the URL |
 | `modify_reservation` | `PATCH /api/reservations/{id}` or `PATCH /api/reservations/by-code/{code}` — body: any of `party_size`, `starts_at`, `preorder` / `items`, `guest_name`, `guest_phone`, `special_requests` (omit unchanged fields). Blocked when status is `cancelled`. |
 | `cancel_reservation` | `DELETE /api/reservations/{id}` |

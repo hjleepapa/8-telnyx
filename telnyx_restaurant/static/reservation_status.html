@@ -165,11 +165,26 @@
     </header>
     <div class="wrap">
       <p style="color: var(--muted); font-size: 0.9rem">
-        Enter the confirmation code from email or the success screen after booking online or by phone.
+        <strong>Recommended:</strong> phone number and name on the reservation (same as when you booked). Codes like
+        HNK-… are easy to mis-type.
+      </p>
+      <div class="lookup" style="margin-top: 0.5rem">
+        <input
+          type="tel"
+          id="phone-input"
+          placeholder="Phone (+1… or 10 digits)"
+          autocomplete="tel"
+          inputmode="tel"
+        />
+        <input type="text" id="name-input" placeholder="Name on reservation" autocomplete="name" />
+        <button type="button" id="lookup-name-btn">Look up</button>
+      </div>
+      <p class="muted" style="margin-top: 1rem; font-size: 0.88rem">
+        <strong>Optional:</strong> confirmation code (email / success screen)
       </p>
       <div class="lookup">
         <input type="text" id="code-input" placeholder="e.g. HNK-7K2M" autocomplete="off" />
-        <button type="button" id="lookup-btn">Look up</button>
+        <button type="button" id="lookup-btn">Look up by code</button>
       </div>
 
       <p class="err" id="err" hidden></p>
@@ -234,6 +249,85 @@
           return "$" + (cents / 100).toFixed(2);
         }
 
+        function detailMessage(body) {
+          var d = body.detail;
+          if (typeof d === "string") return d;
+          if (Array.isArray(d) && d[0] && d[0].msg) return d[0].msg;
+          return "Request failed.";
+        }
+
+        function renderReservation(d) {
+          document.getElementById("rv-code").textContent = d.confirmation_code;
+          document.getElementById("rv-status").textContent = d.status;
+          document.getElementById("rv-name").textContent = d.guest_name;
+          document.getElementById("rv-party").textContent = String(d.party_size);
+          document.getElementById("rv-time").textContent = d.starts_at;
+
+          const tbody = document.getElementById("food-body");
+          tbody.innerHTML = "";
+          const items = d.preorder_items || [];
+          const foodBlock = document.getElementById("food-block");
+          const noFood = document.getElementById("no-food");
+          if (items.length) {
+            foodBlock.hidden = false;
+            noFood.hidden = true;
+            items.forEach(function (line) {
+              const tr = document.createElement("tr");
+              tr.innerHTML =
+                "<td>" +
+                escapeHtml(line.name_en || line.menu_item_id) +
+                "</td><td>" +
+                line.quantity +
+                "</td><td>" +
+                money(line.line_total_cents || 0) +
+                "</td>";
+              tbody.appendChild(tr);
+            });
+            document.getElementById("rv-sub").textContent = money(d.food_subtotal_cents || 0);
+            document.getElementById("rv-disc").textContent = "−" + money(d.preorder_discount_cents || 0);
+            document.getElementById("rv-food-total").innerHTML =
+              "<strong>" + money(d.food_total_cents || 0) + "</strong>";
+          } else {
+            foodBlock.hidden = true;
+            noFood.hidden = false;
+          }
+
+          document.getElementById("result").hidden = false;
+        }
+
+        function loadByPhoneAndName(phone, name) {
+          const err = document.getElementById("err");
+          const result = document.getElementById("result");
+          err.hidden = true;
+          result.hidden = true;
+
+          if (!phone || !phone.trim() || !name || !name.trim()) {
+            err.textContent = "Enter phone and name on the reservation.";
+            err.hidden = false;
+            return;
+          }
+
+          const q = new URLSearchParams();
+          q.set("phone", phone.trim());
+          q.set("guest_name", name.trim());
+
+          fetch("/api/reservations/lookup?" + q.toString())
+            .then(function (r) {
+              return r.json().then(function (j) {
+                return { ok: r.ok, body: j };
+              });
+            })
+            .then(function (res) {
+              if (!res.ok) throw new Error(detailMessage(res.body));
+              return res.body;
+            })
+            .then(renderReservation)
+            .catch(function (e) {
+              err.textContent = e.message || "Lookup failed.";
+              err.hidden = false;
+            });
+        }
+
         function loadCode(code) {
           const err = document.getElementById("err");
           const result = document.getElementById("result");
@@ -254,48 +348,11 @@
             })
             .then(function (res) {
               if (!res.ok) {
-                throw new Error(res.body.detail || "Not found");
+                throw new Error(detailMessage(res.body));
               }
               return res.body;
             })
-            .then(function (d) {
-              document.getElementById("rv-code").textContent = d.confirmation_code;
-              document.getElementById("rv-status").textContent = d.status;
-              document.getElementById("rv-name").textContent = d.guest_name;
-              document.getElementById("rv-party").textContent = String(d.party_size);
-              document.getElementById("rv-time").textContent = d.starts_at;
-
-              const tbody = document.getElementById("food-body");
-              tbody.innerHTML = "";
-              const items = d.preorder_items || [];
-              const foodBlock = document.getElementById("food-block");
-              const noFood = document.getElementById("no-food");
-              if (items.length) {
-                foodBlock.hidden = false;
-                noFood.hidden = true;
-                items.forEach(function (line) {
-                  const tr = document.createElement("tr");
-                  tr.innerHTML =
-                    "<td>" +
-                    escapeHtml(line.name_en || line.menu_item_id) +
-                    "</td><td>" +
-                    line.quantity +
-                    "</td><td>" +
-                    money(line.line_total_cents || 0) +
-                    "</td>";
-                  tbody.appendChild(tr);
-                });
-                document.getElementById("rv-sub").textContent = money(d.food_subtotal_cents || 0);
-                document.getElementById("rv-disc").textContent = "−" + money(d.preorder_discount_cents || 0);
-                document.getElementById("rv-food-total").innerHTML =
-                  "<strong>" + money(d.food_total_cents || 0) + "</strong>";
-              } else {
-                foodBlock.hidden = true;
-                noFood.hidden = false;
-              }
-
-              result.hidden = false;
-            })
+            .then(renderReservation)
             .catch(function (e) {
               err.textContent = e.message || "Lookup failed.";
               err.hidden = false;
@@ -308,6 +365,21 @@
           return d.innerHTML;
         }
 
+        document.getElementById("lookup-name-btn").addEventListener("click", function () {
+          loadByPhoneAndName(
+            document.getElementById("phone-input").value,
+            document.getElementById("name-input").value
+          );
+        });
+
+        document.getElementById("name-input").addEventListener("keydown", function (ev) {
+          if (ev.key === "Enter")
+            loadByPhoneAndName(
+              document.getElementById("phone-input").value,
+              document.getElementById("name-input").value
+            );
+        });
+
         document.getElementById("lookup-btn").addEventListener("click", function () {
           loadCode(document.getElementById("code-input").value);
         });
@@ -316,10 +388,19 @@
           if (ev.key === "Enter") loadCode(document.getElementById("code-input").value);
         });
 
-        var qp = new URLSearchParams(window.location.search).get("code");
-        if (qp) {
-          document.getElementById("code-input").value = qp;
-          loadCode(qp);
+        var qs = new URLSearchParams(window.location.search);
+        var qpPhone = qs.get("phone");
+        var qpName = qs.get("guest_name") || qs.get("name");
+        if (qpPhone && qpName) {
+          document.getElementById("phone-input").value = qpPhone;
+          document.getElementById("name-input").value = qpName;
+          loadByPhoneAndName(qpPhone, qpName);
+        } else {
+          var qp = qs.get("code");
+          if (qp) {
+            document.getElementById("code-input").value = qp;
+            loadCode(qp);
+          }
         }
       })();
     </script>

@@ -4,7 +4,7 @@ FastAPI app deployed to **Render** (or run locally) for:
 
 - **Dynamic webhook variables** — `POST /webhooks/telnyx/variables`
 - **Health** — `GET /health`
-- **Reservations API** — `POST /api/reservations` (optional `preorder`, `source_channel`), `GET /api/reservations/menu/items`, `GET /api/reservations/lookup-by-phone?phone=…&guest_name=…` (voice; optional name if several rows share the phone), `GET /api/reservations/by-code/{code}`, `PATCH /api/reservations/{id}` and `PATCH /api/reservations/by-code/{code}` (party, time, pre-order, guest fields) plus `PATCH …/status` for status-only
+- **Reservations API** — `POST /api/reservations` (optional `preorder`, `source_channel`), `GET /api/reservations/menu/items`, **`GET /api/reservations/lookup?phone=…&guest_name=…`** (primary guest lookup for voice/UI), legacy `GET /api/reservations/lookup-by-phone`, `GET /api/reservations/by-code/{code}`, `PATCH /api/reservations/{id}` and `PATCH /api/reservations/by-code/{code}` (party, time, pre-order, guest fields) plus `PATCH …/status` for status-only
 - **Guests** — `/reserve-online.html`, `/reservation/status?code=HNK-…`
 - **Admin** — `/admin/reservations`
 
@@ -51,7 +51,7 @@ Requires **Render env vars** `TELNYX_API_KEY`, `TELNYX_CONNECTION_ID` (Call Cont
 
 If `has_upcoming_reservation` is **true**, acknowledge their upcoming booking using `next_reservation_code` and `next_reservation_at`; if **false**, do **not** say they have no account—past visits may still appear (`vip_tier` **returning** or food fields); offer a new reservation or lookup by confirmation code instead.
 
-To fetch the booking row without asking for a code, call **`GET /api/reservations/lookup-by-phone?phone=…`** using the caller’s number (same value as `telnyx_end_user_target` / `_demo_caller` from the dynamic-variables webhook). If **more than one** active reservation uses that phone, add **`guest_name`** (first or full name as on the booking). **by-code** needs the real `HNK-…` string; the webhook URL must **not** contain literal `{{code}}`.
+To fetch the booking row without a confirmation code, call **`GET /api/reservations/lookup?phone=…&guest_name=…`** (both required): use the caller’s number for `phone` (same as `telnyx_end_user_target` from the dynamic-variables webhook) and the name as stored on the reservation. Legacy: **`lookup-by-phone`** when there is only one candidate row for that phone (no name) or for disambiguation. **by-code** remains available but is error-prone for voice; webhook URLs must **not** contain literal `{{code}}`.
 
 ## MCP server
 

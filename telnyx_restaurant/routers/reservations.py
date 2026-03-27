@@ -145,8 +145,8 @@ def _reject_unsubstituted_path_value(value: str, *, field: str = "code") -> str:
                 f"Unsubstituted URL template in {field}: {v!r}. "
                 "In Telnyx, define a real Path/query parameter (e.g. confirmation_code) on the tool—"
                 "do not type {{code}} in the URL. To find a booking without the code, use "
-                "GET /api/reservations/lookup-by-phone?phone={{caller_number}} "
-                "(map phone to telnyx_end_user_target from dynamic variables)."
+                "GET /api/reservations/lookup?phone={{caller_number}}&guest_name=… "
+                "(name + phone is the primary lookup; map phone to telnyx_end_user_target from dynamic variables)."
             ),
         )
     return v
@@ -276,6 +276,62 @@ def create_reservation(
     return row
 
 
+@router.get("/lookup", response_model=ReservationRead)
+def lookup_reservation_by_phone_and_name(
+    phone: str = Query(
+        ...,
+        min_length=3,
+        description="Guest phone (any common US format) or caller ID from Telnyx dynamic variables.",
+    ),
+    guest_name: str = Query(
+        ...,
+        min_length=1,
+        max_length=255,
+        description="First or full name as on the reservation (required).",
+    ),
+    db: Session = Depends(get_db),
+):
+    """Primary lookup: **phone + guest name**. Use this instead of confirmation codes when ASR mis-hears HNK-…"""
+    if "{{" in phone or "}}" in phone:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Unsubstituted template in phone query. Bind `phone` to the caller "
+                "(e.g. telnyx_end_user_target), not literal {{…}} in the URL."
+            ),
+        )
+    if guest_name and ("{{" in guest_name or "}}" in guest_name):
+        raise HTTPException(
+            status_code=400,
+            detail="Unsubstituted template in guest_name query.",
+        )
+    variants = phone_lookup_variants(phone.strip())
+    if not variants:
+        raise HTTPException(status_code=400, detail="Invalid or empty phone value.")
+
+    now = datetime.now(UTC)
+    pool = _candidate_pool_for_phone(db, variants, now)
+    if not pool:
+        raise HTTPException(
+            status_code=404,
+            detail="No reservation found for this phone number.",
+        )
+
+    hint = guest_name.strip()
+    matched = [r for r in pool if _guest_name_matches(r.guest_name, hint)]
+    if len(matched) == 1:
+        return matched[0]
+    if not matched:
+        raise HTTPException(
+            status_code=404,
+            detail="No reservation found for this phone number and name. Check spelling or try the name on the booking.",
+        )
+    raise HTTPException(
+        status_code=409,
+        detail="Multiple reservations still match this phone and name; ask for the confirmation code (HNK-…).",
+    )
+
+
 @router.get("/lookup-by-phone", response_model=ReservationRead)
 def lookup_reservation_by_guest_phone(
     phone: str = Query(
@@ -291,7 +347,7 @@ def lookup_reservation_by_guest_phone(
     ),
     db: Session = Depends(get_db),
 ):
-    """Find a reservation by `guest_phone` (voice assistant). Does not require confirmation code.
+    """Legacy: phone-only works if there is exactly one candidate row. Prefer **`GET /api/reservations/lookup`** (phone + **required** guest_name) for voice.
 
     Prefers upcoming non-cancelled rows (nearest first), else most recent. If several rows share the
     phone, pass `guest_name` (spoken or on file) so we can pick the right one.
