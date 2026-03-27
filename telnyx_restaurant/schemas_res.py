@@ -117,21 +117,64 @@ class ReservationRead(BaseModel):
 
 
 class ReservationStatusUpdate(BaseModel):
-    """Voice/webhook tools often send cancel/canceled or Status with different casing."""
+    """Voice/webhook tools often send cancel/canceled, odd keys, nested JSON, or an empty body."""
 
     model_config = ConfigDict(populate_by_name=True, str_strip_whitespace=True, extra="ignore")
 
     status: str = Field(
         ...,
-        validation_alias=AliasChoices("status", "Status", "state", "new_status", "reservation_status"),
+        validation_alias=AliasChoices(
+            "status",
+            "Status",
+            "state",
+            "new_status",
+            "reservation_status",
+            "action",
+            "Action",
+            "operation",
+            "Operation",
+            "intent",
+            "command",
+            "event",
+            "type",
+        ),
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def unwrap_nested_and_cancel_flag(cls, data: Any) -> Any:
+        if data is None:
+            return {"status": None}
+        if isinstance(data, str):
+            return {"status": data.strip()}
+        if not isinstance(data, dict):
+            return data
+
+        d: dict[str, Any] = dict(data)
+        for wrap in ("data", "reservation", "payload", "body", "attributes", "result", "input", "parameters"):
+            inner = d.get(wrap)
+            if isinstance(inner, dict):
+                for k, v in inner.items():
+                    d.setdefault(k, v)
+
+        for flag in ("cancel", "Cancel", "cancel_reservation", "cancellation_requested"):
+            v = d.get(flag)
+            if v is True:
+                d.setdefault("status", "cancelled")
+            elif isinstance(v, str) and v.strip().casefold() in ("true", "1", "yes", "y"):
+                d.setdefault("status", "cancelled")
+        return d
 
     @field_validator("status", mode="before")
     @classmethod
     def normalize_status(cls, v: Any) -> str:
         if v is None or (isinstance(v, str) and not str(v).strip()):
             raise ValueError("status is required")
+        if isinstance(v, dict) and "value" in v:
+            v = v["value"]
         raw = str(v).strip()
+        if not raw:
+            raise ValueError("status is required")
         s = raw.casefold().replace(" ", "_").replace("-", "_")
 
         # Common LLM / US English variants → canonical

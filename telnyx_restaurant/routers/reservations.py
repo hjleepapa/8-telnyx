@@ -6,8 +6,10 @@ import re
 import secrets
 import string
 from datetime import UTC, datetime
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -24,6 +26,27 @@ from telnyx_restaurant.schemas_res import (
 )
 
 router = APIRouter(prefix="/api/reservations", tags=["reservations"])
+
+
+def _parse_status_update(
+    body: dict[str, Any],
+    status: str | None = None,
+) -> ReservationStatusUpdate:
+    """Telnyx tools often send `{}`, nested keys, or only a query param."""
+    merged = dict(body or {})
+    if (status or "").strip():
+        merged.setdefault("status", status.strip())
+    try:
+        return ReservationStatusUpdate.model_validate(merged)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Send JSON {\"status\":\"cancelled\"} (or cancel/canceled), nested {data:{...}}, "
+                "or query ?status=cancelled. "
+                f"Pydantic: {exc.errors()}"
+            ),
+        ) from exc
 
 
 def _reject_unsubstituted_path_value(value: str, *, field: str = "code") -> str:
@@ -254,17 +277,22 @@ def get_reservation_by_code(code: str, db: Session = Depends(get_db)):
 @router.patch("/by-code/{code}/status", response_model=ReservationRead)
 def update_status_by_code(
     code: str,
-    body: ReservationStatusUpdate,
     db: Session = Depends(get_db),
+    body: dict[str, Any] = Body(default_factory=dict),
+    status: str | None = Query(
+        None,
+        description="Optional when JSON body is empty or omits status (Telnyx query-only tools).",
+    ),
 ):
     """Update status using HNK-… code (single Telnyx webhook; no numeric id)."""
+    parsed = _parse_status_update(body, status)
     code = _normalize_confirmation_code(_reject_unsubstituted_path_value(code))
     row = db.execute(
         select(Reservation).where(Reservation.confirmation_code == code)
     ).scalar_one_or_none()
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
-    row.status = body.status
+    row.status = parsed.status
     row.updated_at = datetime.now(UTC)
     db.commit()
     db.refresh(row)
@@ -282,13 +310,18 @@ def get_reservation(reservation_id: int, db: Session = Depends(get_db)):
 @router.patch("/{reservation_id}/status", response_model=ReservationRead)
 def update_status(
     reservation_id: int,
-    body: ReservationStatusUpdate,
     db: Session = Depends(get_db),
+    body: dict[str, Any] = Body(default_factory=dict),
+    status: str | None = Query(
+        None,
+        description="Optional when JSON body is empty or omits status (Telnyx query-only tools).",
+    ),
 ):
+    parsed = _parse_status_update(body, status)
     row = db.get(Reservation, reservation_id)
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
-    row.status = body.status
+    row.status = parsed.status
     row.updated_at = datetime.now(UTC)
     db.commit()
     db.refresh(row)
