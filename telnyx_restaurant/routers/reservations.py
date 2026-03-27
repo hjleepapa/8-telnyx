@@ -35,17 +35,26 @@ logger = logging.getLogger(__name__)
 
 _PATCH_NO_FIELDS_DETAIL = (
     "No recognized fields to apply after removing confirmation_code. The server did not update the row. "
-    "Include at least one of: preorder, items, party_size, starts_at, status, guest_name, "
+    "Include at least one of: preorder lines, party_size, starts_at, status, guest_name, "
     "guest_phone, special_requests. Examples: "
     '{"confirmation_code":"HNK-ABCD","party_size":4,"starts_at":"2026-03-28T19:00:00+00:00"} '
     'or {"confirmation_code":"HNK-ABCD","preorder":[{"menu_item_id":"bulgogi","quantity":1}]}. '
-    "Note: JSON null for optional fields is ignored and does not count as an update."
+    "Note: JSON null on optional fields is ignored. "
+    "Empty array preorder/items [] does not change food (use JSON null on preorder to clear the cart)."
 )
+
+
+def _effective_reservation_patch_fields(body: ReservationUpdate) -> set[str]:
+    """Telnyx sends preorder: [] alongside other fields; [] means omit, not clear (see _apply_reservation_update)."""
+    fs = set(body.model_fields_set)
+    if "preorder" in fs and body.preorder is not None and len(body.preorder) == 0:
+        fs.discard("preorder")
+    return fs
 
 
 def _require_reservation_update_fields(body: ReservationUpdate) -> None:
     """PATCH used to return 200 with an unchanged row when the tool only sent code — LLMs then claimed success."""
-    if not body.model_fields_set:
+    if not _effective_reservation_patch_fields(body):
         raise HTTPException(status_code=422, detail=_PATCH_NO_FIELDS_DETAIL)
 
 
@@ -77,10 +86,15 @@ def _apply_reservation_update(row: Reservation, body: ReservationUpdate) -> None
         row.status = body.status
     if "preorder" in body.model_fields_set:
         if body.preorder is None:
+            # JSON null: explicitly clear cart
             row.preorder_json = None
             row.food_subtotal_cents = 0
             row.preorder_discount_cents = 0
             row.food_total_cents = 0
+        elif not body.preorder:
+            # Telnyx tools often send preorder/items: [] in the same template as party_size/time.
+            # Empty list means "do not change food", not "clear cart" (use preorder: null to clear).
+            pass
         else:
             try:
                 preorder_json, subtotal, discount, total = serialize_preorder(body.preorder)
@@ -155,8 +169,9 @@ async def _patch_at_status_url(
         patch = None
         patch_exc = e
 
-    if patch is not None and patch.model_fields_set:
-        if patch.model_fields_set - {"status"}:
+    eff = _effective_reservation_patch_fields(patch) if patch is not None else set()
+    if patch is not None and eff:
+        if eff - {"status"}:
             _reject_modifying_cancelled(row)
         _apply_reservation_update(row, patch)
         db.commit()
@@ -176,7 +191,7 @@ async def _patch_at_status_url(
                 status_code=422,
                 detail=patch_exc.errors(),
             ) from patch_exc
-        if patch is not None and not patch.model_fields_set:
+        if patch is not None and not eff:
             logger.warning(
                 "PATCH …/status 422: body produced no settable fields (all unknown/null?). "
                 "flat_keys=%s",
