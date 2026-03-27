@@ -12,6 +12,7 @@ from typing import Any
 
 from telnyx_restaurant.config import (
     database_url,
+    hanok_public_base_url,
     hanok_reminder_delay_seconds,
     telnyx_api_key,
     telnyx_connection_id,
@@ -174,16 +175,23 @@ def _place_telnyx_reminder_call(
     # Telnyx Call Control expects client_state as base64-encoded payload
     client_state = base64.b64encode(json.dumps(payload, default=str).encode("utf-8")).decode("ascii")
 
-    body: dict[str, str] = {
+    body: dict[str, Any] = {
         "connection_id": conn,
         "to": to_norm,
         "from": from_norm,
         "client_state": client_state,
     }
-    try:
+    base = hanok_public_base_url()
+    if base:
+        # Route Call Control events to this app even if the Portal connection points elsewhere
+        # (fixes answered-call silence when webhooks never hit /call-control).
+        body["webhook_url"] = f"{base}/webhooks/telnyx/call-control"
+        body["webhook_url_method"] = "POST"
+
+    def _dial(payload: dict[str, Any]) -> None:
         req = urllib.request.Request(
             "https://api.telnyx.com/v2/calls",
-            data=json.dumps(body).encode("utf-8"),
+            data=json.dumps(payload).encode("utf-8"),
             headers={
                 "Authorization": f"Bearer {key}",
                 "Content-Type": "application/json",
@@ -193,9 +201,26 @@ def _place_telnyx_reminder_call(
         )
         with urllib.request.urlopen(req, timeout=45) as resp:
             resp.read()
+
+    try:
+        try:
+            _dial(body)
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")[:800]
+            if e.code == 400 and base and "webhook_url" in body:
+                logger.warning(
+                    "Hanok reminder: dial with webhook_url rejected (%s), retrying without override. %s",
+                    e.code,
+                    detail[:400],
+                )
+                slim = {k: v for k, v in body.items() if k not in ("webhook_url", "webhook_url_method")}
+                _dial(slim)
+            else:
+                raise
         logger.info(
-            "Hanok reminder: Telnyx POST /v2/calls accepted for %s",
+            "Hanok reminder: Telnyx POST /v2/calls accepted for %s webhook=%s",
             state_obj.get("confirmation_code"),
+            "yes" if base else "no(base unset)",
         )
         return "telnyx_call_initiated"
     except urllib.error.HTTPError as e:

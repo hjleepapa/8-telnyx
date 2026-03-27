@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import secrets
 import string
@@ -29,6 +30,7 @@ from telnyx_restaurant.schemas_res import (
 )
 
 router = APIRouter(prefix="/api/reservations", tags=["reservations"])
+logger = logging.getLogger(__name__)
 
 
 def _reject_modifying_cancelled(row: Reservation) -> None:
@@ -346,6 +348,18 @@ async def create_reservation(
     try:
         body = ReservationCreate.model_validate(raw)
     except ValidationError as exc:
+        if isinstance(raw, dict):
+            logger.warning(
+                "Reservation create 422: top_keys=%s pydantic_errors=%s",
+                list(raw.keys())[:40],
+                exc.errors()[:8],
+            )
+        else:
+            logger.warning(
+                "Reservation create 422: body_type=%s pydantic_errors=%s",
+                type(raw).__name__,
+                exc.errors()[:8],
+            )
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
 
     code = _gen_confirmation_code()

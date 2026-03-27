@@ -160,12 +160,121 @@ _WRAP_KEYS_RESERVATION = (
     "result",
     "response",
     "attributes",
+    "message",
+    "content",
+    "tool_output",
+    "output",
 )
+
+
+def _unwrap_single_key_tool_dict(data: dict[str, Any]) -> dict[str, Any]:
+    """{ \"create_reservation\": { ... } } or { \"booking\": { guest_name: ... } }."""
+    if len(data) != 1:
+        return data
+    sole_val = next(iter(data.values()))
+    if isinstance(sole_val, dict) and _RES_KEYS_HINT.intersection(sole_val):
+        return dict(sole_val)
+    return data
+
+
+def _dict_has_positive_qty(d: dict[str, Any]) -> bool:
+    for k in ("quantity", "qty", "count", "amount", "number"):
+        v = d.get(k)
+        if v is None or v == "":
+            continue
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, (int, float)) and v > 0:
+            return True
+        if isinstance(v, str) and v.strip().isdigit() and int(v.strip()) > 0:
+            return True
+    return False
+
+
+def _dict_has_item_ref(d: dict[str, Any]) -> bool:
+    for k in (
+        "menu_item_id",
+        "id",
+        "sku",
+        "item_id",
+        "menuItemId",
+        "menuId",
+        "dish",
+        "name",
+        "item",
+        "title",
+        "menu_item",
+        "dishName",
+        "label",
+        "description",
+    ):
+        v = d.get(k)
+        if v is not None and str(v).strip():
+            return True
+    return False
+
+
+def _is_preorder_line_dict(d: dict[str, Any]) -> bool:
+    if not _dict_has_item_ref(d):
+        return False
+    if _dict_has_positive_qty(d):
+        return True
+    # Single-dish entries often omit quantity (implies 1).
+    return True
+
+
+def _looks_like_preorder_lines(lst: list[Any]) -> bool:
+    if len(lst) < 1:
+        return False
+    dicts = [x for x in lst if isinstance(x, dict)]
+    if not dicts:
+        return False
+    if len(dicts) < max(1, (len(lst) + 1) // 2):
+        return False
+    hits = sum(1 for x in dicts if _is_preorder_line_dict(x))
+    return hits >= max(1, int(len(dicts) * 0.5))
+
+
+def _longest_preorder_like_list_in_tree(obj: Any, depth: int = 0) -> list[Any] | None:
+    """Find the longest list of dicts that looks like menu lines anywhere in the payload."""
+    if depth > 14:
+        return None
+    best: list[Any] | None = None
+    if isinstance(obj, dict):
+        for v in obj.values():
+            sub = _longest_preorder_like_list_in_tree(v, depth + 1)
+            if sub and (best is None or len(sub) > len(best)):
+                best = sub
+    elif isinstance(obj, list):
+        if _looks_like_preorder_lines(obj):
+            return obj
+        for v in obj:
+            sub = _longest_preorder_like_list_in_tree(v, depth + 1)
+            if sub and (best is None or len(sub) > len(best)):
+                best = sub
+    return best
+
+
+def _inject_best_scavenged_preorder(d: dict[str, Any]) -> dict[str, Any]:
+    """If no preorder list at top level, mine nested structures (LLM tool blobs)."""
+    cur = d.get("preorder")
+    if isinstance(cur, list) and len(cur) > 0:
+        return d
+    if isinstance(cur, dict):
+        return d
+    if isinstance(cur, str) and cur.strip():
+        return d
+    cand = _longest_preorder_like_list_in_tree(d)
+    if not cand:
+        return d
+    out = dict(d)
+    out["preorder"] = cand
+    return out
 
 
 def _unwrap_nested_reservation_payload(data: dict[str, Any]) -> dict[str, Any]:
     """Merge Telnyx-style wrappers (possibly nested) so inner cart/name/phone win over empty roots."""
-    d = dict(data)
+    d = _unwrap_single_key_tool_dict(dict(data))
     for _ in range(16):
         merged_layer = False
         for key in _WRAP_KEYS_RESERVATION:
@@ -180,6 +289,7 @@ def _unwrap_nested_reservation_payload(data: dict[str, Any]) -> dict[str, Any]:
             break
         if not merged_layer:
             break
+    d = _inject_best_scavenged_preorder(d)
     return _lift_nested_preorder_dict(d)
 
 
@@ -317,9 +427,17 @@ class ReservationCreate(BaseModel):
     @field_validator("source_channel", mode="before")
     @classmethod
     def lower_source_channel(cls, v: Any) -> Any:
+        if v is None or v == "":
+            return "online"
         if isinstance(v, str):
-            return v.strip().lower()
-        return v
+            s = v.strip().lower()
+        else:
+            s = str(v).strip().lower()
+        if s in ("online", "voice", "api"):
+            return s
+        if s in ("ai", "assistant", "telnyx", "agent", "tool", "automation", "ivr", "bot"):
+            return "api"
+        return "api"
 
 
 class ReservationUpdate(BaseModel):

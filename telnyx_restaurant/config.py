@@ -57,3 +57,16 @@ def hanok_reminder_delay_seconds() -> float:
         return max(1.0, min(float(raw), 300.0))
     except ValueError:
         return 5.0
+
+
+def hanok_public_base_url() -> str | None:
+    """Public HTTPS origin for Telnyx webhooks (no trailing slash), e.g. https://telnyx.convonetai.com."""
+    v = (
+        os.environ.get("HANOK_PUBLIC_BASE_URL")
+        or os.environ.get("PUBLIC_BASE_URL")
+        or os.environ.get("RENDER_EXTERNAL_URL")
+        or ""
+    ).strip()
+    if not v:
+        return None
+    return v.rstrip("/")

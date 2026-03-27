@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from telnyx_restaurant.config import hanok_public_base_url, telnyx_api_key, telnyx_connection_id
 from telnyx_restaurant.routers import admin, reservations, webhook
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,11 @@ async def lifespan(app: FastAPI):
         _INDEX.is_file(),
         Path(__file__).resolve(),
     )
+    if telnyx_api_key() and telnyx_connection_id() and not hanok_public_base_url():
+        log.warning(
+            "Set HANOK_PUBLIC_BASE_URL (https://your-host) so reminder dials send Call Control webhooks "
+            "to /webhooks/telnyx/call-control; otherwise answered calls may stay silent."
+        )
     try:
         from telnyx_restaurant.db import SessionLocal, init_db
         from telnyx_restaurant.seed import seed_demo_reservations

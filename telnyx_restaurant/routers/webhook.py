@@ -327,7 +327,15 @@ async def telnyx_call_control(request: Request) -> dict[str, str]:
         return {"status": "ignored"}
 
     event_type, payload = _parse_call_control_event(body)
+    event_type_raw = event_type
     event_type = _normalize_call_control_event_type(event_type)
+    logger.info(
+        "hanok_call_control event_raw=%r event_norm=%r top=%s payload_keys=%s",
+        event_type_raw,
+        event_type,
+        list(body.keys())[:12],
+        list(payload.keys())[:24] if isinstance(payload, dict) else None,
+    )
     call_control_id = _extract_call_control_id(payload)
     if not call_control_id:
         return {"status": "ok"}
