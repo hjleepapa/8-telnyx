@@ -327,7 +327,30 @@ def _coerce_preorder_value_to_lines(v: Any) -> Any:
                 return inner
         return [v]
     if isinstance(v, list):
-        return v
+        out: list[Any] = []
+        for el in v:
+            if el is None or el == "":
+                continue
+            if isinstance(el, str):
+                s = el.strip()
+                if not s:
+                    continue
+                if s.startswith("{") or s.startswith("["):
+                    try:
+                        parsed = json.loads(s)
+                    except json.JSONDecodeError:
+                        parsed = None
+                    if isinstance(parsed, dict):
+                        out.append(parsed)
+                        continue
+                    if isinstance(parsed, list):
+                        out.extend(_coerce_preorder_value_to_lines(parsed))
+                        continue
+                # Telnyx "array(string)" tools: one string per line → single menu id, qty 1
+                out.append({"menu_item_id": s, "quantity": 1})
+            else:
+                out.append(el)
+        return out
     raise ValueError("preorder must be a list of lines or a wrapped object with an items/lines list")
 
 

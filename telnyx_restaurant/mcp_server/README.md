@@ -12,7 +12,7 @@ Implement your **Model Context Protocol** server here (Python `mcp` SDK or Node 
 | `get_reservation` | **`GET /api/reservations/lookup?guest_name=…&phone=…`** or the same with **`guest_phone=…`** instead of `phone` (Telnyx often names the param `guest_phone`). Fallback: `GET /api/reservations/by-code/{code}` (real HNK code in path, not `{{code}}`) |
 | `find_reservation_by_phone` | `lookup` as above. Legacy: `GET /api/reservations/lookup-by-phone?phone=…` or `?guest_phone=…` |
 | `update_reservation_status` | **`PATCH /api/reservations/by-code/{code}/status`** with body `{"status":"cancelled"}` **or** query **`?cancel=1`** (no JSON). Avoid `PATCH …/{numeric_id}/status` unless the tool binds a real id from the API response (never literal `{{reservation_id}}` in the path). |
-| `modify_reservation` / **pre-order upsell** | Prefer **`PATCH /api/reservations/amend`** with JSON body: `confirmation_code` (or `code`) **plus** `preorder` / `items` / `menu` / nested cart — works when Telnyx cannot substitute `{{reservation_id}}` in the path. Alternatives: `PATCH /api/reservations/by-code/{HNK-code}` or `PATCH /api/reservations/{numeric_id}` with the same body fields. |
+| `modify_reservation` / **pre-order upsell** | **`PATCH /api/reservations/amend`**: `confirmation_code` + `preorder`. Use objects `[{"menu_item_id":"bulgogi","quantity":1}]` or Telnyx **`array(string)`** of catalog ids, e.g. `["bulgogi","kimchi_jjigae"]` (each counts as qty **1**). Same for **`PATCH /by-code/{code}`** / **`PATCH /{id}`**. |
 | `cancel_reservation` | `DELETE /api/reservations/{id}` |
 
 Keep business rules in the **REST API**; MCP should validate inputs and forward errors as structured tool results.
