@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import re
 import secrets
 import string
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from starlette.requests import Request
 
 from telnyx_restaurant.db import get_db
 from telnyx_restaurant.menu_catalog import MENU_ITEMS
@@ -49,6 +51,46 @@ def _parse_status_update(
         ) from exc
 
 
+async def read_status_request_payload(request: Request) -> dict[str, Any]:
+    """Telnyx HTTP tools often use form encoding or plain text, not JSON — avoid FastAPI Body 422."""
+    hdr = (request.headers.get("content-type") or "").lower()
+    if "application/x-www-form-urlencoded" in hdr or "multipart/form-data" in hdr:
+        try:
+            form = await request.form()
+        except Exception:
+            return {}
+        out: dict[str, Any] = {}
+        for key, val in form.multi_items():
+            if hasattr(val, "read"):
+                continue
+            out[str(key)] = str(val)
+        return out
+
+    raw = await request.body()
+    if not raw or not raw.strip():
+        return {}
+
+    ct = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if "json" in ct or ct in ("", "text/plain", "application/json", "text/json", "application/problem+json"):
+        try:
+            data = json.loads(raw.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            text = raw.decode("utf-8", errors="replace").strip()
+            return {"status": text} if text else {}
+        if isinstance(data, dict):
+            return data
+        if isinstance(data, str):
+            return {"status": data}
+        return {}
+
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        text = raw.decode("utf-8", errors="replace").strip()
+        return {"status": text} if text else {}
+    return data if isinstance(data, dict) else {"status": str(data)}
+
+
 def _reject_unsubstituted_path_value(value: str, *, field: str = "code") -> str:
     """Telnyx/webhook misconfig often leaves {{code}} in the path; fail loudly."""
     v = (value or "").strip()
@@ -74,13 +116,16 @@ def _gen_confirmation_code() -> str:
 
 
 def _normalize_confirmation_code(code: str) -> str:
-    """Fix ASR/LLM dropping the hyphen: HNKWGJF → HNK-WGJF when valid."""
+    """Fix ASR/LLM dropping the hyphen or appending junk: HNKWGJF → HNK-WGJF; HNK-WJGK-F → HNK-WJGK."""
     c = (code or "").strip().upper().replace(" ", "")
     if re.fullmatch(r"HNK-[A-Z0-9]{4}", c):
         return c
     m = re.fullmatch(r"HNK([A-Z0-9]{4})", c)
     if m:
         return f"HNK-{m.group(1)}"
+    m2 = re.match(r"^(HNK-[A-Z0-9]{4})", c)
+    if m2:
+        return m2.group(1)
     return c
 
 
@@ -275,16 +320,17 @@ def get_reservation_by_code(code: str, db: Session = Depends(get_db)):
 
 
 @router.patch("/by-code/{code}/status", response_model=ReservationRead)
-def update_status_by_code(
+async def update_status_by_code(
     code: str,
+    request: Request,
     db: Session = Depends(get_db),
-    body: dict[str, Any] = Body(default_factory=dict),
     status: str | None = Query(
         None,
         description="Optional when JSON body is empty or omits status (Telnyx query-only tools).",
     ),
 ):
     """Update status using HNK-… code (single Telnyx webhook; no numeric id)."""
+    body = await read_status_request_payload(request)
     parsed = _parse_status_update(body, status)
     code = _normalize_confirmation_code(_reject_unsubstituted_path_value(code))
     row = db.execute(
@@ -308,15 +354,16 @@ def get_reservation(reservation_id: int, db: Session = Depends(get_db)):
 
 
 @router.patch("/{reservation_id}/status", response_model=ReservationRead)
-def update_status(
+async def update_status(
     reservation_id: int,
+    request: Request,
     db: Session = Depends(get_db),
-    body: dict[str, Any] = Body(default_factory=dict),
     status: str | None = Query(
         None,
         description="Optional when JSON body is empty or omits status (Telnyx query-only tools).",
     ),
 ):
+    body = await read_status_request_payload(request)
     parsed = _parse_status_update(body, status)
     row = db.get(Reservation, reservation_id)
     if not row:
