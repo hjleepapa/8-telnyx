@@ -11,9 +11,11 @@ Implement your **Model Context Protocol** server here (Python `mcp` SDK or Node 
 | `list_menu_items` | `GET /api/reservations/menu/items` (prices for pre-order tool UX) |
 | `get_reservation` | **`GET /api/reservations/lookup?guest_name=…&phone=…`** or the same with **`guest_phone=…`** instead of `phone` (Telnyx often names the param `guest_phone`). Fallback: `GET /api/reservations/by-code/{code}` (real HNK code in path, not `{{code}}`) |
 | `find_reservation_by_phone` | `lookup` as above. Legacy: `GET /api/reservations/lookup-by-phone?phone=…` or `?guest_phone=…` |
-| `update_reservation_status` | **`PATCH /api/reservations/by-code/{code}/status`** with body `{"status":"cancelled"}` **or** query **`?cancel=1`** (no JSON). Avoid `PATCH …/{numeric_id}/status` unless the tool binds a real id from the API response (never literal `{{reservation_id}}` in the path). |
-| `modify_reservation` / **pre-order upsell** | **`PATCH /api/reservations/amend`**: `confirmation_code` + `preorder`. Use objects `[{"menu_item_id":"bulgogi","quantity":1}]` or Telnyx **`array(string)`** of catalog ids, e.g. `["bulgogi","kimchi_jjigae"]` (each counts as qty **1**). Same for **`PATCH /by-code/{code}`** / **`PATCH /{id}`**. |
-| `cancel_reservation` | `DELETE /api/reservations/{id}` |
+| **`update_reservation_status` only** | **`PATCH /api/reservations/by-code/{code}/status`** or **`PATCH /api/reservations/{id}/status`** — body **`{"status":"cancelled"}`** (or `pending` / `confirmed` / `seated` / `completed`) **or** query **`?cancel=1`**. This route does **not** accept `party_size`, `starts_at`, or `preorder`. |
+| **`modify_reservation`** (party, time, pre-order, guest, status) | **`PATCH /api/reservations/amend`** with JSON body **`confirmation_code`** (or `code` / `next_reservation_code`) **plus any fields to change**: `party_size`, `starts_at` (ISO datetime or `YYYY-MM-DD` → 18:00 UTC), `preorder` / `items` (objects or string id list), `guest_name`, `guest_phone`, `special_requests`, **`status`** (same enum as above). One tool can combine pre-order + headcount + time. Same fields work on **`PATCH /by-code/{code}`** and **`PATCH /{id}`** (no `/status`). |
+| `cancel_reservation` | Prefer **`PATCH /amend`**: `confirmation_code` + **`status":"cancelled"`** (or **`PATCH …/status?cancel=1`**). `DELETE /api/reservations/{id}` also exists. |
+
+**Telnyx HTTP tool checklist:** Do **not** point a single “update booking” tool only at **`…/{id}/status`** unless it **only** changes **`status`**. For “change party size / reservation time / food / name”, use **`PATCH /amend`** (or **`PATCH /by-code/…`**) as in `modify_reservation` above.
 
 Keep business rules in the **REST API**; MCP should validate inputs and forward errors as structured tool results.
 

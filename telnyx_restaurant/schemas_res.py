@@ -10,6 +10,8 @@ from datetime import datetime
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from telnyx_restaurant.models import ReservationStatus
+
 
 class PreorderLineIn(BaseModel):
     """Telnyx/webhook tools often send id/qty/name instead of menu_item_id/quantity."""
@@ -74,6 +76,13 @@ class PreorderLineIn(BaseModel):
     def line_required_when_qty(self) -> PreorderLineIn:
         if self.quantity > 0 and not (self.menu_item_id or self.dish_name):
             raise ValueError("preorder line with quantity>0 needs menu_item_id or dish_name")
+        return self
+
+    @model_validator(mode="after")
+    def imply_quantity_when_item_present(self) -> PreorderLineIn:
+        """HTTP tools often send {\"menu_item_id\":\"bulgogi\"} with no quantity; default to 1."""
+        if self.quantity <= 0 and (self.menu_item_id or self.dish_name):
+            return self.model_copy(update={"quantity": 1})
         return self
 
 
@@ -142,6 +151,9 @@ _RES_KEYS_HINT = frozenset(
         "preorder_lines",
         "dish_selection",
         "selected_items",
+        "status",
+        "reservation_status",
+        "booking_status",
     }
 )
 
@@ -501,6 +513,15 @@ class ReservationUpdate(BaseModel):
     party_size: int | None = Field(None, ge=1, le=20)
     starts_at: datetime | None = None
     special_requests: str | None = Field(None, max_length=2000)
+    status: str | None = Field(
+        None,
+        validation_alias=AliasChoices(
+            "status",
+            "reservation_status",
+            "booking_status",
+            "reservationStatus",
+        ),
+    )
     preorder: list[PreorderLineIn] | None = Field(None, validation_alias=PREORDER_ALIASES)
 
     @field_validator("guest_phone", mode="before")
@@ -537,6 +558,19 @@ class ReservationUpdate(BaseModel):
         if isinstance(v, str) and v.strip().isdigit():
             return int(v.strip())
         return v
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def reservation_status_values(cls, v: Any) -> Any:
+        if v is None or (isinstance(v, str) and not str(v).strip()):
+            return None
+        s = str(v).strip().lower()
+        if s in ("canceled", "cancel"):
+            s = ReservationStatus.cancelled.value
+        allowed = {x.value for x in ReservationStatus}
+        if s not in allowed:
+            raise ValueError(f"status must be one of: {', '.join(sorted(allowed))}")
+        return s
 
     @model_validator(mode="before")
     @classmethod

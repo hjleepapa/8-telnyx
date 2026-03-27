@@ -292,6 +292,15 @@ def telnyx_hangup(call_control_id: str) -> bool:
         with urllib.request.urlopen(req, timeout=20) as resp:
             resp.read()
         return True
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")[:800]
+        logger.warning(
+            "Hanok hangup: HTTP %s call_control_id=%s… %s",
+            e.code,
+            (call_control_id or "")[:12],
+            detail,
+        )
+        return False
     except Exception:
         logger.exception("Hanok hangup failed")
         return False

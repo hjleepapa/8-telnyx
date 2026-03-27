@@ -35,9 +35,10 @@ logger = logging.getLogger(__name__)
 
 _PATCH_NO_FIELDS_DETAIL = (
     "No recognized fields to apply after removing confirmation_code. The server did not update the row. "
-    "Include at least one of: preorder, items, menu, cart, party_size, starts_at, guest_name, "
-    "guest_phone, special_requests. Example pre-order: "
-    '{"confirmation_code":"HNK-ABCD","preorder":[{"menu_item_id":"bulgogi","quantity":1}]} '
+    "Include at least one of: preorder, items, party_size, starts_at, status, guest_name, "
+    "guest_phone, special_requests. Examples: "
+    '{"confirmation_code":"HNK-ABCD","party_size":4,"starts_at":"2026-03-28T19:00:00+00:00"} '
+    'or {"confirmation_code":"HNK-ABCD","preorder":[{"menu_item_id":"bulgogi","quantity":1}]}. '
     "Note: JSON null for optional fields is ignored and does not count as an update."
 )
 
@@ -72,6 +73,8 @@ def _apply_reservation_update(row: Reservation, body: ReservationUpdate) -> None
             row.starts_at = st if st.tzinfo else st.replace(tzinfo=UTC)
     if "special_requests" in body.model_fields_set:
         row.special_requests = body.special_requests
+    if "status" in body.model_fields_set and body.status is not None:
+        row.status = body.status
     if "preorder" in body.model_fields_set:
         if body.preorder is None:
             row.preorder_json = None
@@ -101,6 +104,87 @@ def _merge_status_from_cancel_query(
     if cf in ("1", "true", "yes", "y", "cancel"):
         return "cancelled"
     return None
+
+
+_PREORDER_KEYS_ON_WRONG_ROUTE = frozenset(
+    {
+        "preorder",
+        "pre_order",
+        "preorder_items",
+        "items",
+        "lines",
+        "menu",
+        "cart",
+        "dishes",
+        "food",
+        "menu_items",
+        "menu_order",
+        "selected_dishes",
+        "order_items",
+        "meal_selection",
+        "basket",
+        "dish_selection",
+        "selected_items",
+    }
+)
+
+_DETAIL_KEYS_ON_WRONG_STATUS_ROUTE = frozenset(
+    {
+        "party_size",
+        "partysize",
+        "party",
+        "headcount",
+        "guests",
+        "pax",
+        "starts_at",
+        "start_time",
+        "reservation_time",
+        "datetime",
+        "special_requests",
+        "guest_name",
+        "guest_phone",
+        "confirmation_code",
+        "code",
+        "confirmationcode",
+        "hnk_code",
+    }
+)
+
+
+def _reject_cart_payload_on_status_route(body: dict[str, Any]) -> None:
+    """`…/status` only accepts status/cancel — tools often POST cart or party/time to the wrong URL."""
+    if not body:
+        return
+    merged = dict(body)
+    for wrap in ("data", "payload", "body", "input", "variables"):
+        inner = merged.get(wrap)
+        if isinstance(inner, dict):
+            for k, v in inner.items():
+                merged.setdefault(k, v)
+    keys_norm = {str(k).lower() for k in merged.keys()}
+    bad_cart = _PREORDER_KEYS_ON_WRONG_ROUTE.intersection(keys_norm)
+    bad_detail = _DETAIL_KEYS_ON_WRONG_STATUS_ROUTE.intersection(keys_norm)
+    if bad_cart:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This path only updates reservation status (pending / confirmed / cancelled / …), "
+                f"not food pre-order. Remove keys {sorted(bad_cart)}. "
+                "Use PATCH /api/reservations/amend with confirmation_code + preorder "
+                "(or PATCH /by-code/… or PATCH /{id} without /status)."
+            ),
+        )
+    if bad_detail:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "This path only changes **status**, not party size, time, guest fields, or code. "
+                f"Remove keys {sorted(bad_detail)}. "
+                "Use PATCH /api/reservations/amend with confirmation_code + party_size and/or starts_at "
+                "(ISO or YYYY-MM-DD), or PATCH /by-code/HNK-… / PATCH /{id} without /status. "
+                "Optional: same amend body can include status + preorder together."
+            ),
+        )
 
 
 def _parse_status_update(
@@ -174,13 +258,39 @@ async def read_status_request_payload(request: Request) -> dict[str, Any]:
     return data if isinstance(data, dict) else {"status": str(data)}
 
 
+_JSON_ARRAY_SINGLE_OBJECT_KEYS = frozenset(
+    {
+        "guest_name",
+        "guest_phone",
+        "party_size",
+        "starts_at",
+        "name",
+        "phone",
+        "confirmation_code",
+        "code",
+        "confirmationCode",
+        "hnk_code",
+        "reservation_code",
+        "next_reservation_code",
+        "preorder",
+        "pre_order",
+        "items",
+        "lines",
+        "menu",
+        "cart",
+        "dishes",
+        "special_requests",
+    }
+)
+
+
 def _coerce_json_root_to_dict(data: Any) -> dict[str, Any]:
-    """Telnyx sometimes POSTs a JSON array of one reservation object."""
+    """Telnyx sometimes POSTs a JSON array of one reservation / amend object."""
     if isinstance(data, dict):
         return data
     if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
         z = data[0]
-        if any(k in z for k in ("guest_name", "guest_phone", "party_size", "starts_at", "name", "phone")):
+        if _JSON_ARRAY_SINGLE_OBJECT_KEYS.intersection(z):
             return z
     return {}
 
@@ -412,6 +522,12 @@ async def create_reservation(
     try:
         preorder_json, subtotal, discount, total = serialize_preorder(body.preorder)
     except ValueError as e:
+        logger.warning(
+            "Reservation create 400 (pre-order): guest=%s keys_in_raw=%s error=%s",
+            (body.guest_name or "")[:80],
+            list(raw.keys())[:30] if isinstance(raw, dict) else type(raw).__name__,
+            str(e),
+        )
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     gp_strip = body.guest_phone.strip()
@@ -625,6 +741,7 @@ async def update_status_by_code(
     """Update status using HNK-… code (single Telnyx webhook; no numeric id)."""
     code = _normalize_confirmation_code(_reject_unsubstituted_path_value(code))
     body = await read_status_request_payload(request)
+    _reject_cart_payload_on_status_route(body)
     merged_q = _merge_status_from_cancel_query(status, cancel)
     parsed = _parse_status_update(body, merged_q)
     row = db.execute(
@@ -694,6 +811,11 @@ async def amend_reservation_by_body_code(
     try:
         body = ReservationUpdate.model_validate(flat)
     except ValidationError as exc:
+        logger.warning(
+            "PATCH /amend validation error: keys=%s errors=%s",
+            sorted(flat.keys())[:40],
+            exc.errors()[:8],
+        )
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
     row = db.execute(select(Reservation).where(Reservation.confirmation_code == code)).scalar_one_or_none()
     if not row:
@@ -723,6 +845,7 @@ async def update_status(
     """Register before /{reservation_id} so paths like …/6/status never hit the generic PATCH."""
     reservation_id_int = _parse_reservation_id_path(reservation_id)
     body = await read_status_request_payload(request)
+    _reject_cart_payload_on_status_route(body)
     merged_q = _merge_status_from_cancel_query(status, cancel)
     parsed = _parse_status_update(body, merged_q)
     row = db.get(Reservation, reservation_id_int)
