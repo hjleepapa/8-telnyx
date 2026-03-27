@@ -17,7 +17,7 @@ from starlette.requests import Request
 
 from telnyx_restaurant.db import get_db
 from telnyx_restaurant.menu_catalog import MENU_ITEMS
-from telnyx_restaurant.phone_normalize import phone_lookup_variants
+from telnyx_restaurant.phone_normalize import phone_lookup_variants, to_e164_us
 from telnyx_restaurant.models import Reservation, ReservationStatus
 from telnyx_restaurant.preorder_calc import serialize_preorder
 from telnyx_restaurant.reminders import schedule_demo_reminder_call
@@ -45,7 +45,8 @@ def _apply_reservation_update(row: Reservation, body: ReservationUpdate) -> None
     if "guest_name" in body.model_fields_set:
         row.guest_name = body.guest_name  # type: ignore[assignment]
     if "guest_phone" in body.model_fields_set:
-        row.guest_phone = body.guest_phone.strip()  # type: ignore[union-attr]
+        gp = body.guest_phone  # type: ignore[union-attr]
+        row.guest_phone = to_e164_us(gp) if gp else gp
     if "party_size" in body.model_fields_set:
         row.party_size = body.party_size  # type: ignore[assignment]
     if "starts_at" in body.model_fields_set:
@@ -133,6 +134,17 @@ async def read_status_request_payload(request: Request) -> dict[str, Any]:
     return data if isinstance(data, dict) else {"status": str(data)}
 
 
+def _coerce_json_root_to_dict(data: Any) -> dict[str, Any]:
+    """Telnyx sometimes POSTs a JSON array of one reservation object."""
+    if isinstance(data, dict):
+        return data
+    if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
+        z = data[0]
+        if any(k in z for k in ("guest_name", "guest_phone", "party_size", "starts_at", "name", "phone")):
+            return z
+    return {}
+
+
 async def read_json_or_form_body(request: Request) -> dict[str, Any]:
     """POST body for JSON-like APIs (create). Accepts JSON or form; no fake `status` field from plain text."""
     hdr = (request.headers.get("content-type") or "").lower()
@@ -142,21 +154,26 @@ async def read_json_or_form_body(request: Request) -> dict[str, Any]:
         except Exception:
             return {}
         out: dict[str, Any] = {}
+        jsonish_keys = (
+            "preorder",
+            "items",
+            "lines",
+            "pre_order",
+            "menu_order",
+            "menu",
+            "cart",
+            "dishes",
+            "data",
+            "body",
+            "payload",
+            "food",
+        )
         for key, val in form.multi_items():
             if hasattr(val, "read"):
                 continue
             k = str(key)
             v = "" if val is None else str(val)
-            if k in (
-                "preorder",
-                "items",
-                "lines",
-                "pre_order",
-                "menu_order",
-                "data",
-                "body",
-                "payload",
-            ) and v.strip().startswith(("{", "[")):
+            if k in jsonish_keys and v.strip().startswith(("{", "[")):
                 try:
                     out[k] = json.loads(v)
                 except json.JSONDecodeError:
@@ -175,13 +192,14 @@ async def read_json_or_form_body(request: Request) -> dict[str, Any]:
             data = json.loads(raw.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError):
             return {}
-        return data if isinstance(data, dict) else {}
+        d = _coerce_json_root_to_dict(data)
+        return d
 
     try:
         data = json.loads(raw.decode("utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError):
         return {}
-    return data if isinstance(data, dict) else {}
+    return _coerce_json_root_to_dict(data)
 
 
 def _reject_unsubstituted_path_value(value: str, *, field: str = "code") -> str:
@@ -201,6 +219,32 @@ def _reject_unsubstituted_path_value(value: str, *, field: str = "code") -> str:
             ),
         )
     return v
+
+
+def _parse_reservation_id_path(raw: str) -> int:
+    """Parse `/{id}` path segment; avoid FastAPI int 422 when Telnyx sends literal `{{reservation_id}}`."""
+    v = (raw or "").strip()
+    if not v:
+        raise HTTPException(status_code=400, detail="Missing reservation id.")
+    if "{{" in v or "}}" in v or "%7b%7b" in v.lower() or "%7d%7d" in v.lower():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsubstituted or invalid reservation id in path: {v!r}. "
+                "Bind the tool path parameter to the numeric `id` from the create response JSON, "
+                "or use PATCH /api/reservations/by-code/{{confirmation_code}} with the HNK-… code."
+            ),
+        )
+    try:
+        rid = int(v, 10)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="reservation_id must be a positive integer.",
+        ) from None
+    if rid < 1:
+        raise HTTPException(status_code=400, detail="reservation_id must be a positive integer.")
+    return rid
 
 
 def _gen_confirmation_code() -> str:
@@ -301,10 +345,11 @@ async def create_reservation(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
+    gp_strip = body.guest_phone.strip()
     row = Reservation(
         confirmation_code=code,
         guest_name=body.guest_name,
-        guest_phone=body.guest_phone.strip(),
+        guest_phone=to_e164_us(gp_strip) if gp_strip else gp_strip,
         party_size=body.party_size,
         starts_at=(
             body.starts_at
@@ -523,8 +568,9 @@ def patch_reservation_by_code(
 
 
 @router.get("/{reservation_id}", response_model=ReservationRead)
-def get_reservation(reservation_id: int, db: Session = Depends(get_db)):
-    row = db.get(Reservation, reservation_id)
+def get_reservation(reservation_id: str, db: Session = Depends(get_db)):
+    reservation_id_int = _parse_reservation_id_path(reservation_id)
+    row = db.get(Reservation, reservation_id_int)
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
     return row
@@ -532,12 +578,13 @@ def get_reservation(reservation_id: int, db: Session = Depends(get_db)):
 
 @router.patch("/{reservation_id}", response_model=ReservationRead)
 def patch_reservation(
-    reservation_id: int,
+    reservation_id: str,
     body: ReservationUpdate,
     db: Session = Depends(get_db),
 ):
     """Update party size, time, pre-order, or guest details (partial PATCH)."""
-    row = db.get(Reservation, reservation_id)
+    reservation_id_int = _parse_reservation_id_path(reservation_id)
+    row = db.get(Reservation, reservation_id_int)
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
     _reject_modifying_cancelled(row)
@@ -551,7 +598,7 @@ def patch_reservation(
 
 @router.patch("/{reservation_id}/status", response_model=ReservationRead)
 async def update_status(
-    reservation_id: int,
+    reservation_id: str,
     request: Request,
     db: Session = Depends(get_db),
     status: str | None = Query(
@@ -561,7 +608,8 @@ async def update_status(
 ):
     body = await read_status_request_payload(request)
     parsed = _parse_status_update(body, status)
-    row = db.get(Reservation, reservation_id)
+    reservation_id_int = _parse_reservation_id_path(reservation_id)
+    row = db.get(Reservation, reservation_id_int)
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
     row.status = parsed.status
