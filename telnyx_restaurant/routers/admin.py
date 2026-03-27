@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from telnyx_restaurant.config import admin_dashboard_token, database_url
 from telnyx_restaurant.db import get_engine
-from telnyx_restaurant.models import Reservation
+from telnyx_restaurant.models import Reservation, ReservationStatus
 from telnyx_restaurant.preorder_calc import preorder_summary_text
 
 router = APIRouter(tags=["admin"])
@@ -80,11 +80,14 @@ def admin_reservations(
 
     db = SessionLocal()
     try:
-        rows = db.execute(
-            select(Reservation).order_by(Reservation.starts_at.asc())
-        ).scalars().all()
-        cal_rows = [_reservation_calendar_dict(r) for r in rows]
-        statuses = sorted({r["status"] for r in cal_rows})
+        rows = list(
+            db.execute(select(Reservation).order_by(Reservation.starts_at.asc())).scalars().all()
+        )
+        cancelled = ReservationStatus.cancelled.value
+        active = [r for r in rows if r.status != cancelled]
+        cal_rows = [_reservation_calendar_dict(r) for r in active]
+        statuses = sorted({r["status"] for r in cal_rows}) if cal_rows else []
+        cancelled_n = sum(1 for r in rows if r.status == cancelled)
         return _TEMPLATES.TemplateResponse(
             request,
             "admin_reservations.html",
@@ -92,6 +95,7 @@ def admin_reservations(
                 "reservations_json": json.dumps(cal_rows, ensure_ascii=False),
                 "statuses": statuses,
                 "row_count": len(cal_rows),
+                "cancelled_hidden": cancelled_n,
             },
         )
     finally:

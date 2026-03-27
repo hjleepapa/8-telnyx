@@ -75,6 +75,19 @@ def _apply_reservation_update(row: Reservation, body: ReservationUpdate) -> None
     row.updated_at = datetime.now(UTC)
 
 
+def _merge_status_from_cancel_query(
+    status: str | None,
+    cancel: str | None,
+) -> str | None:
+    """Telnyx tools often send ?cancel=1 or ?cancel=true instead of JSON."""
+    if (status or "").strip():
+        return status.strip()
+    cf = (cancel or "").strip().lower()
+    if cf in ("1", "true", "yes", "y", "cancel"):
+        return "cancelled"
+    return None
+
+
 def _parse_status_update(
     body: dict[str, Any],
     status: str | None = None,
@@ -286,8 +299,11 @@ def _normalize_confirmation_code(code: str) -> str:
 
 def _guest_name_matches(stored_full: str, hint: str) -> bool:
     """Case-insensitive match: full substring, first-name, or shared tokens."""
-    s = (stored_full or "").strip().casefold()
-    h = hint.strip().casefold()
+    def _norm_name_chunk(x: str) -> str:
+        return (x or "").strip().casefold().rstrip(".")
+
+    s = _norm_name_chunk(stored_full)
+    h = _norm_name_chunk(hint)
     if not h:
         return False
     if not s:
@@ -410,20 +426,32 @@ async def create_reservation(
 
 @router.get("/lookup", response_model=ReservationRead)
 def lookup_reservation_by_phone_and_name(
-    phone: str = Query(
-        ...,
-        min_length=3,
-        description="Guest phone (any common US format) or caller ID from Telnyx dynamic variables.",
-    ),
     guest_name: str = Query(
         ...,
         min_length=1,
         max_length=255,
         description="First or full name as on the reservation (required).",
     ),
+    phone: str | None = Query(
+        None,
+        min_length=3,
+        description="Guest phone — Telnyx tools often use `guest_phone` instead; either is accepted.",
+    ),
+    guest_phone: str | None = Query(
+        None,
+        min_length=3,
+        description="Alias for `phone` (same value from dynamic variables / caller id).",
+    ),
     db: Session = Depends(get_db),
 ):
     """Primary lookup: **phone + guest name**. Use this instead of confirmation codes when ASR mis-hears HNK-…"""
+    raw_phone = ((phone or guest_phone) or "").strip()
+    if len(raw_phone) < 3:
+        raise HTTPException(
+            status_code=422,
+            detail="Send query parameter `phone` or `guest_phone` (guest line number, min 3 characters).",
+        )
+    phone = raw_phone
     if "{{" in phone or "}}" in phone:
         raise HTTPException(
             status_code=400,
@@ -466,10 +494,15 @@ def lookup_reservation_by_phone_and_name(
 
 @router.get("/lookup-by-phone", response_model=ReservationRead)
 def lookup_reservation_by_guest_phone(
-    phone: str = Query(
-        ...,
+    phone: str | None = Query(
+        None,
         min_length=3,
-        description="Guest phone as collected on the call or from dynamic variables (any common US format).",
+        description="Guest phone from dynamic variables (any common US format).",
+    ),
+    guest_phone: str | None = Query(
+        None,
+        min_length=3,
+        description="Alias for `phone` (many Telnyx tools use this name).",
     ),
     guest_name: str | None = Query(
         None,
@@ -483,8 +516,15 @@ def lookup_reservation_by_guest_phone(
 
     Prefers upcoming non-cancelled rows (nearest first), else most recent. If several rows share the
     phone, pass `guest_name` (spoken or on file) so we can pick the right one.
-    Map Telnyx `telnyx_end_user_target` into query param `phone` from the tool.
+    Map Telnyx `telnyx_end_user_target` into query param `phone` or `guest_phone` from the tool.
     """
+    raw_phone = ((phone or guest_phone) or "").strip()
+    if len(raw_phone) < 3:
+        raise HTTPException(
+            status_code=422,
+            detail="Send query parameter `phone` or `guest_phone` (min 3 characters).",
+        )
+    phone = raw_phone
     if "{{" in phone or "}}" in phone:
         raise HTTPException(
             status_code=400,
@@ -558,11 +598,16 @@ async def update_status_by_code(
         None,
         description="Optional when JSON body is empty or omits status (Telnyx query-only tools).",
     ),
+    cancel: str | None = Query(
+        None,
+        description="If 1/true/yes/cancel, sets status to cancelled (no JSON body needed).",
+    ),
 ):
     """Update status using HNK-… code (single Telnyx webhook; no numeric id)."""
-    body = await read_status_request_payload(request)
-    parsed = _parse_status_update(body, status)
     code = _normalize_confirmation_code(_reject_unsubstituted_path_value(code))
+    body = await read_status_request_payload(request)
+    merged_q = _merge_status_from_cancel_query(status, cancel)
+    parsed = _parse_status_update(body, merged_q)
     row = db.execute(
         select(Reservation).where(Reservation.confirmation_code == code)
     ).scalar_one_or_none()
@@ -606,11 +651,16 @@ async def update_status(
         None,
         description="Optional when JSON body is empty or omits status (Telnyx query-only tools).",
     ),
+    cancel: str | None = Query(
+        None,
+        description="If 1/true/yes/cancel, sets status to cancelled (no JSON body needed).",
+    ),
 ):
     """Register before /{reservation_id} so paths like …/6/status never hit the generic PATCH."""
-    body = await read_status_request_payload(request)
-    parsed = _parse_status_update(body, status)
     reservation_id_int = _parse_reservation_id_path(reservation_id)
+    body = await read_status_request_payload(request)
+    merged_q = _merge_status_from_cancel_query(status, cancel)
+    parsed = _parse_status_update(body, merged_q)
     row = db.get(Reservation, reservation_id_int)
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")

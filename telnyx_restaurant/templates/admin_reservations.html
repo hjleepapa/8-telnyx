@@ -344,11 +344,18 @@
     </header>
     <div class="wrap">
       <p class="meta">
-        {{ row_count }} reservation{% if row_count != 1 %}s{% endif %}.
+        {{ row_count }} active reservation{% if row_count != 1 %}s{% endif %} on the calendar.
+        {% if cancelled_hidden and cancelled_hidden > 0 %}{{ cancelled_hidden }} cancelled hidden.{% endif %}
         API: <code>GET /api/reservations</code>
       </p>
       {% if row_count == 0 %}
-      <div class="empty">No rows yet. Redeploy triggers demo seed when the table is empty.</div>
+      <div class="empty">
+        {% if cancelled_hidden and cancelled_hidden > 0 %}
+          No active reservations on the calendar ({{ cancelled_hidden }} cancelled).
+        {% else %}
+          No rows yet. Redeploy triggers demo seed when the table is empty.
+        {% endif %}
+      </div>
       {% else %}
       <div class="cal-toolbar">
         <div class="cal-nav">
