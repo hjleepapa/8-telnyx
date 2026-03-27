@@ -92,6 +92,13 @@ PREORDER_ALIASES = AliasChoices(
     "menu",
     "cart",
     "dishes",
+    "selected_dishes",
+    "order_items",
+    "food_items",
+    "basket",
+    "meal_selection",
+    "preorder_lines",
+    "dish_selection",
 )
 
 
@@ -127,22 +134,51 @@ _RES_KEYS_HINT = frozenset(
         "cart",
         "dishes",
         "food",
+        "selected_dishes",
+        "order_items",
+        "food_items",
+        "basket",
+        "meal_selection",
+        "preorder_lines",
+        "dish_selection",
+        "selected_items",
     }
+)
+
+_WRAP_KEYS_RESERVATION = (
+    "data",
+    "body",
+    "payload",
+    "reservation",
+    "input",
+    "parameters",
+    "variables",
+    "context",
+    "tool_input",
+    "arguments",
+    "args",
+    "result",
+    "response",
+    "attributes",
 )
 
 
 def _unwrap_nested_reservation_payload(data: dict[str, Any]) -> dict[str, Any]:
-    """Merge Telnyx-style wrappers (data/body/payload/…) into one flat dict."""
+    """Merge Telnyx-style wrappers (possibly nested) so inner cart/name/phone win over empty roots."""
     d = dict(data)
-    for key in ("data", "body", "payload", "reservation", "input", "parameters"):
-        inner = d.get(key)
-        if not isinstance(inner, dict):
-            continue
-        if _RES_KEYS_HINT.intersection(inner):
+    for _ in range(16):
+        merged_layer = False
+        for key in _WRAP_KEYS_RESERVATION:
+            inner = d.get(key)
+            if not isinstance(inner, dict):
+                continue
+            if not _RES_KEYS_HINT.intersection(inner):
+                continue
             outer_rest = {k: v for k, v in d.items() if k != key}
-            # Inner wins on conflicts — wrappers often have empty preorder/items at the root
-            # while the real cart lives inside `data`.
             d = {**outer_rest, **inner}
+            merged_layer = True
+            break
+        if not merged_layer:
             break
     return _lift_nested_preorder_dict(d)
 
@@ -167,6 +203,14 @@ def _coerce_preorder_value_to_lines(v: Any) -> Any:
             "order",
             "dishes",
             "cart",
+            "selected_dishes",
+            "order_items",
+            "food_items",
+            "basket",
+            "meal_selection",
+            "preorder_lines",
+            "dish_selection",
+            "selected_items",
         ):
             inner = v.get(key)
             if isinstance(inner, list):
@@ -402,6 +446,8 @@ class ReservationStatusUpdate(BaseModel):
             "state",
             "new_status",
             "reservation_status",
+            "reservationStatus",
+            "booking_status",
             "action",
             "Action",
             "operation",
@@ -410,6 +456,9 @@ class ReservationStatusUpdate(BaseModel):
             "command",
             "event",
             "type",
+            "input",
+            "value",
+            "outcome",
         ),
     )
 
@@ -424,11 +473,33 @@ class ReservationStatusUpdate(BaseModel):
             return data
 
         d: dict[str, Any] = dict(data)
-        for wrap in ("data", "reservation", "payload", "body", "attributes", "result", "input", "parameters"):
+        for wrap in (
+            "data",
+            "reservation",
+            "payload",
+            "body",
+            "attributes",
+            "result",
+            "input",
+            "parameters",
+            "variables",
+            "context",
+            "tool_arguments",
+            "arguments",
+            "args",
+        ):
             inner = d.get(wrap)
             if isinstance(inner, dict):
                 for k, v in inner.items():
                     d.setdefault(k, v)
+            elif isinstance(inner, str) and inner.strip().startswith("{"):
+                try:
+                    parsed = json.loads(inner)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(parsed, dict):
+                    for k, v in parsed.items():
+                        d.setdefault(k, v)
 
         for flag in ("cancel", "Cancel", "cancel_reservation", "cancellation_requested"):
             v = d.get(flag)

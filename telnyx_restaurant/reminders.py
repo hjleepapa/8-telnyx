@@ -213,8 +213,15 @@ def telnyx_speak(call_control_id: str, text: str) -> tuple[bool, str]:
     if not key or not call_control_id:
         return False, "missing_config"
     attempts = (
-        {"payload": text, "voice": "female", "language": "en-US"},
+        {
+            "payload": text,
+            "payload_type": "text",
+            "voice": "AWS.Polly.Joanna",
+            "language": "en-US",
+        },
+        {"payload": text, "payload_type": "text", "voice": "female", "language": "en-US"},
         {"payload": text},
+        {"text": text},
     )
     last_err = "exception"
     for body in attempts:

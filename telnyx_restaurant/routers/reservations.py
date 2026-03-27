@@ -79,6 +79,16 @@ def _parse_status_update(
 ) -> ReservationStatusUpdate:
     """Telnyx tools often send `{}`, nested keys, or only a query param."""
     merged = dict(body or {})
+    # Inline JSON strings on common wrapper keys (tools sometimes double-encode).
+    for k in ("body", "payload", "data", "variables", "input", "arguments", "json"):
+        v = merged.get(k)
+        if isinstance(v, str) and v.strip().startswith("{"):
+            try:
+                inner = json.loads(v)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(inner, dict):
+                merged = {**inner, **merged}
     if (status or "").strip():
         merged.setdefault("status", status.strip())
     try:
@@ -167,6 +177,12 @@ async def read_json_or_form_body(request: Request) -> dict[str, Any]:
             "body",
             "payload",
             "food",
+            "selected_dishes",
+            "order_items",
+            "food_items",
+            "basket",
+            "meal_selection",
+            "variables",
         )
         for key, val in form.multi_items():
             if hasattr(val, "read"):
@@ -567,6 +583,30 @@ def patch_reservation_by_code(
     return row
 
 
+@router.patch("/{reservation_id}/status", response_model=ReservationRead)
+async def update_status(
+    reservation_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    status: str | None = Query(
+        None,
+        description="Optional when JSON body is empty or omits status (Telnyx query-only tools).",
+    ),
+):
+    """Register before /{reservation_id} so paths like …/6/status never hit the generic PATCH."""
+    body = await read_status_request_payload(request)
+    parsed = _parse_status_update(body, status)
+    reservation_id_int = _parse_reservation_id_path(reservation_id)
+    row = db.get(Reservation, reservation_id_int)
+    if not row:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+    row.status = parsed.status
+    row.updated_at = datetime.now(UTC)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
 @router.get("/{reservation_id}", response_model=ReservationRead)
 def get_reservation(reservation_id: str, db: Session = Depends(get_db)):
     reservation_id_int = _parse_reservation_id_path(reservation_id)
@@ -591,29 +631,6 @@ def patch_reservation(
     if not body.model_fields_set:
         return row
     _apply_reservation_update(row, body)
-    db.commit()
-    db.refresh(row)
-    return row
-
-
-@router.patch("/{reservation_id}/status", response_model=ReservationRead)
-async def update_status(
-    reservation_id: str,
-    request: Request,
-    db: Session = Depends(get_db),
-    status: str | None = Query(
-        None,
-        description="Optional when JSON body is empty or omits status (Telnyx query-only tools).",
-    ),
-):
-    body = await read_status_request_payload(request)
-    parsed = _parse_status_update(body, status)
-    reservation_id_int = _parse_reservation_id_path(reservation_id)
-    row = db.get(Reservation, reservation_id_int)
-    if not row:
-        raise HTTPException(status_code=404, detail="Reservation not found")
-    row.status = parsed.status
-    row.updated_at = datetime.now(UTC)
     db.commit()
     db.refresh(row)
     return row

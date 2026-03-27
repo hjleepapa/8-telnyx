@@ -180,20 +180,137 @@ def _extract_call_control_id(payload: dict[str, Any]) -> str | None:
     return None
 
 
-def _decode_client_state(payload: dict[str, Any]) -> dict[str, Any] | None:
-    raw = payload.get("client_state")
-    if raw is None:
-        call = payload.get("call")
-        if isinstance(call, dict):
-            raw = call.get("client_state")
+def _decode_client_state_blob(raw: str | None) -> dict[str, Any] | None:
     if not raw or not isinstance(raw, str):
         return None
+    s = raw.strip()
     try:
-        decoded = base64.b64decode(raw, validate=False)
+        decoded = base64.b64decode(s, validate=False)
         obj = json.loads(decoded.decode("utf-8"))
         return obj if isinstance(obj, dict) else None
     except Exception:
         return None
+
+
+def _decode_client_state(payload: dict[str, Any]) -> dict[str, Any] | None:
+    for key in ("client_state", "clientState"):
+        got = _decode_client_state_blob(payload.get(key) if isinstance(payload.get(key), str) else None)
+        if got:
+            return got
+    call = payload.get("call")
+    if isinstance(call, dict):
+        for key in ("client_state", "clientState"):
+            got = _decode_client_state_blob(call.get(key) if isinstance(call.get(key), str) else None)
+            if got:
+                return got
+    return None
+
+
+def _walk_for_client_state(obj: Any, depth: int = 0) -> dict[str, Any] | None:
+    """Telnyx occasionally nests `client_state` outside the slice we first parse."""
+    if depth > 8 or not isinstance(obj, dict):
+        return None
+    for k, v in obj.items():
+        if k in ("client_state", "clientState") and isinstance(v, str):
+            got = _decode_client_state_blob(v)
+            if got and got.get("hanok_reminder"):
+                return got
+        if isinstance(v, dict):
+            got = _walk_for_client_state(v, depth + 1)
+            if got:
+                return got
+    return None
+
+
+def _callee_number(payload: dict[str, Any]) -> str | None:
+    for key in ("to", "callee", "called_number", "destination_number"):
+        v = payload.get(key)
+        if v:
+            return str(v).strip()
+    call = payload.get("call")
+    if isinstance(call, dict):
+        for key in ("to", "callee", "destination"):
+            v = call.get(key)
+            if v:
+                return str(v).strip()
+    return None
+
+
+def _reminder_state_from_db_for_phone(callee: str) -> dict[str, Any] | None:
+    """If `client_state` is missing from webhooks, rebuild speak text from the latest reservation row."""
+    if not callee or not database_url():
+        return None
+    variants = phone_lookup_variants(callee)
+    if not variants:
+        return None
+    get_engine()
+    from telnyx_restaurant.db import SessionLocal
+
+    if SessionLocal is None:
+        return None
+    db = SessionLocal()
+    try:
+        row = db.execute(
+            select(Reservation)
+            .where(
+                Reservation.guest_phone.in_(variants),
+                Reservation.status != ReservationStatus.cancelled.value,
+            )
+            .order_by(Reservation.starts_at.desc())
+        ).scalar_one_or_none()
+        if not row:
+            return None
+        first = (row.guest_name or "Guest").split()[0]
+        dt = row.starts_at
+        when = dt.strftime("%A, %B %d at %I:%M %p %Z") if dt.tzinfo else dt.strftime("%A, %B %d at %I:%M %p")
+        summ = preorder_summary_text(row.preorder_items)
+        if len(summ) > 480:
+            summ = summ[:477].rsplit(";", 1)[0] + ", and more."
+        return {
+            "hanok_reminder": True,
+            "confirmation_code": row.confirmation_code,
+            "guest_first_name": first,
+            "guest_full_name": (row.guest_name or "").strip(),
+            "party_size": row.party_size,
+            "starts_at_speech": when,
+            "preorder_summary": summ,
+        }
+    finally:
+        db.close()
+
+
+def _normalize_call_control_event_type(event_type: str) -> str:
+    et = (event_type or "").strip().lower().replace("-", ".")
+    if et == "callanswered" or et.endswith(".answered"):
+        return "call.answered"
+    if "speak.ended" in et or "speak.completed" in et or "speak.stopped" in et:
+        return "call.speak.ended"
+    return et
+
+
+def _resolve_reminder_state(body: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Recover speak payload from client_state, webhook shape quirks, or DB by callee number."""
+    state = _decode_client_state(payload) or _walk_for_client_state(body)
+    if state and state.get("hanok_reminder"):
+        return state
+    callee = _callee_number(payload)
+    if callee:
+        fallback = _reminder_state_from_db_for_phone(callee)
+        if fallback:
+            logger.info("Hanok call-control: reminder state from DB for %s", callee)
+            return fallback
+    if state:
+        logger.warning(
+            "Hanok call-control: decoded client_state without hanok_reminder flag; keys=%s",
+            list(state.keys())[:12],
+        )
+    else:
+        logger.warning(
+            "Hanok call-control: no client_state and no DB row for callee=%r payload_keys=%s",
+            callee,
+            list(payload.keys())[:20],
+        )
+    return None
 
 
 @router.post("/call-control")
@@ -210,14 +327,15 @@ async def telnyx_call_control(request: Request) -> dict[str, str]:
         return {"status": "ignored"}
 
     event_type, payload = _parse_call_control_event(body)
+    event_type = _normalize_call_control_event_type(event_type)
     call_control_id = _extract_call_control_id(payload)
     if not call_control_id:
         return {"status": "ok"}
 
     if event_type == "call.answered":
-        state = _decode_client_state(payload)
-        if not state or not state.get("hanok_reminder"):
-            return {"status": "ok"}
+        state = _resolve_reminder_state(body, payload)
+        if not state:
+            return {"status": "no_state"}
         msg = build_reminder_speak_text(state)
         ok, tag = telnyx_speak(call_control_id, msg)
         if ok:
