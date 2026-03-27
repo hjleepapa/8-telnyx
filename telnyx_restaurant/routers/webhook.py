@@ -117,6 +117,10 @@ def _profile_from_db(caller: str | None) -> dict[str, Any] | None:
                     "default_party_size": any_row.party_size,
                     "locale_hint": "en-US",
                     "has_upcoming_reservation": False,
+                    # Same key as the upcoming branch so HTTP tools can bind confirmation_code even
+                    # when the only row in range is in the past (e.g. modify pre-order after the meal).
+                    "next_reservation_code": any_row.confirmation_code,
+                    "next_reservation_at": any_row.starts_at.isoformat(),
                     "reservation_preorder_summary": summary_past or "none",
                     "reservation_food_subtotal_cents": any_row.food_subtotal_cents,
                     "reservation_preorder_discount_cents": any_row.preorder_discount_cents,
