@@ -1,6 +1,6 @@
-# Telnyx Voice AI — Restaurant Reservation Assistant
+# Telnyx Voice AI — Hanok Table (Restaurant Reservations)
 
-> **Telnyx coding challenge:** Voice AI assistant for restaurant reservations, powered by the **Telnyx AI Assistant** (Portal), **dynamic webhook variables**, a **custom MCP server**, and a **publicly deployed** backend on **Render** behind **Cloudflare**.
+> **Telnyx challenge stack:** Voice AI assistant for **Hanok Table** (demo Korean restaurant), backed by **FastAPI**, **PostgreSQL**, **dynamic webhook variables**, **Call Control** outbound reminders, and a suggested **MCP** tool mapping (see [`telnyx_restaurant/mcp_server/README.md`](telnyx_restaurant/mcp_server/README.md)).
 
 [![Telnyx](https://img.shields.io/badge/Telnyx-Voice%20AI-00D4AA.svg)](https://developers.telnyx.com/)
 [![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-000000.svg)](https://modelcontextprotocol.io/)
@@ -13,160 +13,115 @@
 
 ## Overview
 
-This repository implements a **restaurant reservation** experience over the phone: callers check availability, book or modify a table, confirm party size and time, and hear personalized greetings using **context resolved before the conversation** (dynamic webhooks). The AI assistant uses **MCP tools** that delegate to the same backend API that stores reservation rules and demo data.
+This repository is a **single Python service** (`telnyx_restaurant`) that:
 
-**Target users:** Guests calling a fictional demo restaurant (synthetic data only — no real guest PII).
+- Exposes a **REST API** for reservations (create, lookup, partial update, status/cancel) with **menu-backed pre-orders** and pricing.
+- Serves **Telnyx webhooks**: dynamic **variables** for assistant instructions and **Call Control** callbacks for outbound reminder TTS.
+- Ships a **static site** (landing, reserve-online form, reservation status page) and a **server-rendered admin calendar** (active bookings only; cancelled rows are hidden from the grid).
 
-### Challenge requirements mapping
-
-| Requirement | How it is addressed |
-|-------------|---------------------|
-| **Telnyx AI Assistant** | Built in [Telnyx Portal](https://portal.telnyx.com/) Assistant Builder; assistant attached to a **Telnyx phone number**. |
-| **Callable via phone** | Inbound PSTN → Telnyx Voice AI → assistant. |
-| **Real conversational UX** | Multi-turn prompts: date/time, party size, confirmation, cancel/change flows; one clarification at a time for voice. |
-| **Custom MCP server** | Tools: availability lookup, create/update/cancel reservation, optional “today’s specials” resource (see [MCP tools](#mcp-tools)). |
-| **Dynamic webhook variables** | HTTPS webhook on dedicated host (e.g. `telnyx.convonetai.com`) returns variables personalized from **caller ID** / demo profile (see [Webhook variables](#dynamic-webhook-variables)). |
-| **Public deployment** | Render **Web Service** + custom subdomain on **Cloudflare** (`convonetai.com` zone). |
+**Data:** Synthetic demo only — use for labs and reviewer demos, not production PII.
 
 ---
 
-## Key features
-
-- **Voice-first reservations** — Natural language for date/time; backend normalizes to a timezone-safe slot model.
-- **Dynamic personalization** — Greeting and defaults (e.g. preferred location, VIP tier, language hint) from webhook payload mapped in the assistant instructions.
-- **MCP-extended agent** — Structured tools with validation; single source of truth in the REST API backing both webhook lookups and tool executions.
-- **Focused codebase** — Python service under [`telnyx_restaurant/`](telnyx_restaurant/) only; no legacy multi-service stack in this repo.
-
----
-
-## High-level architecture
-
-Telnyx hosts STT/LLM/TTS and dials your **webhook** and **MCP** endpoints over the public internet. Your backend owns reservation data (PostgreSQL or SQLite for demo) and enforces slot consistency.
+## Architecture
 
 ```mermaid
 flowchart TB
-  subgraph caller [Caller]
-    Phone[PSTN phone]
+  subgraph telnyx [Telnyx]
+    Assistant[AI Assistant]
+    CC[Call Control App]
+    Assistant --> CC
   end
 
-  subgraph telnyx [Telnyx Cloud]
-    VA[AI Assistant<br/>Portal Builder]
-    PSTN[Voice AI / telephony]
-    Phone --> PSTN --> VA
+  subgraph deploy [Render + HTTPS]
+    App[FastAPI app.py]
+    DB[(PostgreSQL)]
+    App --> DB
   end
 
-  subgraph public [Public HTTPS - Render + Cloudflare]
-    API[telnyx_restaurant API<br/>FastAPI]
-    MCP[MCP Server<br/>stdio or HTTP per Telnyx docs]
-    DB[(Database<br/>Postgres / SQLite)]
-    API --> DB
-    MCP --> API
-  end
-
-  VA -->|Dynamic webhook<br/>variables JSON| API
-  VA -->|Tool calls via MCP| MCP
+  Assistant -->|POST /webhooks/telnyx/variables| App
+  CC -->|POST /webhooks/telnyx/call-control| App
+  Assistant -->|HTTP tools: REST API| App
 ```
 
-### Component responsibilities
+| Layer | Role |
+|-------|------|
+| **`app.py`** | FastAPI entrypoint: lifespan (DB init + demo seed), mounts `/assets`, public HTML routes. |
+| **`routers/reservations.py`** | `/api/reservations` — CRUD-style reservation API, menu, lookup, **PATCH `/amend`** (body includes `confirmation_code`), pre-order aware updates. |
+| **`routers/webhook.py`** | `POST /webhooks/telnyx/variables` (personalization JSON), `POST /webhooks/telnyx/call-control` (`call.answered` → speak reminder script). |
+| **`routers/admin.py`** | `GET /admin/reservations` — calendar UI + JSON for chips (optional `?token=` if `ADMIN_DASHBOARD_TOKEN` is set). |
+| **`schemas_res.py`** | Pydantic models: tolerant Telnyx payloads (nested wrappers, pre-order aliases, phone coercion). |
+| **`menu_catalog.py`** | Demo menu items, id resolution, fuzzy names for voice/API. |
+| **`preorder_calc.py`** | Serialize pre-order lines, **7% pre-order discount** on food subtotal. |
+| **`reminders.py`** | After create: delayed **POST** to Telnyx **`/v2/calls`** with `client_state`; speak uses webhook + `speak` action. |
+| **`db.py` / `models.py`** | SQLAlchemy + `Reservation` (status, preorder JSON, food cents, `reminder_call_status`). |
+| **`static/`** | `index.html` (EN/KO + Telnyx widget), `reserve_online.html`, `reservation_status.html`. |
 
-| Component | Responsibility |
-|-----------|----------------|
-| **Telnyx AI Assistant** | Call flow, speech, LLM, tool invocation, instruction templates with `{{ variable }}` placeholders. |
-| **Webhook handler** (`telnyx_restaurant`) | Map **Telnyx-provided request** (caller number, metadata) → JSON variables for personalization. |
-| **REST API** | Authoritative reservation CRUD, availability search, idempotency / conflict handling for double-booking. |
-| **MCP server** | Expose tools/resources; call REST API; return structured results for the model to summarize. |
-| **Database** | Stores venues (optional), tables or capacity model, reservations, guest demo profiles. |
-| **Cloudflare DNS** | `telnyx.convonetai.com` (example) → Render service. |
-| **Render** | Runs FastAPI (+ optional separate MCP process or worker as per deployment design). |
-
----
-
-## Call flow (sequence)
-
-Typical **book a table** path: webhook runs first; then conversation; model invokes MCP tools; API updates DB.
-
-```mermaid
-sequenceDiagram
-  participant C as Caller
-  participant T as Telnyx Voice AI
-  participant W as Webhook API
-  participant M as MCP Server
-  participant A as REST API
-  participant D as Database
-
-  C->>T: Places call
-  T->>W: POST dynamic webhook (caller context)
-  W->>D: Lookup demo guest profile
-  W-->>T: guest_name, vip_tier, defaults...
-  T-->>C: Personalized greeting
-
-  C->>T: "Book Saturday 7 for four"
-  T->>M: Tool: search_availability(...)
-  M->>A: GET /api/availability
-  A->>D: Query slots
-  A-->>M: Open windows
-  M-->>T: Structured slots
-  T-->>C: Offers time options
-
-  C->>T: Confirms slot
-  T->>M: Tool: create_reservation(...)
-  M->>A: POST /api/reservations
-  A->>D: Insert + commit
-  A-->>M: Confirmation + reservation_id
-  M-->>T: Result
-  T-->>C: Confirms booking verbally
-```
+There is **no** `GET /api/availability` in this repo yet; availability can be modeled as assumptions in the assistant or added later.
 
 ---
 
-## Dynamic webhook variables
+## REST API (prefix `/api/reservations`)
 
-Configure the Telnyx assistant to fetch variables from your deployed webhook URL. Map response JSON keys to template variables in the Portal (exact mechanism follows [Telnyx AI Assistants](https://developers.telnyx.com/docs/v2/ai/ai-assistants/) documentation).
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/menu/items` | Public menu (`id`, prices, EN/KO names) for pre-order tools and web form. |
+| GET | `` | List reservations (JSON). |
+| POST | `` | Create reservation (JSON or form). Accepts nested Telnyx shapes; normalizes **E.164** phone. |
+| GET | `/lookup` | **Primary lookup:** `guest_name` + **`phone` or `guest_phone`** (empty `phone=` is OK if `guest_phone` is set). |
+| GET | `/lookup-by-phone` | Legacy: phone (+ optional `guest_name` if ambiguous). |
+| GET | `/by-code/{code}` | Fetch by **HNK-…** code (real code in path; not literal `{{code}}`). |
+| PATCH | `/amend` | **Voice/tool-friendly patch:** JSON body includes **`confirmation_code`** (or `code`, `confirmationCode`, `next_reservation_code`, …) **plus** fields to change (e.g. `preorder` / `items` / `menu`). Use when path `{{reservation_id}}` cannot be substituted. |
+| PATCH | `/by-code/{code}` | Partial update (party size, time, pre-order, guest fields). Ignores JSON `null` on required DB columns (e.g. does not clear `party_size`). |
+| PATCH | `/by-code/{code}/status` | Set status; body `{"status":"cancelled"}` or query **`?cancel=1`**. |
+| PATCH | `/{id}` | Partial update by numeric id (id must be real; not `{{reservation_id}}`). |
+| PATCH | `/{id}/status` | Status update by id; supports `?cancel=1`. |
+| GET | `/{id}` | Fetch one row by id. |
 
-**Example variables** (illustrative — names must match your Portal mapping):
-
-| Variable | Source | Purpose |
-|----------|--------|---------|
-| `guest_display_name` | Demo profile keyed by ANI | Natural greeting |
-| `vip_tier` | Demo CRM / seed table | Tone, priority |
-| `preferred_venue_slug` | Profile default | Skip “which location?” when obvious |
-| `default_party_size` | Past visits (demo) | Suggested party size |
-| `locale_hint` | Profile | Optional language tuning |
-| `has_upcoming_reservation` | DB boolean | Offer “modify existing” branch |
-
-**Reference implementation:** [`telnyx_restaurant/routers/webhook.py`](telnyx_restaurant/routers/webhook.py) returns a JSON payload your assistant consumes.
-
----
-
-## MCP tools
-
-Expose **3–5 focused tools** (adjust names to match Portal configuration):
-
-| Tool | Description |
-|------|-------------|
-| `search_availability` | Inputs: date, rough time, party size, venue. Returns candidate slots. |
-| `create_reservation` | Creates hold/booking; returns confirmation code. |
-| `get_reservation` | Lookup by code or phone + date. |
-| `modify_reservation` | Change time/party size within rules. |
-| `cancel_reservation` | Cancels per policy; returns status. |
-
-Optional **MCP resource:** `restaurant://policy/cancellations.md` for cancellation windows (demo text).
-
-Implementation lives in [`telnyx_restaurant/mcp_server/`](telnyx_restaurant/mcp_server/) (see package README).
+**Pre-orders:** Lines reference **menu_item_id** (or dish names resolved to catalog ids). Stored as JSON on the row with computed subtotal, discount, and total cents.
 
 ---
 
-## Technology stack
+## Telnyx webhooks
 
-| Layer | Technology |
-|-------|------------|
-| Voice + AI runtime | **Telnyx** Voice AI, Assistant Builder |
-| Protocol | **MCP** (Model Context Protocol) per Telnyx integration |
-| Backend | **Python 3.11+**, **FastAPI** |
-| Validation | **Pydantic** v2 |
-| Data | **PostgreSQL** (Render) or **SQLite** for local demo |
-| Hosting | **Render** Web Service |
-| DNS / TLS edge | **Cloudflare** (`convonetai.com` zone) → Render custom hostname |
+Configure these **HTTPS URLs** on Mission Control (exact host is yours; example: `https://telnyx.convonetai.com`).
+
+| URL | Purpose |
+|-----|---------|
+| **`POST .../webhooks/telnyx/variables`** | Return JSON for instruction templates (guest display name, reservation summaries, `next_reservation_code`, etc.) keyed off **caller number** when the row exists in DB. |
+| **`POST .../webhooks/telnyx/call-control`** | Call Control events: on **`call.answered`**, decode `client_state` (or fall back to DB by callee), run **TTS speak** with reminder script, optionally hang up after speak ends. |
+
+**Outbound reminder:** When `TELNYX_API_KEY`, `TELNYX_CONNECTION_ID`, and `TELNYX_FROM_NUMBER` are set, a new reservation schedules **`POST https://api.telnyx.com/v2/calls`** after **`HANOK_REMINDER_DELAY_SECONDS`** (default 5s). Set **`HANOK_PUBLIC_BASE_URL`** (or `PUBLIC_BASE_URL` / `RENDER_EXTERNAL_URL`) to your public origin so the dial request can include **`webhook_url`** → `/webhooks/telnyx/call-control` (helps when the Portal connection default points elsewhere).
+
+---
+
+## Static pages & admin
+
+| Route | Description |
+|-------|-------------|
+| `/`, `/index.html` | Hanok landing; EN/KO; Telnyx AI web component. |
+| `/reserve-online` | Pre-order form posting to the API. |
+| `/reservation/status` | Lookup by confirmation code (food totals). |
+| `/admin/reservations` | Month calendar of **non-cancelled** reservations; detail overlay. Optional `?token=` if `ADMIN_DASHBOARD_TOKEN` is set. |
+| `/health` | Liveness (`GET` or `POST`). |
+
+---
+
+## Environment variables
+
+| Variable | Description |
+|----------|-------------|
+| **`DB_URI`** or **`DATABASE_URL`** | SQLAlchemy Postgres URL (`postgresql+psycopg2://…`; `sslmode=require` appended for Render hosts when missing). |
+| **`ADMIN_DASHBOARD_TOKEN`** | If set, admin page requires matching `?token=`. |
+| **`TELNYX_API_KEY`** / **`TELNYX_API_TOKEN`** | Bearer token for Telnyx REST (outbound call + speak). |
+| **`TELNYX_CONNECTION_ID`** | Voice API **Call Control application** id used with `POST /v2/calls`. |
+| **`TELNYX_FROM_NUMBER`** | Outbound caller ID (**+E.164**). |
+| **`HANOK_REMINDER_DELAY_SECONDS`** | Seconds before placing reminder call (1–300; default 5). |
+| **`HANOK_PUBLIC_BASE_URL`** | Public site origin **without** trailing slash (e.g. `https://telnyx.convonetai.com`) for per-dial `webhook_url`. |
+| **`PUBLIC_BASE_URL`**, **`RENDER_EXTERNAL_URL`** | Fallbacks for the same origin if `HANOK_PUBLIC_BASE_URL` is unset. |
+| **`RENDER_GIT_COMMIT`** / **`APP_GIT_REVISION`** | Set by host or locally; logged at startup for deploy fingerprint. |
+
+See [`telnyx_restaurant/.env.example`](telnyx_restaurant/.env.example) for a template.
 
 ---
 
@@ -176,121 +131,83 @@ Implementation lives in [`telnyx_restaurant/mcp_server/`](telnyx_restaurant/mcp_
 8.telnyx/
 ├── README.md
 ├── LICENSE
-├── Procfile                  # Render: uvicorn telnyx_restaurant.app:app
-├── requirements.txt          # Delegates to telnyx_restaurant/requirements.txt
+├── Procfile
+├── requirements.txt          # delegates to telnyx_restaurant/requirements.txt
 └── telnyx_restaurant/
-    ├── README.md
-    ├── requirements.txt
-    ├── .env.example
     ├── app.py
-    ├── static/
-    │   └── index.html        # Hanok Table (Korean menu) landing + Telnyx AI widget
+    ├── config.py
+    ├── db.py
+    ├── models.py
+    ├── seed.py
+    ├── phone_normalize.py
+    ├── menu_catalog.py
+    ├── preorder_calc.py
+    ├── reminders.py
+    ├── schemas_res.py
+    ├── webhook_payload.py
     ├── routers/
+    │   ├── admin.py
+    │   ├── reservations.py
     │   └── webhook.py
+    ├── templates/
+    │   └── admin_reservations.html
+    ├── static/
+    │   ├── index.html
+    │   ├── reserve_online.html
+    │   └── reservation_status.html
     └── mcp_server/
-        └── README.md
+        └── README.md           # Suggested MCP tool ↔ REST mapping
 ```
 
 ---
 
-## Deployment (Option B — recommended)
+## Deployment (Render)
 
-1. **Render:** Create a **Web Service** from this repo; use repository **root** so imports resolve. **Start command** (or use included `Procfile`):  
-   `uvicorn telnyx_restaurant.app:app --host 0.0.0.0 --port $PORT`
-2. **Custom domain:** In Render, add `telnyx.convonetai.com` (or your chosen subdomain).
-3. **Cloudflare:** `CNAME` that hostname to the target Render provides; proxy on/off per Telnyx/MCP requirements (long-lived streams may need DNS-only — confirm with Telnyx).
-4. **Telnyx Portal:** Point **dynamic webhook** URL and **MCP** URL at your HTTPS endpoints; assign **phone number**.
+1. **Web service** from repo **root**; start: `uvicorn telnyx_restaurant.app:app --host 0.0.0.0 --port $PORT` (or use `Procfile`).
+2. Attach **PostgreSQL**; set **`DB_URI`** on the web service.
+3. Custom domain (e.g. Cloudflare CNAME → Render).
+4. Telnyx Portal: point **dynamic variables** webhook and **Call Control** webhook (if not overridden per-call) to this app; configure HTTP tools with **fixed URLs** — avoid leaving `{{reservation_id}}` unbound; prefer **`PATCH /api/reservations/amend`** + **`confirmation_code`** in JSON for updates.
 
-**Render checklist (fixes `{"detail":"Not Found"}` on `/`):**
-
-- **Root Directory:** leave **empty** (repository root), not `telnyx_restaurant`, so the start command `uvicorn telnyx_restaurant.app:app` can import the package.
-- **Build / deploy:** trigger a fresh deploy after pushing; `/health` can work on an older revision while `/` was added later.
-- **URLs:** home is [https://telnyx.convonetai.com/](https://telnyx.convonetai.com/) (or your Render URL); alternate [https://telnyx.convonetai.com/index.html](https://telnyx.convonetai.com/index.html). If `index.html` is missing on disk, the app now returns an HTML error page explaining the path instead of a generic JSON 404.
-
-Document in your submission:
-
-- **Public webhook URL** (exact path)
-- **MCP connection** URL or command (per Telnyx docs)
-- **Provisioned Telnyx DID** reviewers can dial
-
----
-
-## PostgreSQL (Render)
-
-1. In [Render](https://render.com/), open your **PostgreSQL** instance and copy **Internal Database URL** (same-region as your web service) or **External URL** if connecting from your laptop.
-2. On the **Web Service** → **Environment**, add:
-   - **`DB_URI`** — full `postgresql://...` string (same value many panels label `DATABASE_URL`).
-3. Redeploy. On startup the app runs `create_all` for the `reservations` table and **seeds three demo rows** only when the table is empty.
-4. **Dashboard:** [https://telnyx.convonetai.com/admin/reservations](https://telnyx.convonetai.com/admin/reservations) (optionally add `?token=...` if you set `ADMIN_DASHBOARD_TOKEN`).
-5. **API:** `GET https://telnyx.convonetai.com/api/reservations`
-
-Never commit credentials. If a connection string was exposed, **rotate the database password** in Render and update `DB_URI`.
+**Checklist:** If `/` 404s but `/health` works, confirm build includes `static/index.html` and **Root Directory** on Render is empty (repo root).
 
 ---
 
 ## Local development
 
-Run from the **repository root** so `telnyx_restaurant` imports resolve.
-
 ```bash
 git clone https://github.com/hjleepapa/8-telnyx.git
 cd 8-telnyx
-
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp telnyx_restaurant/.env.example telnyx_restaurant/.env
 uvicorn telnyx_restaurant.app:app --reload --host 0.0.0.0 --port 8080
 ```
 
-- **Restaurant site + Telnyx web widget:** open `http://localhost:8080/` — Hanok Table (Korean cuisine) with **EN / 한국어** toggle (choice saved in `localStorage` as `hanok-lang`) and the Telnyx `<telnyx-ai-agent>` web component (script: `unpkg.com/@telnyx/ai-agent-widget@next`).
-- **Health:** `GET http://localhost:8080/health`
-- **Webhook (demo):** `POST http://localhost:8080/webhooks/telnyx/variables` with JSON body such as `{"caller_number": "+15551234567"}`
+- **Home:** http://localhost:8080/
+- **Health:** http://localhost:8080/health
+- **Variables webhook (try):** `POST http://localhost:8080/webhooks/telnyx/variables` with `{"caller_number": "+15551234567"}`
+
+Without `DB_URI`, the app runs but DB-backed routes return **503** where applicable.
 
 ---
 
-## Demo script (8–10 minutes)
+## MCP
 
-1. Dial the Telnyx number; note personalized greeting driven by webhook variables.
-2. Book a table: date → time → party size → confirmation.
-3. Call again (or same call): modify or cancel; show tool + API behavior.
-4. Show failure path: no availability → assistant offers alternatives.
+The in-repo MCP server is documented as a **suggested tool surface** aligned with the REST API above. Implement or wire tools per [Telnyx MCP guidance](https://developers.telnyx.com/); mapping table: [`telnyx_restaurant/mcp_server/README.md`](telnyx_restaurant/mcp_server/README.md).
 
 ---
 
-## Documentation
+## Security & ops
 
-| Document | Description |
-|----------|-------------|
-| **This README** | Architecture, flows, deployment |
-| [`telnyx_restaurant/README.md`](telnyx_restaurant/README.md) | Runbook for the API + MCP |
-
----
-
-## Security notes
-
-- Use **synthetic** restaurant and guest data for demos.
-- Authenticate webhook requests if Telnyx provides signatures or shared secrets; store secrets in Render env vars.
-- Rate-limit and validate tool inputs server-side; never trust the model for authorization.
-
-### Log noise: `.env`, `.git`, GraphQL probes
-
-Public sites are scanned constantly. User-Agents such as `l9scan` ([LeakIX](https://leakix.net)) probe for `/.env`, `/.git/config`, `/graphql`, admin paths, etc. **HTTP 404 on those URLs is normal and good** — it means those files and endpoints are not exposed. Your `.env` must **never** be in the image or repo (keep it gitignored; use Render **Environment** only).
-
-After deploy, check Render logs for: `Hanok Table: rev=… index_exists=True` — if `index_exists=False`, the static site was not deployed in the build; if **`GET /` still returns JSON 404** while `index_exists=True`, fix Cloudflare/Render routing (redeploy, correct root directory / start command).
+- Synthetic data only for public demos.
+- Do not commit `.env`; rotate DB credentials if exposed.
+- Scanner noise (`/.env`, `/.git`, etc.) returning **404** is expected.
 
 ---
 
 ## License
 
-MIT License — see [LICENSE](LICENSE).
-
----
-
-## Acknowledgments
-
-- [Telnyx](https://www.telnyx.com/) — Voice AI platform and assistant builder  
-- [Model Context Protocol](https://modelcontextprotocol.io/) — Tool/resource standard  
-- **FastAPI**, **Pydantic**, **uvicorn**  
+MIT — see [LICENSE](LICENSE).
 
 **Repository:** [github.com/hjleepapa/8-telnyx](https://github.com/hjleepapa/8-telnyx)
