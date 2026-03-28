@@ -8,10 +8,30 @@ from fastapi import HTTPException
 from telnyx_restaurant.models import Reservation
 from telnyx_restaurant.routers.reservations import (
     _apply_reservation_update,
+    _flat_apply_cancel_and_query_status,
+    _flat_infer_cancel_from_voice_aliases,
     _reject_modifying_cancelled,
     _truthy_non_status_reservation_fields,
 )
 from telnyx_restaurant.schemas_res import ReservationUpdate
+
+
+def test_infer_cancel_from_operation_when_status_null() -> None:
+    flat = {"status": None, "operation": "cancel_reservation", "party_size": None}
+    _flat_infer_cancel_from_voice_aliases(flat)
+    assert flat.get("status") == "cancelled"
+
+
+def test_query_cancel_applies_when_body_status_json_null() -> None:
+    flat = {"status": None, "party_size": 2}
+    _flat_apply_cancel_and_query_status(flat, query_status=None, cancel="1")
+    assert flat.get("status") == "cancelled"
+
+
+def test_infer_cancel_skips_when_status_is_confirmed() -> None:
+    flat = {"status": "confirmed", "operation": "cancel"}
+    _flat_infer_cancel_from_voice_aliases(flat)
+    assert flat.get("status") == "confirmed"
 
 
 def test_truthy_non_status_false_when_only_cancel_and_null_placeholders() -> None:

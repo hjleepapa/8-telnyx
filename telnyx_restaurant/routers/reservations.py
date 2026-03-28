@@ -239,6 +239,11 @@ def _merge_status_from_cancel_query(
     return None
 
 
+def _flat_status_is_null_or_blank(flat: dict[str, Any]) -> bool:
+    cur = flat.get("status")
+    return cur is None or (isinstance(cur, str) and not cur.strip())
+
+
 def _flat_apply_cancel_and_query_status(
     flat: dict[str, Any],
     *,
@@ -246,14 +251,97 @@ def _flat_apply_cancel_and_query_status(
     cancel: str | None,
 ) -> None:
     merged_q = _merge_status_from_cancel_query(query_status, cancel)
-    if merged_q:
-        flat.setdefault("status", merged_q)
+    if merged_q and _flat_status_is_null_or_blank(flat):
+        flat["status"] = merged_q
     for flag in ("cancel", "Cancel", "cancel_reservation", "cancellation_requested"):
         v = flat.get(flag)
         if v is True:
-            flat.setdefault("status", "cancelled")
+            flat["status"] = "cancelled"
         elif isinstance(v, str) and v.strip().casefold() in ("true", "1", "yes", "y"):
-            flat.setdefault("status", "cancelled")
+            flat["status"] = "cancelled"
+
+
+def _flat_strong_status_token(flat: dict[str, Any]) -> str | None:
+    """Non-empty status string from common keys, lowercased (not JSON null)."""
+    for key in (
+        "status",
+        "Status",
+        "reservation_status",
+        "reservationStatus",
+        "booking_status",
+    ):
+        v = flat.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip().casefold()
+    return None
+
+
+def _flat_has_cancel_status_value(flat: dict[str, Any]) -> bool:
+    st = _flat_strong_status_token(flat)
+    if not st:
+        return False
+    s = st.replace(" ", "_").replace("-", "_")
+    return s in {
+        "cancel",
+        "cancelled",
+        "canceled",
+        "cancellation",
+        "void",
+        "voided",
+        "delete",
+        "deleted",
+    }
+
+
+def _flat_infer_cancel_from_voice_aliases(flat: dict[str, Any]) -> None:
+    """Telnyx tools often send status=null with operation/action=cancel — set status for PATCH."""
+    strong = _flat_strong_status_token(flat)
+    if strong in ("confirmed", "pending", "seated", "completed"):
+        return
+    if _flat_has_cancel_status_value(flat):
+        return
+    cancelish_keys = (
+        "operation",
+        "Operation",
+        "action",
+        "Action",
+        "intent",
+        "Intent",
+        "command",
+        "Command",
+        "event",
+        "Event",
+        "type",
+        "Type",
+        "reservation_action",
+        "booking_action",
+        "change_type",
+    )
+    cancel_tokens = frozenset(
+        {
+            "cancel",
+            "cancelled",
+            "canceled",
+            "cancellation",
+            "cancel_reservation",
+            "delete",
+            "deleted",
+            "void",
+            "voided",
+        }
+    )
+    for key in cancelish_keys:
+        v = flat.get(key)
+        if isinstance(v, str):
+            t = v.strip().casefold().replace(" ", "_").replace("-", "_")
+            if t in cancel_tokens or t.endswith("_cancel") or t.startswith("cancel_"):
+                if _flat_status_is_null_or_blank(flat):
+                    flat["status"] = "cancelled"
+                return
+        elif v is True and key and "cancel" in key.lower():
+            if _flat_status_is_null_or_blank(flat):
+                flat["status"] = "cancelled"
+            return
 
 
 async def _patch_at_status_url(
@@ -282,6 +370,7 @@ async def _patch_at_status_url(
         flat.pop(k, None)
 
     _flat_apply_cancel_and_query_status(flat, query_status=query_status, cancel=cancel)
+    _flat_infer_cancel_from_voice_aliases(flat)
 
     if hanok_reservation_verbose_logging():
         logger.info(
@@ -1172,6 +1261,14 @@ async def _patch_amend_from_request(
         logger.info("PATCH /amend raw summary: %s", _shallow_body_summary(raw))
 
     flat = _unwrap_nested_reservation_payload(dict(raw))
+    qp = request.query_params
+    _flat_apply_cancel_and_query_status(
+        flat,
+        query_status=qp.get("status"),
+        cancel=qp.get("cancel"),
+    )
+    _flat_infer_cancel_from_voice_aliases(flat)
+
     code_raw = (
         flat.pop("confirmation_code", None)
         or flat.pop("code", None)
