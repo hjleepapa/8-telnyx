@@ -846,7 +846,11 @@ async def create_reservation(
         preorder_discount_cents=discount,
         food_total_cents=total,
         source_channel=body.source_channel,
-        reminder_call_status="reminder_queued",
+        reminder_call_status=(
+            "no_outbound_reminder_source_api"
+            if body.source_channel == "api"
+            else "reminder_queued"
+        ),
     )
     db.add(row)
     try:
@@ -859,12 +863,13 @@ async def create_reservation(
         raise HTTPException(status_code=409, detail=str(e)) from e
     db.refresh(row)
 
-    schedule_demo_reminder_call(
-        reservation_id=row.id,
-        guest_phone=row.guest_phone,
-        guest_name=row.guest_name,
-        confirmation_code=row.confirmation_code,
-    )
+    if body.source_channel != "api":
+        schedule_demo_reminder_call(
+            reservation_id=row.id,
+            guest_phone=row.guest_phone,
+            guest_name=row.guest_name,
+            confirmation_code=row.confirmation_code,
+        )
     return row
 
 

@@ -49,7 +49,7 @@ Requires **Render env vars** `TELNYX_API_KEY`, `TELNYX_CONNECTION_ID` (Call Cont
 
 **Reminder audio:** `POST /v2/calls` only rings you until the Call Control app’s **webhook** is set to **`POST https://<your-host>/webhooks/telnyx/call-control`**. On **`call.answered`**, that endpoint runs **speak** (TTS) using the reservation details in `client_state`, then **hangs up** after **`call.speak.ended`**. If the webhook is missing or mis-pointed, you hear silence.
 
-Check **`reminder_call_status`** on the row in `/admin/reservations`: `demo_skipped_no_telnyx_config` means env is missing; `telnyx_error_http_*` includes a Telnyx API error (see service logs).
+Check **`reminder_call_status`** on the row in `/admin/reservations`: `demo_skipped_no_telnyx_config` means env is missing; `telnyx_error_http_*` includes a Telnyx API error (see service logs). Bookings with **`source_channel`: `api`** skip the outbound reminder (`no_outbound_reminder_source_api`).
 
 ## Telnyx AI Assistant (paste into instructions)
 
