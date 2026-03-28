@@ -22,6 +22,7 @@ mcp = FastMCP(
     "hanok-table-reservations",
     instructions=_INSTRUCTIONS,
     json_response=True,
+    stateless_http=True,
 )
 
 

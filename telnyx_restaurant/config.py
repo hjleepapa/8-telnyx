@@ -87,6 +87,24 @@ def hanok_mcp_api_base_url() -> str:
     return "http://127.0.0.1:8000"
 
 
+def hanok_mcp_http_mount_enabled() -> bool:
+    """If true, mount FastMCP streamable HTTP on FastAPI at ``hanok_mcp_http_mount_path()`` (one uvicorn — Telnyx HTTP MCP URL)."""
+    return (os.environ.get("HANOK_MCP_HTTP_MOUNT") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def hanok_mcp_http_mount_path() -> str:
+    """URL prefix for the mounted MCP app (no trailing slash)."""
+    p = (os.environ.get("HANOK_MCP_HTTP_MOUNT_PATH") or "/mcp").strip()
+    if not p.startswith("/"):
+        p = "/" + p
+    p = p.rstrip("/")
+    return p if p else "/mcp"
+
+
 def hanok_reservation_verbose_logging() -> bool:
     """If true, log PATCH /amend and …/status bodies (truncated) at INFO for debugging Telnyx tools."""
     return (os.environ.get("HANOK_RESERVATION_VERBOSE_LOG") or "").strip().lower() in (

@@ -50,6 +50,27 @@ Tool responses are JSON strings with `http_status` and `data` (or error hints) s
 
 ---
 
+## Telnyx Mission Control — “Create MCP Server” (HTTP + required URL)
+
+Some Telnyx UIs only offer **Type: HTTP**, **Name**, **URL** (required), and **API Key**. That screen is **not** where you set `HANOK_MCP_API_BASE_URL`: there are **no per-server Python env vars** there. It registers a **remote MCP endpoint** Telnyx’s cloud will call.
+
+Do this instead:
+
+1. On **Render** (same web service as `uvicorn`), set:
+   - `HANOK_MCP_HTTP_MOUNT=1`
+   - `HANOK_PUBLIC_BASE_URL=https://your-host` (or `HANOK_MCP_API_BASE_URL` if you prefer an explicit API origin for tools)
+   - Optional: `HANOK_MCP_HTTP_MOUNT_PATH=/mcp` (default is `/mcp`)
+2. Redeploy. FastAPI mounts the MCP **streamable HTTP** app at that path.
+3. In Telnyx **Create MCP Server**:
+   - **Name:** e.g. `hanok_table_mcp`
+   - **Type:** HTTP
+   - **URL:** `https://your-host/mcp` (use your real host; path must match `HANOK_MCP_HTTP_MOUNT_PATH`)
+   - **API Key:** leave empty unless Telnyx docs or your own auth layer require it
+
+`HANOK_MCP_API_BASE_URL` / `HANOK_PUBLIC_BASE_URL` are read by **your deployed Python process** on Render so MCP **tools** can HTTP-call the REST API (usually the same public origin).
+
+---
+
 ## Manual steps you must do (checklist)
 
 ### 1. Environment

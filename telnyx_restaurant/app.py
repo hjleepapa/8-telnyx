@@ -11,6 +11,8 @@ from fastapi.staticfiles import StaticFiles
 
 from telnyx_restaurant.config import (
     admin_dashboard_token,
+    hanok_mcp_http_mount_enabled,
+    hanok_mcp_http_mount_path,
     hanok_public_base_url,
     hanok_reservation_lab_enabled,
     telnyx_api_key,
@@ -72,6 +74,12 @@ app = FastAPI(
 app.include_router(webhook.router, prefix="/webhooks/telnyx", tags=["telnyx"])
 app.include_router(reservations.router)
 app.include_router(admin.router)
+
+if hanok_mcp_http_mount_enabled():
+    from telnyx_restaurant.mcp_server.server import mcp as _hanok_mcp
+
+    _hanok_mcp.settings.streamable_http_path = "/"
+    app.mount(hanok_mcp_http_mount_path(), _hanok_mcp.streamable_http_app())
 
 if _STATIC.is_dir():
     app.mount(
