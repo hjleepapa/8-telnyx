@@ -30,3 +30,24 @@ def test_unwrap_preserves_reservation_id_when_inner_null() -> None:
     }
     flat = _unwrap_nested_reservation_payload(raw)
     assert flat.get("reservation_id") == 11
+
+
+def test_unwrap_preserves_guest_and_party_when_inner_null() -> None:
+    raw = {
+        "guest_name": "HJ",
+        "guest_phone": "+19259897818",
+        "party_size": 3,
+        "confirmation_code": "HNK-ZZ99",
+        "body": {
+            "preorder": [{"menu_item_id": "bulgogi", "quantity": 1}],
+            "guest_name": None,
+            "guest_phone": None,
+            "party_size": None,
+            "confirmation_code": None,
+        },
+    }
+    flat = _unwrap_nested_reservation_payload(raw)
+    assert flat.get("guest_name") == "HJ"
+    assert flat.get("guest_phone") == "+19259897818"
+    assert flat.get("party_size") == 3
+    assert flat.get("confirmation_code") == "HNK-ZZ99"

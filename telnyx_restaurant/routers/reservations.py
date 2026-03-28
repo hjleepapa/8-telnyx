@@ -610,6 +610,124 @@ def _candidate_pool_for_phone(
     return sorted(rows, key=lambda r: r.starts_at, reverse=True)
 
 
+def _is_menu_order_line_dict(d: dict[str, Any]) -> bool:
+    """Skip nested preorder lines when scavenging reservation id / code from tool JSON."""
+    return bool(d.get("menu_item_id") or d.get("menuItemId"))
+
+
+def _truthy_identity_token(v: Any) -> bool:
+    if v is None:
+        return False
+    if isinstance(v, bool):
+        return False
+    s = str(v).strip()
+    if not s or s.lower() in ("null", "none", "undefined"):
+        return False
+    return True
+
+
+def _flat_guest_identity_for_amend(flat: dict[str, Any]) -> tuple[str, str] | None:
+    """Telnyx often sends null confirmation_code but still includes guest_name / guest_phone."""
+    gn = flat.get("guest_name")
+    if gn is None:
+        gn = flat.get("name") or flat.get("customer_name") or flat.get("guestName")
+    gp = flat.get("guest_phone")
+    if gp is None:
+        gp = (
+            flat.get("phone")
+            or flat.get("guestPhone")
+            or flat.get("telnyx_end_user_target")
+            or flat.get("caller_number")
+        )
+    if not _truthy_identity_token(gn) or not _truthy_identity_token(gp):
+        return None
+    gn = str(gn).strip()
+    gp = str(gp).strip()
+    if len(gp) < 3:
+        return None
+    return gn, gp
+
+
+def _amend_resolve_row_via_guest_lookup(db: Session, flat: dict[str, Any]) -> Reservation | None:
+    ident = _flat_guest_identity_for_amend(flat)
+    if not ident:
+        return None
+    guest_name_hint, raw_phone = ident
+    variants = phone_lookup_variants(raw_phone)
+    if not variants:
+        return None
+    now = datetime.now(UTC)
+    pool = _candidate_pool_for_phone(db, variants, now)
+    if not pool:
+        return None
+    matched = [r for r in pool if _guest_name_matches(r.guest_name, guest_name_hint)]
+    if len(matched) != 1:
+        return None
+    return matched[0]
+
+
+def _scavenge_reservation_id_int(obj: Any, depth: int = 0) -> int | None:
+    """Find reservation row id in nested objects (e.g. tool context), avoiding preorder lines."""
+    id_keys = ("reservation_id", "reservationId", "booking_id")
+    if depth > 14:
+        return None
+    if isinstance(obj, dict):
+        if _is_menu_order_line_dict(obj):
+            return None
+        for k in id_keys:
+            v = obj.get(k)
+            if isinstance(v, int) and v >= 1:
+                return v
+            if isinstance(v, str) and v.strip().isdigit() and int(v.strip(), 10) >= 1:
+                return int(v.strip(), 10)
+        v = obj.get("id")
+        if isinstance(v, int) and v >= 1:
+            return v
+        if isinstance(v, str) and v.strip().isdigit() and int(v.strip(), 10) >= 1:
+            return int(v.strip(), 10)
+        for v in obj.values():
+            got = _scavenge_reservation_id_int(v, depth + 1)
+            if got is not None:
+                return got
+    elif isinstance(obj, list):
+        for it in obj:
+            got = _scavenge_reservation_id_int(it, depth + 1)
+            if got is not None:
+                return got
+    return None
+
+
+def _scavenge_confirmation_code_str(obj: Any, depth: int = 0) -> str | None:
+    """Find HNK-… or similar in nested payload when root confirmation_code is null."""
+    code_keys = (
+        "confirmation_code",
+        "code",
+        "confirmationCode",
+        "hnk_code",
+        "reservation_code",
+        "next_reservation_code",
+    )
+    if depth > 14:
+        return None
+    if isinstance(obj, dict):
+        if _is_menu_order_line_dict(obj):
+            return None
+        for k in code_keys:
+            v = obj.get(k)
+            if _truthy_identity_token(v):
+                return str(v).strip()
+        for v in obj.values():
+            got = _scavenge_confirmation_code_str(v, depth + 1)
+            if got:
+                return got
+    elif isinstance(obj, list):
+        for it in obj:
+            got = _scavenge_confirmation_code_str(it, depth + 1)
+            if got:
+                return got
+    return None
+
+
 @router.get("/menu/items")
 def list_menu_items():
     """Public menu with prices for the online reservation pre-order step."""
@@ -1024,6 +1142,26 @@ async def amend_reservation_by_body_code(
     code_ok = code_raw is not None and str(code_raw).strip()
     rid_ok = rid_raw is not None and str(rid_raw).strip()
     if not code_ok and not rid_ok:
+        # Telnyx templates often send confirmation_code / id as JSON null at the root even
+        # when guest fields or nested context still identify the row (same as prior GET /lookup).
+        row_guess = _amend_resolve_row_via_guest_lookup(db, flat)
+        if row_guess is not None:
+            rid_raw = row_guess.id
+            rid_ok = True
+            logger.info("PATCH /amend: identity from guest_name+phone lookup id=%s", row_guess.id)
+        else:
+            sid = _scavenge_reservation_id_int(raw)
+            if sid is not None:
+                rid_raw = sid
+                rid_ok = True
+                logger.info("PATCH /amend: identity from nested id scavenging id=%s", sid)
+            else:
+                sc = _scavenge_confirmation_code_str(raw)
+                if sc:
+                    code_raw = sc
+                    code_ok = True
+                    logger.info("PATCH /amend: identity from nested confirmation_code scavenging")
+    if not code_ok and not rid_ok:
         logger.warning(
             "PATCH /amend 422: missing confirmation_code and id after unwrap. "
             "top_keys=%s flat_keys=%s summary=%s",
@@ -1036,6 +1174,7 @@ async def amend_reservation_by_body_code(
             detail=(
                 "Include confirmation_code (or code, next_reservation_code, …) "
                 "or reservation_id / id (number from GET /api/reservations/lookup), "
+                "or guest_name + guest_phone (unique active booking), "
                 "plus fields to update (party_size, starts_at, preorder, …)."
             ),
         )

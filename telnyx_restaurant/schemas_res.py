@@ -186,6 +186,22 @@ _IDENTITY_KEYS_NO_NULL_OVERRIDE = frozenset(
         "reservation_id",
         "reservationId",
         "booking_id",
+        # Guest + slot fields: inner `body` often repeats these as JSON null (Telnyx templates).
+        "guest_name",
+        "name",
+        "customer_name",
+        "guestName",
+        "guest_phone",
+        "phone",
+        "guestPhone",
+        "telnyx_end_user_target",
+        "caller_number",
+        "party_size",
+        "partySize",
+        "starts_at",
+        "startsAt",
+        "start_time",
+        "startTime",
     }
 )
 
@@ -195,6 +211,8 @@ def _truthy_reservation_identity(v: Any) -> bool:
         return False
     if isinstance(v, bool):
         return False
+    if isinstance(v, datetime):
+        return True
     if isinstance(v, int):
         return v >= 1
     if isinstance(v, float):
