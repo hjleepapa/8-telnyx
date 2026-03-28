@@ -5,6 +5,8 @@ This is a **real** [Model Context Protocol](https://modelcontextprotocol.io/) se
 ## Requirements
 
 - Python **3.11+** (match the main app).
+
+When MCP **streamable HTTP** is mounted **in the same uvicorn process** as the API, tool handlers must not run **blocking** HTTP in the asyncio event loop (Telnyx would see ~60s stalls). This server uses **`async` tools** and **`asyncio.to_thread`** around sync `httpx` so API requests can be served while tools run.
 - Install deps from repo root: `pip install -r telnyx_restaurant/requirements.txt`
 - The MCP process must reach your API over HTTPS or HTTP (`HANOK_MCP_API_BASE_URL` or `HANOK_PUBLIC_BASE_URL`).
 
