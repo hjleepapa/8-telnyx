@@ -438,7 +438,7 @@
     <div class="wrap">
       <p class="meta">
         {{ row_count }} active reservation{% if row_count != 1 %}s{% endif %} on the calendar.
-        {% if cancelled_hidden and cancelled_hidden > 0 %}{{ cancelled_hidden }} cancelled hidden.{% endif %}
+        {% if cancelled_hidden and cancelled_hidden > 0 %}<strong>{{ cancelled_hidden }} cancelled</strong> (hidden from calendar — cancel did run).{% endif %}
         API: <code>GET /api/reservations</code>
       </p>
       {% if row_count == 0 %}

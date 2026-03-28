@@ -132,6 +132,20 @@ def _preorder_null_clears_cart(body: ReservationUpdate) -> bool:
     return not _has_truthy_non_preorder_patch(body)
 
 
+def _truthy_non_status_reservation_fields(body: ReservationUpdate) -> bool:
+    """True if the patch would apply any field other than status with a non-None value.
+
+    Telnyx templates include explicit JSON nulls for party_size, starts_at, etc.; those keys must
+    not trip _reject_modifying_cancelled when the guest is only cancelling.
+    """
+    eff = _effective_reservation_patch_fields(body)
+    eff.discard("status")
+    for k in eff:
+        if getattr(body, k) is not None:
+            return True
+    return False
+
+
 def _effective_reservation_patch_fields(body: ReservationUpdate) -> set[str]:
     """Telnyx sends preorder: [] alongside other fields; [] means omit, not clear (see _apply_reservation_update)."""
     fs = set(body.model_fields_set)
@@ -289,7 +303,7 @@ async def _patch_at_status_url(
 
     eff = _effective_reservation_patch_fields(patch) if patch is not None else set()
     if patch is not None and eff:
-        if eff - {"status"}:
+        if _truthy_non_status_reservation_fields(patch):
             _reject_modifying_cancelled(row)
         changed = _apply_reservation_update(db, row, patch)
         if changed:
@@ -1107,8 +1121,9 @@ def patch_reservation_by_code(
     ).scalar_one_or_none()
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
-    _reject_modifying_cancelled(row)
     _require_reservation_update_fields(body)
+    if _truthy_non_status_reservation_fields(body):
+        _reject_modifying_cancelled(row)
     changed = _apply_reservation_update(db, row, body)
     if changed:
         db.commit()
@@ -1314,7 +1329,6 @@ async def _patch_amend_from_request(
     if not row:
         logger.warning("PATCH /amend 404: no row for code_ok=%s rid=%s", code_ok, rid_raw if not code_ok else None)
         raise HTTPException(status_code=404, detail="Reservation not found")
-    _reject_modifying_cancelled(row)
     try:
         _require_reservation_update_fields(body)
     except HTTPException:
@@ -1326,6 +1340,8 @@ async def _patch_amend_from_request(
             _effective_reservation_patch_fields(body),
         )
         raise
+    if _truthy_non_status_reservation_fields(body):
+        _reject_modifying_cancelled(row)
     changed = _apply_reservation_update(db, row, body)
     if changed:
         db.commit()
@@ -1463,8 +1479,9 @@ def patch_reservation(
     row = db.get(Reservation, reservation_id_int)
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
-    _reject_modifying_cancelled(row)
     _require_reservation_update_fields(body)
+    if _truthy_non_status_reservation_fields(body):
+        _reject_modifying_cancelled(row)
     changed = _apply_reservation_update(db, row, body)
     if changed:
         db.commit()
