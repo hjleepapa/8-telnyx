@@ -159,6 +159,9 @@ _RES_KEYS_HINT = frozenset(
         "status",
         "reservation_status",
         "booking_status",
+        "reservation_id",
+        "reservationId",
+        "booking_id",
     }
 )
 
@@ -437,7 +440,21 @@ class ReservationCreate(BaseModel):
             "date_time",
         ),
     )
-    special_requests: str | None = Field(None, max_length=2000)
+    special_requests: str | None = Field(
+        None,
+        max_length=2000,
+        validation_alias=AliasChoices(
+            "special_requests",
+            "special_request",
+            "specialRequest",
+            "specialRequests",
+            "sepcial_requests",
+            "sepcial_request",
+            "notes",
+            "dietary_notes",
+            "dietaryNotes",
+        ),
+    )
     preorder: list[PreorderLineIn] = Field(
         default_factory=list,
         validation_alias=PREORDER_ALIASES,
@@ -585,7 +602,21 @@ class ReservationUpdate(BaseModel):
             "date_time",
         ),
     )
-    special_requests: str | None = Field(None, max_length=2000)
+    special_requests: str | None = Field(
+        None,
+        max_length=2000,
+        validation_alias=AliasChoices(
+            "special_requests",
+            "special_request",
+            "specialRequest",
+            "specialRequests",
+            "sepcial_requests",
+            "sepcial_request",
+            "notes",
+            "dietary_notes",
+            "dietaryNotes",
+        ),
+    )
     status: str | None = Field(
         None,
         validation_alias=AliasChoices(

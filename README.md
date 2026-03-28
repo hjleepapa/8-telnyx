@@ -71,7 +71,7 @@ There is **no** `GET /api/availability` in this repo yet; availability can be mo
 | GET | `/lookup` | **Primary lookup:** `guest_name` + **`phone` or `guest_phone`** (empty `phone=` is OK if `guest_phone` is set). |
 | GET | `/lookup-by-phone` | Legacy: phone (+ optional `guest_name` if ambiguous). |
 | GET | `/by-code/{code}` | Fetch by **HNK-…** code (real code in path; not literal `{{code}}`). |
-| PATCH | `/amend` | **Voice/tool-friendly patch:** body includes **`confirmation_code`** (or `code`, `next_reservation_code`, …) **plus** any of: `preorder` / `items`, **`party_size`**, **`starts_at`**, **`status`**, `guest_name`, `guest_phone`, `special_requests`. Use when `{{reservation_id}}` is not bound in the tool URL. |
+| PATCH | `/amend` | **Body:** **`confirmation_code`** (or `code`, `next_reservation_code`, …) **or** numeric **`id` / `reservation_id`** (same as lookup response’s `id`, e.g. `11`), **plus** fields to change: `preorder` / `items`, **`party_size`**, **`starts_at`**, **`status`**, guest fields, etc. Use when the tool posts JSON instead of `PATCH /{id}`. |
 | PATCH | `/by-code/{code}` | Partial update (party size, time, pre-order, guest fields). Ignores JSON `null` on required DB columns (e.g. does not clear `party_size`). |
 | PATCH | `/by-code/{code}/status` | **Status** (`{"status":"cancelled"}` or **`?cancel=1`**) and, if needed, the **same fields as `/amend`** (party_size, starts_at, preorder, …) when Telnyx tools are bound to `…/status` only. |
 | PATCH | `/{id}` | Partial update by numeric id (id must be real; not `{{reservation_id}}`). |

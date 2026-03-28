@@ -326,6 +326,10 @@ _JSON_ARRAY_SINGLE_OBJECT_KEYS = frozenset(
         "name",
         "phone",
         "status",
+        "id",
+        "reservation_id",
+        "reservationId",
+        "booking_id",
         "confirmation_code",
         "code",
         "confirmationCode",
@@ -845,10 +849,10 @@ async def amend_reservation_by_body_code(
     response: Response,
     db: Session = Depends(get_db),
 ):
-    """Update a booking when Telnyx cannot bind numeric `reservation_id` in the path.
+    """Update a booking when tools post JSON instead of PATCH /{id}.
 
-    JSON or form body must include **confirmation_code** (or **code**) plus any fields accepted by
-    **`PATCH /api/reservations/by-code/{code}`** (e.g. **preorder** / **items** / **menu**).
+    Body must include **confirmation_code** (or aliases) **or** numeric **reservation_id** / **id**
+    (same as `ReservationRead.id` from GET /lookup), plus fields to patch.
     """
     raw = await read_json_or_form_body(request)
     if not isinstance(raw, dict):
@@ -865,12 +869,25 @@ async def amend_reservation_by_body_code(
         or flat.pop("reservation_code", None)
         or flat.pop("next_reservation_code", None)
     )
-    if code_raw is None or not str(code_raw).strip():
+    rid_raw = flat.pop("reservation_id", None)
+    if rid_raw is None:
+        rid_raw = flat.pop("id", None)
+    if rid_raw is None:
+        rid_raw = flat.pop("reservationId", None)
+    if rid_raw is None:
+        rid_raw = flat.pop("booking_id", None)
+
+    code_ok = code_raw is not None and str(code_raw).strip()
+    rid_ok = rid_raw is not None and str(rid_raw).strip()
+    if not code_ok and not rid_ok:
         raise HTTPException(
             status_code=422,
-            detail="Body must include confirmation_code (or code) with the HNK-… value from the booking.",
+            detail=(
+                "Include confirmation_code (or code, next_reservation_code, …) "
+                "or reservation_id / id (number from GET /api/reservations/lookup), "
+                "plus fields to update (party_size, starts_at, preorder, …)."
+            ),
         )
-    code = _normalize_confirmation_code(_reject_unsubstituted_path_value(str(code_raw).strip()))
     try:
         body = ReservationUpdate.model_validate(flat)
     except ValidationError as exc:
@@ -880,7 +897,22 @@ async def amend_reservation_by_body_code(
             exc.errors()[:8],
         )
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
-    row = db.execute(select(Reservation).where(Reservation.confirmation_code == code)).scalar_one_or_none()
+
+    row: Reservation | None = None
+    if code_ok:
+        code = _normalize_confirmation_code(_reject_unsubstituted_path_value(str(code_raw).strip()))
+        row = db.execute(select(Reservation).where(Reservation.confirmation_code == code)).scalar_one_or_none()
+    else:
+        try:
+            rid = int(str(rid_raw).strip(), 10)
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail="reservation_id / id must be a positive integer from the lookup response.",
+            ) from None
+        if rid < 1:
+            raise HTTPException(status_code=422, detail="reservation_id must be a positive integer.")
+        row = db.get(Reservation, rid)
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
     _reject_modifying_cancelled(row)
