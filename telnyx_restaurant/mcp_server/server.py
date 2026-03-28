@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from typing import Any
@@ -29,8 +30,18 @@ mcp = FastMCP(
 )
 
 
+def _sync_timeout() -> httpx.Timeout:
+    """Outbound HTTP; sync client runs in asyncio.to_thread when using streamable-http in-process."""
+    raw = (os.environ.get("HANOK_MCP_HTTP_TIMEOUT_SECONDS") or "45").strip()
+    try:
+        sec = max(5.0, min(float(raw), 120.0))
+    except ValueError:
+        sec = 45.0
+    return httpx.Timeout(sec)
+
+
 def _client() -> httpx.Client:
-    return httpx.Client(base_url=hanok_mcp_api_base_url(), timeout=60.0)
+    return httpx.Client(base_url=hanok_mcp_api_base_url(), timeout=_sync_timeout())
 
 
 def _fmt_response(status_code: int, text: str) -> str:
@@ -44,7 +55,7 @@ def _fmt_response(status_code: int, text: str) -> str:
         )
 
 
-def _http_json(method: str, path: str, **kwargs: Any) -> str:
+def _http_json_sync(method: str, path: str, kwargs: dict[str, Any]) -> str:
     try:
         with _client() as client:
             r = client.request(method, path, **kwargs)
@@ -60,39 +71,44 @@ def _http_json(method: str, path: str, **kwargs: Any) -> str:
         )
 
 
+async def _http_json(method: str, path: str, **kwargs: Any) -> str:
+    """Run blocking httpx in a thread so streamable-http MCP does not stall the same-process FastAPI app."""
+    return await asyncio.to_thread(_http_json_sync, method, path, kwargs)
+
+
 @mcp.tool()
-def list_menu_items() -> str:
+async def list_menu_items() -> str:
     """List menu item ids, English names, and price_cents for pre-order lines."""
-    return _http_json("GET", "/api/reservations/menu/items")
+    return await _http_json("GET", "/api/reservations/menu/items")
 
 
 @mcp.tool()
-def get_reservation(guest_name: str, guest_phone: str) -> str:
+async def get_reservation(guest_name: str, guest_phone: str) -> str:
     """Look up the active reservation for this caller. guest_name is required; use E.164 phone (+1…)."""
     params = {"guest_name": guest_name.strip(), "guest_phone": guest_phone.strip()}
-    return _http_json("GET", "/api/reservations/lookup", params=params)
+    return await _http_json("GET", "/api/reservations/lookup", params=params)
 
 
 @mcp.tool()
-def get_reservation_by_code(confirmation_code: str) -> str:
+async def get_reservation_by_code(confirmation_code: str) -> str:
     """Fetch one reservation by HNK confirmation code (e.g. HNK-AB12)."""
     code = confirmation_code.strip().upper()
     if not code.startswith("HNK-"):
         code = f"HNK-{code.removeprefix('HNK-').removeprefix('hnk-')}"
-    return _http_json("GET", f"/api/reservations/by-code/{code}")
+    return await _http_json("GET", f"/api/reservations/by-code/{code}")
 
 
 @mcp.tool()
-def search_seating_availability(date: str) -> str:
+async def search_seating_availability(date: str) -> str:
     """
     Per-slot table availability for a UTC calendar day (YYYY-MM-DD).
     Requires HANOK_TABLE_ALLOCATION_ENABLED on the API host; otherwise returns 404 with explanation.
     """
-    return _http_json("GET", "/api/reservations/seating/availability", params={"date": date.strip()})
+    return await _http_json("GET", "/api/reservations/seating/availability", params={"date": date.strip()})
 
 
 @mcp.tool()
-def create_reservation(
+async def create_reservation(
     guest_name: str,
     guest_phone: str,
     party_size: int,
@@ -119,7 +135,7 @@ def create_reservation(
             body["preorder"] = json.loads(preorder_lines_json)
         except json.JSONDecodeError as e:
             return json.dumps({"error": "invalid_preorder_json", "detail": str(e)}, indent=2)
-    return _http_json(
+    return await _http_json(
         "POST",
         "/api/reservations",
         json=body,
@@ -128,7 +144,7 @@ def create_reservation(
 
 
 @mcp.tool()
-def update_reservation_details(
+async def update_reservation_details(
     reservation_id: int,
     party_size: int | None = None,
     starts_at: str | None = None,
@@ -166,7 +182,7 @@ def update_reservation_details(
             },
             indent=2,
         )
-    return _http_json(
+    return await _http_json(
         "PATCH",
         f"/api/reservations/{int(reservation_id)}/amend",
         json=body,
@@ -174,12 +190,12 @@ def update_reservation_details(
     )
 
 
-def _patch_reservation_status(reservation_id: int, status: str) -> str:
+async def _patch_reservation_status(reservation_id: int, status: str) -> str:
     st = status.strip().lower()
     if st in ("cancel", "canceled", "cancellation"):
         st = "cancelled"
     body = {"status": st}
-    return _http_json(
+    return await _http_json(
         "PATCH",
         f"/api/reservations/{int(reservation_id)}/status",
         json=body,
@@ -188,18 +204,18 @@ def _patch_reservation_status(reservation_id: int, status: str) -> str:
 
 
 @mcp.tool()
-def set_reservation_status(reservation_id: int, status: str) -> str:
+async def set_reservation_status(reservation_id: int, status: str) -> str:
     """
     Update lifecycle only: pending, confirmed, seated, completed, cancelled.
     For cancel you may pass cancelled, cancel, or canceled.
     """
-    return _patch_reservation_status(reservation_id, status)
+    return await _patch_reservation_status(reservation_id, status)
 
 
 @mcp.tool()
-def cancel_reservation(reservation_id: int) -> str:
+async def cancel_reservation(reservation_id: int) -> str:
     """Cancel a reservation (sets status to cancelled)."""
-    return _patch_reservation_status(reservation_id, "cancelled")
+    return await _patch_reservation_status(reservation_id, "cancelled")
 
 
 def _clean_str(s: str) -> str:
