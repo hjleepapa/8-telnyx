@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 from typing import Any
@@ -30,18 +29,13 @@ mcp = FastMCP(
 )
 
 
-def _sync_timeout() -> httpx.Timeout:
-    """Outbound HTTP; sync client runs in asyncio.to_thread when using streamable-http in-process."""
+def _http_timeout() -> httpx.Timeout:
     raw = (os.environ.get("HANOK_MCP_HTTP_TIMEOUT_SECONDS") or "45").strip()
     try:
         sec = max(5.0, min(float(raw), 120.0))
     except ValueError:
         sec = 45.0
     return httpx.Timeout(sec)
-
-
-def _client() -> httpx.Client:
-    return httpx.Client(base_url=hanok_mcp_api_base_url(), timeout=_sync_timeout())
 
 
 def _fmt_response(status_code: int, text: str) -> str:
@@ -55,10 +49,15 @@ def _fmt_response(status_code: int, text: str) -> str:
         )
 
 
-def _http_json_sync(method: str, path: str, kwargs: dict[str, Any]) -> str:
+async def _http_json(method: str, path: str, **kwargs: Any) -> str:
+    """Async HTTP so the event loop stays free when MCP is mounted in the same uvicorn as the API.
+
+    ``asyncio.to_thread`` + blocking ``httpx`` to the same process exhausted the default thread pool:
+    every worker thread blocked on a response while the loop could not run route handlers (60s timeouts).
+    """
     try:
-        with _client() as client:
-            r = client.request(method, path, **kwargs)
+        async with httpx.AsyncClient(base_url=hanok_mcp_api_base_url(), timeout=_http_timeout()) as client:
+            r = await client.request(method, path, **kwargs)
             return _fmt_response(r.status_code, r.text)
     except httpx.RequestError as e:
         return json.dumps(
@@ -69,11 +68,6 @@ def _http_json_sync(method: str, path: str, kwargs: dict[str, Any]) -> str:
             },
             indent=2,
         )
-
-
-async def _http_json(method: str, path: str, **kwargs: Any) -> str:
-    """Run blocking httpx in a thread so streamable-http MCP does not stall the same-process FastAPI app."""
-    return await asyncio.to_thread(_http_json_sync, method, path, kwargs)
 
 
 @mcp.tool()
