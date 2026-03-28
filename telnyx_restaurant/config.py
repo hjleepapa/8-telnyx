@@ -72,6 +72,21 @@ def hanok_public_base_url() -> str | None:
     return v.rstrip("/")
 
 
+def hanok_mcp_api_base_url() -> str:
+    """Origin the MCP server calls for REST (no trailing slash).
+
+    Prefer HANOK_MCP_API_BASE_URL when the FastAPI app is not on the same host as MCP
+    (e.g. MCP on laptop, API on Render). Otherwise HANOK_PUBLIC_BASE_URL; local fallback 127.0.0.1:8000.
+    """
+    v = (os.environ.get("HANOK_MCP_API_BASE_URL") or "").strip().rstrip("/")
+    if v:
+        return v
+    pub = hanok_public_base_url()
+    if pub:
+        return pub
+    return "http://127.0.0.1:8000"
+
+
 def hanok_reservation_verbose_logging() -> bool:
     """If true, log PATCH /amend and …/status bodies (truncated) at INFO for debugging Telnyx tools."""
     return (os.environ.get("HANOK_RESERVATION_VERBOSE_LOG") or "").strip().lower() in (

@@ -1,6 +1,6 @@
 # Telnyx Voice AI — Hanok Table (Restaurant Reservations)
 
-> **Telnyx challenge stack:** Voice AI assistant for **Hanok Table** (demo Korean restaurant), backed by **FastAPI**, **PostgreSQL**, **dynamic webhook variables**, **Call Control** outbound reminders, and a suggested **MCP** tool mapping (see [`telnyx_restaurant/mcp_server/README.md`](telnyx_restaurant/mcp_server/README.md)).
+> **Telnyx challenge stack:** Voice AI assistant for **Hanok Table** (demo Korean restaurant), backed by **FastAPI**, **PostgreSQL**, **dynamic webhook variables**, **Call Control** outbound reminders, and an in-repo **MCP server** that wraps the same REST API (see [`telnyx_restaurant/mcp_server/README.md`](telnyx_restaurant/mcp_server/README.md) for run + Telnyx wiring).
 
 [![Telnyx](https://img.shields.io/badge/Telnyx-Voice%20AI-00D4AA.svg)](https://developers.telnyx.com/)
 [![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-000000.svg)](https://modelcontextprotocol.io/)
@@ -42,6 +42,8 @@ flowchart TB
   Assistant -->|POST /webhooks/telnyx/variables| App
   CC -->|POST /webhooks/telnyx/call-control| App
   Assistant -->|HTTP tools: REST API| App
+  Assistant -->|optional MCP stdio / HTTP| MCP[Hanok MCP server]
+  MCP -->|httpx| App
 ```
 
 | Layer | Role |
@@ -163,7 +165,9 @@ See [`telnyx_restaurant/.env.example`](telnyx_restaurant/.env.example) for a tem
     │   ├── reserve_online.html
     │   └── reservation_status.html
     └── mcp_server/
-        └── README.md           # Suggested MCP tool ↔ REST mapping
+        ├── README.md           # Run, env, Telnyx manual steps
+        ├── server.py           # FastMCP tools → REST
+        └── __main__.py         # python -m telnyx_restaurant.mcp_server
 ```
 
 ---
@@ -205,7 +209,7 @@ Without `DB_URI`, the app runs but DB-backed routes return **503** where applica
 
 ## MCP
 
-The in-repo MCP server is documented as a **suggested tool surface** aligned with the REST API above. Implement or wire tools per [Telnyx MCP guidance](https://developers.telnyx.com/); mapping table: [`telnyx_restaurant/mcp_server/README.md`](telnyx_restaurant/mcp_server/README.md).
+A **real** MCP server ships in [`telnyx_restaurant/mcp_server/`](telnyx_restaurant/mcp_server/): tools for menu, lookup, create, amend, status/cancel, and optional seating availability (same semantics as the REST table above). Run: `PYTHONPATH=. python -m telnyx_restaurant.mcp_server` with `HANOK_MCP_API_BASE_URL` pointing at your deployed API. Full **manual steps** for Telnyx Portal and Render are in [`telnyx_restaurant/mcp_server/README.md`](telnyx_restaurant/mcp_server/README.md). Product docs: [Telnyx MCP](https://developers.telnyx.com/).
 
 ---
 

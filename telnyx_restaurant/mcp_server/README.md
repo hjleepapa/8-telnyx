@@ -1,54 +1,100 @@
-# MCP server (restaurant tools)
+# Hanok Table MCP server
 
-Implement your **Model Context Protocol** server here (Python `mcp` SDK or Node `@modelcontextprotocol/sdk`) following [Telnyx Voice AI + MCP](https://developers.telnyx.com/) integration requirements.
+This is a **real** [Model Context Protocol](https://modelcontextprotocol.io/) server that exposes the same behavior as the Hanok **REST API** via **tools** and a small **resource** / **prompt**. Telnyx Voice AI (or Claude Desktop, Cursor, etc.) can attach this process as an MCP server while your **FastAPI** app stays deployed on Render.
 
-## Suggested tools
+## Requirements
 
-| Tool | Backend call |
+- Python **3.11+** (match the main app).
+- Install deps from repo root: `pip install -r telnyx_restaurant/requirements.txt`
+- The MCP process must reach your API over HTTPS or HTTP (`HANOK_MCP_API_BASE_URL` or `HANOK_PUBLIC_BASE_URL`).
+
+## Run locally (stdio — default)
+
+From the **repository root** (so `telnyx_restaurant` is importable):
+
+```bash
+export HANOK_MCP_API_BASE_URL=https://telnyx.convonetai.com   # or http://127.0.0.1:8000 if API runs locally
+PYTHONPATH=. python -m telnyx_restaurant.mcp_server
+```
+
+Stdio is what many MCP **clients** expect (they spawn the process and talk over stdin/stdout).
+
+### Optional: streamable HTTP (debug / remote clients)
+
+```bash
+export HANOK_MCP_TRANSPORT=streamable-http
+PYTHONPATH=. python -m telnyx_restaurant.mcp_server
+```
+
+FastMCP defaults to `host=127.0.0.1`, `port=8000` unless you configure via env / SDK; check `mcp` logs for the exact path (often `/mcp`).
+
+## Tools
+
+| Tool | REST behavior |
 |------|----------------|
-| `search_availability` | `GET /api/availability?...` (to be added on FastAPI app) |
-| `create_reservation` | `POST /api/reservations` (body may include `preorder: [{menu_item_id, quantity}]`, `source_channel: "voice"`) |
-| `list_menu_items` | `GET /api/reservations/menu/items` (prices for pre-order tool UX) |
-| `get_reservation` | **`GET /api/reservations/lookup?guest_name=…&phone=…`** or the same with **`guest_phone=…`** instead of `phone` (Telnyx often names the param `guest_phone`). Fallback: `GET /api/reservations/by-code/{code}` (real HNK code in path, not `{{code}}`) |
-| `find_reservation_by_phone` | `lookup` as above. Legacy: `GET /api/reservations/lookup-by-phone?phone=…` or `?guest_phone=…` |
-| **`update_reservation`** (often bound to `…/status`) | **`PATCH …/by-code/{code}/status`** or **`PATCH …/{id}/status`**: use **`{"status":"cancelled"}`** or **`?cancel=1`** for status-only; the API **also applies** `party_size`, `starts_at`, `preorder`, guest fields **in the same JSON body** when tools cannot be pointed at `/amend` (prefer `/amend` + `confirmation_code` when possible). |
-| **`modify_reservation`** / **`update_preorder`** (party, time, pre-order, guest) | Prefer **`PATCH /api/reservations/{id}/amend`** (same path pattern as **`…/{id}/status`** — swap the last segment). Alternatives: **`PATCH /api/reservations/amend/{id}`**, **`PATCH /api/reservations/amend?id={id}`**, or raw **`PATCH /api/reservations/amend`** only if the body has truthy **`confirmation_code`** / **`id`** (Telnyx null placeholders break this). Body: `preorder`, `party_size`, `starts_at`, guest fields, etc. Same JSON works on **`PATCH /{id}`** and **`PATCH /by-code/{code}`**. |
-| `cancel_reservation` | Prefer **`PATCH …/status?cancel=1`** or body **`{"status":"cancelled"}`** on **`…/{id}/status`**. `DELETE /api/reservations/{id}` also exists. |
+| `list_menu_items` | `GET /api/reservations/menu/items` |
+| `get_reservation` | `GET /api/reservations/lookup` (guest_name + guest_phone) |
+| `get_reservation_by_code` | `GET /api/reservations/by-code/{code}` |
+| `search_seating_availability` | `GET /api/reservations/seating/availability?date=` (if allocation enabled) |
+| `create_reservation` | `POST /api/reservations` |
+| `update_reservation_details` | `PATCH /api/reservations/{id}/amend` |
+| `set_reservation_status` | `PATCH /api/reservations/{id}/status` |
+| `cancel_reservation` | Same as status → `cancelled` |
 
-**Telnyx HTTP tool checklist:** If you define **two** tools — e.g. `update_reservation` → **`…/{id}/status`** and `update_preorder` → **`…/amend`** — the assistant often picks **`update_reservation`** for every “change my booking” request because the name sounds general. See **Choosing status vs preorder tools** below.
+Tool responses are JSON strings with `http_status` and `data` (or error hints) so the LLM can read errors.
 
-### Choosing status vs preorder tools (Telnyx Voice AI)
+## Resource & prompt
 
-The model does **not** “know” your API; it follows **tool names, descriptions, and the assistant system prompt**.
+- `hanok://api-base` — shows the resolved API origin.
+- Prompt `reservation_voice_flow` — short suggested flow for voice.
 
-1. **Rename for intent (recommended)**  
-   - Tool A: **`set_reservation_status`** or **`update_reservation_status_only`** — not `update_reservation`.  
-   - Tool B: **`update_reservation_details`** or **`change_preorder_or_booking_details`** — not only `update_preorder` if guests also change party size or time.
+---
 
-2. **Descriptions the model actually reads**  
-   - **Status tool:** *Use ONLY when the guest changes lifecycle state: pending, confirmed, seated, completed, or cancelled. Do NOT use for food preorder, menu items, party size, reservation time, or special requests.*  
-   - **Details / preorder tool:** *Use when the guest adds or changes food preorder, party size, arrival time, special requests, or contact fields. Always use `reservation_id` from GET `/lookup` in the URL path (`…/{reservation_id}/amend`).*
+## Manual steps you must do (checklist)
 
-3. **One-tool option (less routing error)**  
-   The backend **`PATCH …/{id}/status`** already accepts a full **`ReservationUpdate`** body: you can declare the same optional fields as **`modify_reservation`** (`preorder`, `party_size`, `starts_at`, …) on the status tool’s schema. Then a single “patch reservation” call can change status **or** preorder **or** both. If you keep two tools, the status tool’s schema should list **only** `status` so the model is not encouraged to mix concerns without documentation.
+### 1. Environment
 
-4. **Assistant instructions (copy-paste)**  
-   *If the guest wants to change what they are eating or their preorder, use **update_reservation_details** (PATCH `…/{reservation_id}/amend`). If they only want to cancel or change seating state (confirmed/seated/etc.), use **set_reservation_status** (PATCH `…/{reservation_id}/status`).*
+| Variable | Purpose |
+|----------|---------|
+| `HANOK_MCP_API_BASE_URL` | **Recommended:** full origin of the API (e.g. `https://telnyx.convonetai.com`). Use this when MCP runs on your laptop and the API is on Render. |
+| `HANOK_PUBLIC_BASE_URL` | Used **if** `HANOK_MCP_API_BASE_URL` is unset — same origin as webhooks. |
+| (neither set) | Falls back to `http://127.0.0.1:8000` — only for API + MCP on same machine. |
+| `HANOK_MCP_TRANSPORT` | `stdio` (default), `sse`, or `streamable-http`. |
 
-Keep business rules in the **REST API**; MCP should validate inputs and forward errors as structured tool results.
+### 2. Telnyx Mission Control — connect MCP to the assistant
 
-### Dynamic webhook variables (Telnyx assistant templates)
+Exact UI labels change over time; conceptually:
 
-`POST /webhooks/telnyx/variables` enriches responses from the DB when `caller_number` / `from` matches `guest_phone`. Useful keys for demos:
+1. Open your **AI Assistant**.
+2. Find **MCP**, **Integrations**, or **Model Context Protocol** server configuration.
+3. Add a server that runs your command, for example:
+   - **Command:** `python3` or full path to your venv `python`
+   - **Args:** `-m`, `telnyx_restaurant.mcp_server`
+   - **Working directory:** root of this git repo
+   - **Env:** `PYTHONPATH=.` and `HANOK_MCP_API_BASE_URL=https://<your-public-api-host>`
+4. Save and **publish** the assistant.
+5. **Call test:** dial your number and ask to look up a reservation; confirm tool calls hit your public API (watch Render logs or `HANOK_RESERVATION_VERBOSE_LOG`).
 
-- `reservation_preorder_summary`, `reservation_food_total_display`, `reservation_has_preorder`, `reservation_source_channel`
-- `demo_reminder_note` — explains that **each new reservation** schedules an **outbound Telnyx reminder ~5 seconds** later when `TELNYX_API_KEY`, `TELNYX_CONNECTION_ID`, and `TELNYX_FROM_NUMBER` are set on the web service.
+If Telnyx only supports **HTTP** MCP transports, set `HANOK_MCP_TRANSPORT=streamable-http`, expose the MCP port securely (VPN, second Render service, or localhost tunnel), and paste the **MCP URL** from Telnyx docs.
 
-Wire the same assistant / connection used for that outbound leg so **inbound** dynamic variables and **MCP tools** stay aligned with the booking record.
+### 3. Coexist with HTTP tools
 
-## Deployment
+You may keep **existing HTTP Action** tools pointed at `…/api/reservations/…` **and** add MCP. If tools duplicate behavior, tighten the **system instruction** so the model prefers one path (e.g. MCP for structure, HTTP only as fallback).
 
-- **Same container:** run MCP as a subprocess or second process if Telnyx supports it.
-- **Separate Render service:** expose MCP transport URL on another subdomain if required.
+### 4. Deploy on Render (optional second service)
 
-Document the final URL or command in the root **README.md** for reviewers.
+- **Service A:** existing FastAPI web service (API + webhooks).
+- **Service B:** worker or web process that runs `python -m telnyx_restaurant.mcp_server` with `HANOK_MCP_API_BASE_URL=https://service-a-host` and TCP healthchecks if you use streamable HTTP.
+
+Telnyx may still require **stdio** from their runner; confirm in their docs.
+
+### 5. Security
+
+- Do **not** expose MCP over the public internet without authentication unless the product requires it — stdio via spawned process is safest.
+- MCP tools forward reservation data; align with your data-retention / demo policy (synthetic data only for the challenge).
+
+---
+
+## Verify without Telnyx
+
+Use any MCP inspector or the official SDK client against stdio, or call the REST API directly with `curl` against the same URLs the tools use.
