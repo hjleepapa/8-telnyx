@@ -164,6 +164,15 @@ def hanok_mcp_http_mount_path() -> str:
     return p if p else "/mcp"
 
 
+def hanok_voice_create_dedup_seconds() -> int:
+    """Voice POST /api/reservations: treat duplicate creates within this window as one row (0 = off). Default 120s."""
+    raw = (os.environ.get("HANOK_VOICE_CREATE_DEDUP_SECONDS") or "120").strip()
+    try:
+        return max(0, min(int(float(raw)), 3600))
+    except ValueError:
+        return 120
+
+
 def hanok_reservation_verbose_logging() -> bool:
     """If true, log PATCH /amend and …/status bodies (truncated) at INFO for debugging Telnyx tools."""
     return (os.environ.get("HANOK_RESERVATION_VERBOSE_LOG") or "").strip().lower() in (

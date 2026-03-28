@@ -7,7 +7,7 @@ import logging
 import re
 import secrets
 import string
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
@@ -22,6 +22,7 @@ from telnyx_restaurant.config import (
     hanok_reservation_verbose_logging,
     hanok_slot_step_minutes,
     hanok_table_allocation_enabled,
+    hanok_voice_create_dedup_seconds,
 )
 from telnyx_restaurant.db import get_db
 from telnyx_restaurant.menu_catalog import MENU_ITEMS
@@ -946,9 +947,41 @@ def list_reservations(
     return list(db.execute(q).scalars().all())
 
 
+def _voice_create_recent_duplicate(
+    db: Session,
+    *,
+    body: ReservationCreate,
+    starts_at: datetime,
+    guest_phone_e164: str,
+    window_seconds: int,
+) -> Reservation | None:
+    """If a voice reservation was just created for the same phone, slot, and party, return it (Telnyx duplicate tools)."""
+    if window_seconds <= 0 or body.source_channel != "voice":
+        return None
+    cutoff = datetime.now(UTC) - timedelta(seconds=window_seconds)
+    phones = phone_lookup_variants(guest_phone_e164)
+    if not phones:
+        return None
+    stmt = (
+        select(Reservation)
+        .where(
+            Reservation.guest_phone.in_(phones),
+            Reservation.party_size == body.party_size,
+            Reservation.starts_at == starts_at,
+            Reservation.status != ReservationStatus.cancelled.value,
+            Reservation.source_channel == "voice",
+            Reservation.created_at >= cutoff,
+        )
+        .order_by(Reservation.created_at.asc())
+        .limit(1)
+    )
+    return db.execute(stmt).scalar_one_or_none()
+
+
 @router.post("", response_model=ReservationRead)
 async def create_reservation(
     request: Request,
+    response: Response,
     db: Session = Depends(get_db),
 ):
     raw = await read_json_or_form_body(request)
@@ -969,6 +1002,44 @@ async def create_reservation(
             )
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
 
+    gp_strip = body.guest_phone.strip()
+    guest_phone_e164 = to_e164_us(gp_strip) if gp_strip else gp_strip
+    starts_at_norm = (
+        body.starts_at if body.starts_at.tzinfo else body.starts_at.replace(tzinfo=UTC)
+    )
+    if hanok_table_allocation_enabled():
+        starts_at_norm = floor_slot_start(starts_at_norm, hanok_slot_step_minutes())
+
+    window = hanok_voice_create_dedup_seconds()
+    if window > 0 and body.source_channel == "voice":
+        dup = _voice_create_recent_duplicate(
+            db,
+            body=body,
+            starts_at=starts_at_norm,
+            guest_phone_e164=guest_phone_e164,
+            window_seconds=window,
+        )
+        if dup is not None:
+            response.headers["X-Hanok-Deduplicated"] = "1"
+            if body.preorder and not dup.preorder_items:
+                patch = ReservationUpdate(preorder=body.preorder)
+                changed = _apply_reservation_update(db, dup, patch)
+                if changed:
+                    db.commit()
+                else:
+                    db.rollback()
+                db.refresh(dup)
+                logger.info(
+                    "POST /api/reservations voice dedup merge preorder reservation_id=%s",
+                    dup.id,
+                )
+            else:
+                logger.info(
+                    "POST /api/reservations voice dedup return existing reservation_id=%s",
+                    dup.id,
+                )
+            return dup
+
     code = _gen_confirmation_code()
     for _ in range(10):
         if not db.execute(
@@ -988,12 +1059,7 @@ async def create_reservation(
         )
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    gp_strip = body.guest_phone.strip()
-    starts_at = (
-        body.starts_at if body.starts_at.tzinfo else body.starts_at.replace(tzinfo=UTC)
-    )
-    if hanok_table_allocation_enabled():
-        starts_at = floor_slot_start(starts_at, hanok_slot_step_minutes())
+    starts_at = starts_at_norm
     duration_minutes = (
         body.duration_minutes
         if body.duration_minutes is not None
