@@ -162,8 +162,59 @@ _RES_KEYS_HINT = frozenset(
         "reservation_id",
         "reservationId",
         "booking_id",
+        "confirmation_code",
+        "code",
+        "confirmationCode",
+        "hnk_code",
+        "reservation_code",
+        "next_reservation_code",
+        "id",
     }
 )
+
+# When merging wrapper inner dict over outer, JSON null on these must not wipe a valid outer value
+# (Telnyx tools often send confirmation_code: null inside body while the real code sits at root).
+_IDENTITY_KEYS_NO_NULL_OVERRIDE = frozenset(
+    {
+        "confirmation_code",
+        "code",
+        "confirmationCode",
+        "hnk_code",
+        "reservation_code",
+        "next_reservation_code",
+        "id",
+        "reservation_id",
+        "reservationId",
+        "booking_id",
+    }
+)
+
+
+def _truthy_reservation_identity(v: Any) -> bool:
+    if v is None:
+        return False
+    if isinstance(v, bool):
+        return False
+    if isinstance(v, int):
+        return v >= 1
+    if isinstance(v, float):
+        return v >= 1 and int(v) == v
+    s = str(v).strip()
+    if not s:
+        return False
+    if s.lower() in ("null", "none", "undefined"):
+        return False
+    return True
+
+
+def _merge_wrapped_reservation_inner(outer_rest: dict[str, Any], inner: dict[str, Any]) -> dict[str, Any]:
+    merged: dict[str, Any] = {**outer_rest, **inner}
+    for key in _IDENTITY_KEYS_NO_NULL_OVERRIDE:
+        if not _truthy_reservation_identity(merged.get(key)) and _truthy_reservation_identity(
+            outer_rest.get(key)
+        ):
+            merged[key] = outer_rest[key]
+    return merged
 
 _WRAP_KEYS_RESERVATION = (
     "data",
@@ -304,7 +355,7 @@ def _unwrap_nested_reservation_payload(data: dict[str, Any]) -> dict[str, Any]:
             if not _RES_KEYS_HINT.intersection(inner):
                 continue
             outer_rest = {k: v for k, v in d.items() if k != key}
-            d = {**outer_rest, **inner}
+            d = _merge_wrapped_reservation_inner(outer_rest, inner)
             merged_layer = True
             break
         if not merged_layer:

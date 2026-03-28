@@ -134,3 +134,12 @@ def hanok_vip_preorder_threshold_cents() -> int:
         return int((os.environ.get("HANOK_VIP_PREORDER_CENTS") or "50000").strip())
     except ValueError:
         return 50000
+
+
+def hanok_reservation_lab_enabled() -> bool:
+    """If true, serve GET /reservation-lab (browser helper for API scenarios). Use with ADMIN_DASHBOARD_TOKEN on public hosts."""
+    return (os.environ.get("HANOK_RESERVATION_LAB") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )

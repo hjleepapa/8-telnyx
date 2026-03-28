@@ -199,6 +199,8 @@ Without `DB_URI`, the app runs but DB-backed routes return **503** where applica
 
 **Tests:** `python3 -m pytest telnyx_restaurant/tests -v` (table allocation + sqlite-backed seating flows).
 
+**Reservation lab (optional):** set `HANOK_RESERVATION_LAB=1`, then open **`/reservation-lab`** (if `ADMIN_DASHBOARD_TOKEN` is set, add **`?token=…`**). Browser UI drives create / lookup / PATCH `/amend` with preset JSON (e.g. nested `body` + `confirmation_code: null`). Complements **`/docs`**.
+
 ---
 
 ## MCP

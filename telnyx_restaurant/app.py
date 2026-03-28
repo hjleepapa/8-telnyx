@@ -5,11 +5,17 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from telnyx_restaurant.config import hanok_public_base_url, telnyx_api_key, telnyx_connection_id
+from telnyx_restaurant.config import (
+    admin_dashboard_token,
+    hanok_public_base_url,
+    hanok_reservation_lab_enabled,
+    telnyx_api_key,
+    telnyx_connection_id,
+)
 from telnyx_restaurant.routers import admin, reservations, webhook
 
 logger = logging.getLogger(__name__)
@@ -18,6 +24,7 @@ _STATIC = Path(__file__).resolve().parent / "static"
 _INDEX = _STATIC / "index.html"
 _RESERVE_ONLINE = _STATIC / "reserve_online.html"
 _RESERVATION_STATUS = _STATIC / "reservation_status.html"
+_RESERVATION_LAB = _STATIC / "reservation_lab.html"
 _APP_REV = os.environ.get("RENDER_GIT_COMMIT", os.environ.get("APP_GIT_REVISION", "local"))
 
 
@@ -122,3 +129,24 @@ def serve_reserve_online() -> HTMLResponse:
 def serve_reservation_status() -> HTMLResponse:
     """Guest-facing status & food totals (confirmation code)."""
     return _read_static_html(_RESERVATION_STATUS, "reservation_status.html")
+
+
+@app.get("/reservation-lab", response_class=HTMLResponse)
+@app.get("/reservation-lab.html", response_class=HTMLResponse)
+def serve_reservation_lab(
+    token: str | None = Query(None, description="Must match ADMIN_DASHBOARD_TOKEN when that env is set."),
+) -> HTMLResponse:
+    """Optional browser UI: create / lookup / amend / canned scenarios (dev & demos). Off unless HANOK_RESERVATION_LAB=1."""
+    if not hanok_reservation_lab_enabled():
+        return HTMLResponse("Not found.", status_code=404)
+    expected = admin_dashboard_token()
+    if expected and token != expected:
+        return HTMLResponse(
+            (
+                "<!DOCTYPE html><html><head><meta charset='utf-8'><title>Lab</title></head><body>"
+                "<p>Unauthorized. Open <code>/reservation-lab?token=…</code> with "
+                "<code>ADMIN_DASHBOARD_TOKEN</code>.</p><p><a href='/'>Home</a></p></body></html>"
+            ),
+            status_code=401,
+        )
+    return _read_static_html(_RESERVATION_LAB, "reservation_lab.html")

@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reservation lab · Hanok Table</title>
+    <style>
+      :root {
+        --ink: #1a1210;
+        --paper: #f7f3ed;
+        --cream: #e8e0d4;
+        --accent: #b83c2d;
+        --muted: #5c534c;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        font-family: "DM Sans", system-ui, sans-serif;
+        background: var(--paper);
+        color: var(--ink);
+        margin: 0;
+        padding: 1rem 1rem 2rem;
+        line-height: 1.45;
+        max-width: 52rem;
+        margin-inline: auto;
+      }
+      h1 {
+        font-size: 1.2rem;
+        margin: 0 0 0.25rem;
+      }
+      .sub {
+        color: var(--muted);
+        font-size: 0.88rem;
+        margin-bottom: 1rem;
+      }
+      a {
+        color: var(--accent);
+      }
+      section {
+        background: #fff;
+        border: 1px solid var(--cream);
+        border-radius: 12px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 4px 20px rgba(26, 18, 16, 0.06);
+      }
+      section h2 {
+        font-size: 0.95rem;
+        margin: 0 0 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--muted);
+      }
+      label {
+        display: block;
+        font-size: 0.78rem;
+        font-weight: 700;
+        margin: 0.5rem 0 0.2rem;
+        color: var(--muted);
+      }
+      input,
+      textarea,
+      select,
+      button {
+        font: inherit;
+      }
+      input[type="text"],
+      input[type="datetime-local"],
+      input[type="number"],
+      textarea {
+        width: 100%;
+        padding: 0.45rem 0.55rem;
+        border: 1px solid var(--cream);
+        border-radius: 8px;
+      }
+      textarea {
+        min-height: 7rem;
+        font-family: ui-monospace, monospace;
+        font-size: 0.82rem;
+      }
+      .row2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0.65rem;
+      }
+      @media (max-width: 640px) {
+        .row2 {
+          grid-template-columns: 1fr;
+        }
+      }
+      button.primary {
+        margin-top: 0.65rem;
+        padding: 0.5rem 1rem;
+        background: var(--accent);
+        color: #fff;
+        border: none;
+        border-radius: 8px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      button.secondary {
+        margin: 0.35rem 0.35rem 0 0;
+        padding: 0.4rem 0.75rem;
+        background: var(--cream);
+        border: none;
+        border-radius: 8px;
+        font-weight: 600;
+        cursor: pointer;
+        font-size: 0.82rem;
+      }
+      button.secondary:hover {
+        filter: brightness(0.97);
+      }
+      #log {
+        background: #1e1e1e;
+        color: #d4d4d4;
+        padding: 1rem;
+        border-radius: 10px;
+        font-size: 0.75rem;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 22rem;
+        overflow: auto;
+        margin: 0;
+      }
+      .hint {
+        font-size: 0.8rem;
+        color: var(--muted);
+        margin-top: 0.35rem;
+      }
+      .tag {
+        display: inline-block;
+        background: var(--cream);
+        padding: 0.15rem 0.45rem;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        margin-right: 0.35rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Hanok Table — Reservation lab</h1>
+    <p class="sub">
+      Calls your deployed API from this origin (<span id="origin"></span>). Requires a working
+      <code>DB_URI</code>. Not a guest-facing page — enable with
+      <code>HANOK_RESERVATION_LAB=1</code>
+      on the server.
+    </p>
+    <p><a href="/">← Home</a> · <a href="/docs">OpenAPI /docs</a></p>
+
+    <section>
+      <h2>Last booking (session)</h2>
+      <p class="hint">
+        After a successful <strong>Create</strong>, code and id are stored for amend scenarios.
+      </p>
+      <p>
+        <span class="tag" id="last-code">code: —</span>
+        <span class="tag" id="last-id">id: —</span>
+      </p>
+      <button type="button" class="secondary" id="btn-clear-session">Clear stored code/id</button>
+    </section>
+
+    <section>
+      <h2>Create reservation</h2>
+      <div class="row2">
+        <div>
+          <label for="c-name">guest_name</label>
+          <input type="text" id="c-name" value="Lab Guest" />
+        </div>
+        <div>
+          <label for="c-phone">guest_phone</label>
+          <input type="text" id="c-phone" value="+15550009999" />
+        </div>
+      </div>
+      <div class="row2">
+        <div>
+          <label for="c-party">party_size</label>
+          <input type="number" id="c-party" value="2" min="1" max="20" />
+        </div>
+        <div>
+          <label for="c-start">starts_at (local → ISO UTC in request)</label>
+          <input type="datetime-local" id="c-start" />
+        </div>
+      </div>
+      <label for="c-pre">preorder JSON (optional array)</label>
+      <textarea id="c-pre" placeholder='[{"menu_item_id":"bulgogi","quantity":1}]'></textarea>
+      <button type="button" class="primary" id="btn-create">POST /api/reservations</button>
+    </section>
+
+    <section>
+      <h2>Lookup</h2>
+      <div class="row2">
+        <div>
+          <label for="l-name">guest_name</label>
+          <input type="text" id="l-name" value="Lab Guest" />
+        </div>
+        <div>
+          <label for="l-phone">guest_phone</label>
+          <input type="text" id="l-phone" value="+15550009999" />
+        </div>
+      </div>
+      <button type="button" class="primary" id="btn-lookup">GET /api/reservations/lookup</button>
+    </section>
+
+    <section>
+      <h2>PATCH /amend (raw JSON)</h2>
+      <p class="hint">
+        Body is sent as-is. Include <code>confirmation_code</code> or <code>id</code> (or use
+        <strong>Fill from session</strong>).
+      </p>
+      <textarea id="amend-body"></textarea>
+      <div>
+        <button type="button" class="secondary" id="btn-fill-amend-session">Fill from session + bulgogi preorder</button>
+        <button type="button" class="secondary" id="btn-fill-amend-null-body">Scenario: outer code + body.preorder + inner confirmation_code null</button>
+        <button type="button" class="secondary" id="btn-fill-amend-clear-pre">Scenario: preorder null (clear cart)</button>
+      </div>
+      <button type="button" class="primary" id="btn-amend">PATCH /api/reservations/amend</button>
+    </section>
+
+    <section>
+      <h2>Menu (ids for preorder)</h2>
+      <button type="button" class="secondary" id="btn-menu">GET /api/reservations/menu/items</button>
+      <pre id="menu-preview" class="hint" style="margin-top: 0.5rem; white-space: pre-wrap"></pre>
+    </section>
+
+    <section>
+      <h2>Log</h2>
+      <pre id="log"></pre>
+    </section>
+
+    <script>
+      (function () {
+        var base = "";
+        document.getElementById("origin").textContent = location.origin;
+
+        function logLine(s) {
+          var el = document.getElementById("log");
+          var t = new Date().toISOString();
+          el.textContent = "[" + t + "] " + s + "\n" + el.textContent;
+        }
+
+        function pretty(x) {
+          try {
+            return JSON.stringify(x, null, 2);
+          } catch (e) {
+            return String(x);
+          }
+        }
+
+        function sessionKeyCode() {
+          return "hanok_lab_confirmation_code";
+        }
+        function sessionKeyId() {
+          return "hanok_lab_reservation_id";
+        }
+
+        function loadSessionTags() {
+          var c = sessionStorage.getItem(sessionKeyCode()) || "—";
+          var i = sessionStorage.getItem(sessionKeyId()) || "—";
+          document.getElementById("last-code").textContent = "code: " + c;
+          document.getElementById("last-id").textContent = "id: " + i;
+        }
+
+        function storeFromReservation(data) {
+          if (data && data.confirmation_code) {
+            sessionStorage.setItem(sessionKeyCode(), data.confirmation_code);
+          }
+          if (data && data.id != null) {
+            sessionStorage.setItem(sessionKeyId(), String(data.id));
+          }
+          loadSessionTags();
+        }
+
+        document.getElementById("btn-clear-session").addEventListener("click", function () {
+          sessionStorage.removeItem(sessionKeyCode());
+          sessionStorage.removeItem(sessionKeyId());
+          loadSessionTags();
+          logLine("Cleared stored code/id.");
+        });
+
+        function defaultStartLocal() {
+          var d = new Date();
+          d.setMinutes(d.getMinutes() - (d.getTimezoneOffset() % 60));
+          d.setHours(18, 0, 0, 0);
+          if (d.getTime() < Date.now()) d.setDate(d.getDate() + 1);
+          var pad = function (n) {
+            return n < 10 ? "0" + n : "" + n;
+          };
+          return (
+            d.getFullYear() +
+            "-" +
+            pad(d.getMonth() + 1) +
+            "-" +
+            pad(d.getDate()) +
+            "T" +
+            pad(d.getHours()) +
+            ":" +
+            pad(d.getMinutes())
+          );
+        }
+        document.getElementById("c-start").value = defaultStartLocal();
+
+        async function doFetch(method, path, body) {
+          var url = base + path;
+          var opts = { method: method, headers: {} };
+          if (body !== undefined) {
+            opts.headers["Content-Type"] = "application/json";
+            opts.body = JSON.stringify(body);
+          }
+          logLine(method + " " + path + (body !== undefined ? "\n" + pretty(body) : ""));
+          var res = await fetch(url, opts);
+          var text = await res.text();
+          var parsed = null;
+          try {
+            parsed = JSON.parse(text);
+          } catch (e) {
+            parsed = text;
+          }
+          logLine("← " + res.status + " " + res.statusText + "\n" + (typeof parsed === "string" ? parsed : pretty(parsed)));
+          return { ok: res.ok, status: res.status, data: parsed };
+        }
+
+        document.getElementById("btn-create").addEventListener("click", async function () {
+          var preRaw = document.getElementById("c-pre").value.trim();
+          var preorder = [];
+          if (preRaw) {
+            try {
+              preorder = JSON.parse(preRaw);
+            } catch (e) {
+              logLine("preorder JSON invalid: " + e.message);
+              return;
+            }
+          }
+          var startEl = document.getElementById("c-start");
+          var iso = new Date(startEl.value).toISOString();
+          var payload = {
+            guest_name: document.getElementById("c-name").value.trim(),
+            guest_phone: document.getElementById("c-phone").value.trim(),
+            party_size: parseInt(document.getElementById("c-party").value, 10) || 2,
+            starts_at: iso,
+            preorder: preorder,
+            source_channel: "api",
+          };
+          var r = await doFetch("POST", "/api/reservations", payload);
+          if (r.ok && r.data && typeof r.data === "object") storeFromReservation(r.data);
+        });
+
+        document.getElementById("btn-lookup").addEventListener("click", async function () {
+          var name = encodeURIComponent(document.getElementById("l-name").value.trim());
+          var phone = encodeURIComponent(document.getElementById("l-phone").value.trim());
+          var qs = "?guest_name=" + name + "&guest_phone=" + phone;
+          var r = await doFetch("GET", "/api/reservations/lookup" + qs);
+          if (r.ok && r.data && typeof r.data === "object") storeFromReservation(r.data);
+        });
+
+        document.getElementById("btn-amend").addEventListener("click", async function () {
+          var raw = document.getElementById("amend-body").value.trim();
+          if (!raw) {
+            logLine("Amend body empty.");
+            return;
+          }
+          var body;
+          try {
+            body = JSON.parse(raw);
+          } catch (e) {
+            logLine("Amend JSON parse error: " + e.message);
+            return;
+          }
+          await doFetch("PATCH", "/api/reservations/amend", body);
+        });
+
+        function getStoredCodeId() {
+          return {
+            code: sessionStorage.getItem(sessionKeyCode()),
+            id: sessionStorage.getItem(sessionKeyId()),
+          };
+        }
+
+        document.getElementById("btn-fill-amend-session").addEventListener("click", function () {
+          var s = getStoredCodeId();
+          if (!s.code && !s.id) {
+            logLine("No stored code/id — create or lookup first.");
+            return;
+          }
+          var o = {
+            preorder: [{ menu_item_id: "bulgogi", quantity: 1 }],
+          };
+          if (s.code) o.confirmation_code = s.code;
+          if (s.id) o.id = parseInt(s.id, 10);
+          document.getElementById("amend-body").value = pretty(o);
+        });
+
+        document.getElementById("btn-fill-amend-null-body").addEventListener("click", function () {
+          var s = getStoredCodeId();
+          if (!s.code) {
+            logLine("Need stored confirmation_code for this scenario (create/lookup first).");
+            return;
+          }
+          var o = {
+            confirmation_code: s.code,
+            body: {
+              preorder: [{ menu_item_id: "bulgogi", quantity: 1 }],
+              confirmation_code: null,
+              guest_name: null,
+            },
+          };
+          document.getElementById("amend-body").value = pretty(o);
+        });
+
+        document.getElementById("btn-fill-amend-clear-pre").addEventListener("click", function () {
+          var s = getStoredCodeId();
+          if (!s.code && !s.id) {
+            logLine("No stored code/id.");
+            return;
+          }
+          var o = { preorder: null };
+          if (s.code) o.confirmation_code = s.code;
+          if (s.id) o.id = parseInt(s.id, 10);
+          document.getElementById("amend-body").value = pretty(o);
+        });
+
+        document.getElementById("btn-menu").addEventListener("click", async function () {
+          var r = await doFetch("GET", "/api/reservations/menu/items");
+          if (r.ok && Array.isArray(r.data)) {
+            var lines = r.data.map(function (m) {
+              return m.id + " — " + (m.name_en || "") + " (" + (m.price_display || "") + ")";
+            });
+            document.getElementById("menu-preview").textContent = lines.join("\n");
+          }
+        });
+
+        loadSessionTags();
+        logLine("Lab ready. Use Create → Amend scenarios to reproduce Telnyx-style payloads.");
+      })();
+    </script>
+  </body>
+</html>
