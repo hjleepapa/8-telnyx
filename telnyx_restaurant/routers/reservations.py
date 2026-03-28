@@ -100,15 +100,44 @@ _PATCH_NO_FIELDS_DETAIL = (
     "guest_phone, special_requests. Examples: "
     '{"confirmation_code":"HNK-ABCD","party_size":4,"starts_at":"2026-03-28T19:00:00+00:00"} '
     'or {"confirmation_code":"HNK-ABCD","preorder":[{"menu_item_id":"bulgogi","quantity":1}]}. '
-    "Note: JSON null on optional fields is ignored. "
-    "Empty array preorder/items [] does not change food (use JSON null on preorder to clear the cart)."
+    "Empty array preorder/items [] does not change food. "
+    "JSON null on preorder clears the cart only when no other field in the same request carries "
+    "a real value (party_size, starts_at, guest fields, status, special_requests); otherwise null "
+    "is treated as a Telnyx placeholder."
 )
+
+
+def _has_truthy_non_preorder_patch(body: ReservationUpdate) -> bool:
+    """True if the patch includes any non-null value outside preorder (Telnyx multi-field templates)."""
+    fs = body.model_fields_set
+    if "party_size" in fs and body.party_size is not None:
+        return True
+    if "starts_at" in fs and body.starts_at is not None:
+        return True
+    if "guest_name" in fs and body.guest_name is not None:
+        return True
+    if "guest_phone" in fs and body.guest_phone is not None:
+        return True
+    if "status" in fs and body.status is not None:
+        return True
+    if "special_requests" in fs and body.special_requests is not None:
+        return True
+    return False
+
+
+def _preorder_null_clears_cart(body: ReservationUpdate) -> bool:
+    """Whether JSON preorder: null should clear stored cart (vs Telnyx null alongside party/time)."""
+    if "preorder" not in body.model_fields_set or body.preorder is not None:
+        return False
+    return not _has_truthy_non_preorder_patch(body)
 
 
 def _effective_reservation_patch_fields(body: ReservationUpdate) -> set[str]:
     """Telnyx sends preorder: [] alongside other fields; [] means omit, not clear (see _apply_reservation_update)."""
     fs = set(body.model_fields_set)
     if "preorder" in fs and body.preorder is not None and len(body.preorder) == 0:
+        fs.discard("preorder")
+    if "preorder" in fs and body.preorder is None and not _preorder_null_clears_cart(body):
         fs.discard("preorder")
     return fs
 
@@ -149,11 +178,12 @@ def _apply_reservation_update(db: Session, row: Reservation, body: ReservationUp
         row.status = body.status
     if "preorder" in body.model_fields_set:
         if body.preorder is None:
-            # JSON null: explicitly clear cart
-            row.preorder_json = None
-            row.food_subtotal_cents = 0
-            row.preorder_discount_cents = 0
-            row.food_total_cents = 0
+            if _preorder_null_clears_cart(body):
+                row.preorder_json = None
+                row.food_subtotal_cents = 0
+                row.preorder_discount_cents = 0
+                row.food_total_cents = 0
+            # else: Telnyx sent preorder: null next to real party_size/starts_at — keep existing cart
         elif not body.preorder:
             # Telnyx tools often send preorder/items: [] in the same template as party_size/time.
             # Empty list means "do not change food", not "clear cart" (use preorder: null to clear).
