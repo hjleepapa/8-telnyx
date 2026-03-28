@@ -79,6 +79,20 @@ def _ensure_reservation_columns(engine) -> None:
         )
     if "reminder_call_status" not in cols:
         statements.append("ALTER TABLE reservations ADD COLUMN reminder_call_status VARCHAR(128)")
+    if "duration_minutes" not in cols:
+        statements.append(
+            "ALTER TABLE reservations ADD COLUMN duration_minutes INTEGER NOT NULL DEFAULT 120"
+        )
+    if "tables_allocated_json" not in cols:
+        statements.append("ALTER TABLE reservations ADD COLUMN tables_allocated_json TEXT")
+    if "guest_priority" not in cols:
+        statements.append(
+            "ALTER TABLE reservations ADD COLUMN guest_priority VARCHAR(16) NOT NULL DEFAULT 'normal'"
+        )
+    if "seating_status" not in cols:
+        statements.append(
+            "ALTER TABLE reservations ADD COLUMN seating_status VARCHAR(32) NOT NULL DEFAULT 'not_applicable'"
+        )
 
     if not statements:
         return

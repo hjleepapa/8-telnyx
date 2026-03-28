@@ -7,7 +7,7 @@ import logging
 import re
 import secrets
 import string
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -16,13 +16,26 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 
-from telnyx_restaurant.config import hanok_reservation_verbose_logging
+from telnyx_restaurant.config import (
+    hanok_default_reservation_duration_minutes,
+    hanok_reservation_verbose_logging,
+    hanok_slot_step_minutes,
+    hanok_table_allocation_enabled,
+)
 from telnyx_restaurant.db import get_db
 from telnyx_restaurant.menu_catalog import MENU_ITEMS
 from telnyx_restaurant.phone_normalize import phone_lookup_variants, to_e164_us
 from telnyx_restaurant.models import Reservation, ReservationStatus
 from telnyx_restaurant.preorder_calc import serialize_preorder
 from telnyx_restaurant.reminders import schedule_demo_reminder_call
+from telnyx_restaurant.seating_service import (
+    SeatingUnavailableError,
+    book_on_create,
+    effective_priority_for_row,
+    iter_day_slot_starts,
+    snapshot_effective_availability,
+)
+from telnyx_restaurant.table_allocation import floor_slot_start
 from telnyx_restaurant.schemas_res import (
     ReservationCreate,
     ReservationRead,
@@ -114,9 +127,10 @@ def _reject_modifying_cancelled(row: Reservation) -> None:
         )
 
 
-def _apply_reservation_update(row: Reservation, body: ReservationUpdate) -> bool:
+def _apply_reservation_update(db: Session, row: Reservation, body: ReservationUpdate) -> bool:
     # Caller must use _require_reservation_update_fields before this when a PATCH should do work.
     # Telnyx/tools often include JSON nulls for untouched fields; never write NULL into NOT NULL columns.
+    before_status = row.status
     before = _booking_mutable_snapshot(row)
     if "guest_name" in body.model_fields_set and body.guest_name is not None:
         row.guest_name = body.guest_name  # type: ignore[assignment]
@@ -157,6 +171,14 @@ def _apply_reservation_update(row: Reservation, body: ReservationUpdate) -> bool
     if after == before:
         return False
     row.updated_at = datetime.now(UTC)
+    if (
+        hanok_table_allocation_enabled()
+        and row.status == ReservationStatus.cancelled.value
+        and before_status != ReservationStatus.cancelled.value
+    ):
+        from telnyx_restaurant.seating_service import release_and_promote_after_cancel
+
+        release_and_promote_after_cancel(db, row)
     return True
 
 
@@ -239,7 +261,7 @@ async def _patch_at_status_url(
     if patch is not None and eff:
         if eff - {"status"}:
             _reject_modifying_cancelled(row)
-        changed = _apply_reservation_update(row, patch)
+        changed = _apply_reservation_update(db, row, patch)
         if changed:
             db.commit()
         else:
@@ -297,8 +319,17 @@ async def _patch_at_status_url(
             sorted(flat.keys())[:30],
         )
         return row, False
+    prev_status = row.status
     row.status = parsed.status
     row.updated_at = datetime.now(UTC)
+    if (
+        hanok_table_allocation_enabled()
+        and row.status == ReservationStatus.cancelled.value
+        and prev_status != ReservationStatus.cancelled.value
+    ):
+        from telnyx_restaurant.seating_service import release_and_promote_after_cancel
+
+        release_and_promote_after_cancel(db, row)
     db.commit()
     db.refresh(row)
     logger.info(
@@ -585,6 +616,38 @@ def list_menu_items():
     return [m.as_public() for m in MENU_ITEMS]
 
 
+@router.get("/seating/availability")
+def get_seating_availability(
+    date_str: str = Query(
+        ...,
+        alias="date",
+        description="UTC calendar day as YYYY-MM-DD.",
+    ),
+    db: Session = Depends(get_db),
+):
+    """Per–time-bucket effective table counts (min across sizes); requires HANOK_TABLE_ALLOCATION_ENABLED=1."""
+    if not hanok_table_allocation_enabled():
+        raise HTTPException(
+            status_code=404,
+            detail="Table allocation is disabled. Set HANOK_TABLE_ALLOCATION_ENABLED=1.",
+        )
+    try:
+        d = date.fromisoformat(date_str)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid date: use YYYY-MM-DD.",
+        ) from None
+    step = hanok_slot_step_minutes()
+    day_anchor = datetime(d.year, d.month, d.day, tzinfo=UTC)
+    slots = iter_day_slot_starts(day_anchor, step)
+    return {
+        "date": date_str,
+        "slot_minutes": step,
+        "slots": snapshot_effective_availability(db, slots),
+    }
+
+
 @router.get("", response_model=list[ReservationRead])
 def list_reservations(
     status: str | None = None,
@@ -639,16 +702,25 @@ async def create_reservation(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     gp_strip = body.guest_phone.strip()
+    starts_at = (
+        body.starts_at if body.starts_at.tzinfo else body.starts_at.replace(tzinfo=UTC)
+    )
+    if hanok_table_allocation_enabled():
+        starts_at = floor_slot_start(starts_at, hanok_slot_step_minutes())
+    duration_minutes = (
+        body.duration_minutes
+        if body.duration_minutes is not None
+        else hanok_default_reservation_duration_minutes()
+    )
+    guest_priority = effective_priority_for_row(body.guest_priority, total)
     row = Reservation(
         confirmation_code=code,
         guest_name=body.guest_name,
         guest_phone=to_e164_us(gp_strip) if gp_strip else gp_strip,
         party_size=body.party_size,
-        starts_at=(
-            body.starts_at
-            if body.starts_at.tzinfo
-            else body.starts_at.replace(tzinfo=UTC)
-        ),
+        starts_at=starts_at,
+        duration_minutes=duration_minutes,
+        guest_priority=guest_priority,
         status=ReservationStatus.confirmed.value,
         special_requests=body.special_requests,
         preorder_json=preorder_json,
@@ -659,7 +731,14 @@ async def create_reservation(
         reminder_call_status="reminder_queued",
     )
     db.add(row)
-    db.commit()
+    try:
+        db.flush()
+        if hanok_table_allocation_enabled():
+            book_on_create(db, row, waitlist_ok=body.waitlist_if_full)
+        db.commit()
+    except SeatingUnavailableError as e:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(e)) from e
     db.refresh(row)
 
     schedule_demo_reminder_call(
@@ -877,7 +956,7 @@ def patch_reservation_by_code(
         raise HTTPException(status_code=404, detail="Reservation not found")
     _reject_modifying_cancelled(row)
     _require_reservation_update_fields(body)
-    changed = _apply_reservation_update(row, body)
+    changed = _apply_reservation_update(db, row, body)
     if changed:
         db.commit()
     else:
@@ -1012,7 +1091,7 @@ async def amend_reservation_by_body_code(
             _effective_reservation_patch_fields(body),
         )
         raise
-    changed = _apply_reservation_update(row, body)
+    changed = _apply_reservation_update(db, row, body)
     if changed:
         db.commit()
     else:
@@ -1078,7 +1157,7 @@ def patch_reservation(
         raise HTTPException(status_code=404, detail="Reservation not found")
     _reject_modifying_cancelled(row)
     _require_reservation_update_fields(body)
-    changed = _apply_reservation_update(row, body)
+    changed = _apply_reservation_update(db, row, body)
     if changed:
         db.commit()
     else:

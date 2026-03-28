@@ -463,6 +463,73 @@ class ReservationCreate(BaseModel):
         default="online",
         pattern="^(online|voice|api)$",
     )
+    duration_minutes: int | None = Field(
+        None,
+        ge=30,
+        le=480,
+        validation_alias=AliasChoices(
+            "duration_minutes",
+            "durationMinutes",
+            "duration",
+            "length_minutes",
+            "stay_minutes",
+        ),
+    )
+    waitlist_if_full: bool = Field(
+        True,
+        validation_alias=AliasChoices(
+            "waitlist_if_full",
+            "waitlistIfFull",
+            "waitlist_ok",
+            "allow_waitlist",
+        ),
+    )
+    guest_priority: str = Field(
+        "normal",
+        validation_alias=AliasChoices(
+            "guest_priority",
+            "guestPriority",
+            "priority",
+            "seating_priority",
+        ),
+    )
+
+    @field_validator("waitlist_if_full", mode="before")
+    @classmethod
+    def waitlist_if_full_bool(cls, v: Any) -> Any:
+        if v is None:
+            return True
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            s = v.strip().lower()
+            if s in ("0", "false", "no", "off", "never"):
+                return False
+            return True
+        return bool(v)
+
+    @field_validator("guest_priority", mode="before")
+    @classmethod
+    def guest_priority_norm(cls, v: Any) -> Any:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return "normal"
+        s = str(v).strip().lower()
+        if s in ("vip", "v"):
+            return "vip"
+        return "normal"
+
+    @field_validator("duration_minutes", mode="before")
+    @classmethod
+    def duration_minutes_opt(cls, v: Any) -> Any:
+        if v is None or v == "":
+            return None
+        if isinstance(v, bool):
+            raise ValueError("duration_minutes cannot be boolean")
+        if isinstance(v, float) and abs(v - round(v)) < 1e-9:
+            return int(round(v))
+        if isinstance(v, str) and v.strip().isdigit():
+            return int(v.strip())
+        return v
 
     @field_validator("guest_phone", mode="before")
     @classmethod
@@ -712,6 +779,10 @@ class ReservationRead(BaseModel):
     food_total_cents: int = 0
     source_channel: str = "online"
     reminder_call_status: str | None = None
+    duration_minutes: int = 120
+    seating_status: str = "not_applicable"
+    guest_priority: str = "normal"
+    tables_allocated: list[int] | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -54,10 +54,13 @@ flowchart TB
 | **`menu_catalog.py`** | Demo menu items, id resolution, fuzzy names for voice/API. |
 | **`preorder_calc.py`** | Serialize pre-order lines, **7% pre-order discount** on food subtotal. |
 | **`reminders.py`** | After create: delayed **POST** to Telnyx **`/v2/calls`** with `client_state`; speak uses webhook + `speak` action. |
-| **`db.py` / `models.py`** | SQLAlchemy + `Reservation` (status, preorder JSON, food cents, `reminder_call_status`). |
-| **`static/`** | `index.html` (EN/KO + Telnyx widget), `reserve_online.html`, `reservation_status.html`. |
-
-There is **no** `GET /api/availability` in this repo yet; availability can be modeled as assumptions in the assistant or added later.
+| **`db.py` / `models.py`** | SQLAlchemy + `Reservation` + optional **`table_slot_inventory`** (per-slot table-size counts). |
+| **`table_allocation.py`** | Greedy single-table fit, then bounded combination (up to `HANOK_MAX_TABLES_PER_PARTY`) across multi-slot duration. |
+| **`seating_service.py`** | Locks inventory rows (`SELECT … FOR UPDATE`), books or waitlists on create, releases + VIP-ordered **waitlist promotion** on cancel. |
+Remarks:
+- **Optional:** set **`HANOK_TABLE_ALLOCATION_ENABLED=1`** (see `.env.example`).
+- **`GET /api/reservations/seating/availability?date=YYYY-MM-DD`** returns per–grid-bucket effective counts (UTC day) when allocation is enabled.
+- **Amend / time change:** changing `party_size` or `starts_at` via PATCH does **not** automatically re-seat yet (cancel + re-book releases capacity correctly).
 
 ---
 
@@ -66,8 +69,9 @@ There is **no** `GET /api/availability` in this repo yet; availability can be mo
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/menu/items` | Public menu (`id`, prices, EN/KO names) for pre-order tools and web form. |
+| GET | `/seating/availability` | When **`HANOK_TABLE_ALLOCATION_ENABLED=1`**: `?date=YYYY-MM-DD` — per-slot table inventory snapshot (UTC). |
 | GET | `` | List reservations (JSON). |
-| POST | `` | Create reservation (JSON or form). Accepts nested Telnyx shapes; normalizes **E.164** phone. |
+| POST | `` | Create reservation (JSON or form). Accepts nested Telnyx shapes; normalizes **E.164** phone. Optional **`duration_minutes`**, **`waitlist_if_full`** (default true), **`guest_priority`** (`normal` / `vip`); preorder ≥ **`HANOK_VIP_PREORDER_CENTS`** upgrades waitlist priority. |
 | GET | `/lookup` | **Primary lookup:** `guest_name` + **`phone` or `guest_phone`** (empty `phone=` is OK if `guest_phone` is set). |
 | GET | `/lookup-by-phone` | Legacy: phone (+ optional `guest_name` if ambiguous). |
 | GET | `/by-code/{code}` | Fetch by **HNK-…** code (real code in path; not literal `{{code}}`). |
@@ -192,6 +196,8 @@ uvicorn telnyx_restaurant.app:app --reload --host 0.0.0.0 --port 8080
 - **Variables webhook (try):** `POST http://localhost:8080/webhooks/telnyx/variables` with `{"caller_number": "+15551234567"}`
 
 Without `DB_URI`, the app runs but DB-backed routes return **503** where applicable.
+
+**Tests:** `python3 -m pytest telnyx_restaurant/tests -v` (table allocation + sqlite-backed seating flows).
 
 ---
 

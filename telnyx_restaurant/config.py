@@ -79,3 +79,58 @@ def hanok_reservation_verbose_logging() -> bool:
         "true",
         "yes",
     )
+
+
+def hanok_table_allocation_enabled() -> bool:
+    """Per-slot table inventory + allocation on create; cancel releases and promotes waitlist."""
+    return (os.environ.get("HANOK_TABLE_ALLOCATION_ENABLED") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def hanok_slot_step_minutes() -> int:
+    try:
+        v = int((os.environ.get("HANOK_TABLE_SLOT_MINUTES") or "30").strip())
+        return max(15, min(v, 120))
+    except ValueError:
+        return 30
+
+
+def hanok_default_reservation_duration_minutes() -> int:
+    try:
+        v = int((os.environ.get("HANOK_RESERVATION_DURATION_MINUTES") or "120").strip())
+        return max(30, min(v, 480))
+    except ValueError:
+        return 120
+
+
+def hanok_max_tables_per_party() -> int:
+    try:
+        v = int((os.environ.get("HANOK_MAX_TABLES_PER_PARTY") or "2").strip())
+        return max(1, min(v, 4))
+    except ValueError:
+        return 2
+
+
+def hanok_table_inventory_template() -> dict[int, int]:
+    """Default counts per table size when a new (slot_start, size) inventory row is created."""
+    import json
+
+    raw = (os.environ.get("HANOK_TABLE_INVENTORY_JSON") or "").strip()
+    if not raw:
+        return {4: 2, 6: 3, 8: 3, 10: 2}
+    try:
+        data = json.loads(raw)
+        return {int(k): int(v) for k, v in data.items()}
+    except (json.JSONDecodeError, ValueError, TypeError):
+        return {4: 2, 6: 3, 8: 3, 10: 2}
+
+
+def hanok_vip_preorder_threshold_cents() -> int:
+    """Preorder total at or above this (cents) → guest_priority VIP for waitlist ordering."""
+    try:
+        return int((os.environ.get("HANOK_VIP_PREORDER_CENTS") or "50000").strip())
+    except ValueError:
+        return 50000
