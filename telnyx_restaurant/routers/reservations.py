@@ -10,7 +10,7 @@ import string
 from datetime import UTC, date, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -1089,29 +1089,16 @@ def patch_reservation_by_code(
     return row
 
 
-@router.patch("/amend", response_model=ReservationRead)
-async def amend_reservation_by_body_code(
+async def _patch_amend_from_request(
     request: Request,
     response: Response,
-    db: Session = Depends(get_db),
-    reservation_id: int | None = Query(
-        None,
-        ge=1,
-        description="Numeric row id from GET /lookup when the JSON body only has null placeholders (Telnyx).",
-    ),
-    amend_row_id: int | None = Query(
-        None,
-        ge=1,
-        alias="id",
-        description="Alias for reservation_id in the query string (?id=11).",
-    ),
-):
-    """Update a booking when tools post JSON instead of PATCH /{id}.
-
-    Identify the row with **one of**: confirmation_code in the body, **reservation_id** / **id** in the body,
-    **?reservation_id=** or **?id=** on the URL (same id as GET /lookup / PATCH /{id}/status), guest_name+phone
-    (unique match), or nested scavenging. Then send fields to patch (preorder, party_size, …).
-    """
+    db: Session,
+    *,
+    path_row_id: int | None,
+    query_reservation_id: int | None,
+    query_amend_row_id: int | None,
+) -> Reservation:
+    """Shared PATCH /amend implementation; identity from path, query, body, guest lookup, or scavenging."""
     raw = await read_json_or_form_body(request)
     if not isinstance(raw, dict):
         logger.warning("PATCH /amend 422: body is not a JSON object (type=%s)", type(raw).__name__)
@@ -1158,12 +1145,22 @@ async def amend_reservation_by_body_code(
 
     code_ok = code_raw is not None and str(code_raw).strip()
     rid_ok = rid_raw is not None and str(rid_raw).strip()
-    rid_from_query = reservation_id if reservation_id is not None else amend_row_id
+    if path_row_id is not None:
+        rid_from_query: int | None = path_row_id
+    elif query_reservation_id is not None:
+        rid_from_query = query_reservation_id
+    elif query_amend_row_id is not None:
+        rid_from_query = query_amend_row_id
+    else:
+        rid_from_query = None
     amend_identity_fail_hint: str | None = None
     if not code_ok and not rid_ok and rid_from_query is not None:
         rid_raw = rid_from_query
         rid_ok = True
-        logger.info("PATCH /amend: identity from query ?reservation_id/?id=%s", rid_from_query)
+        if path_row_id is not None:
+            logger.info("PATCH /amend: identity from path /amend/%s", path_row_id)
+        else:
+            logger.info("PATCH /amend: identity from query ?reservation_id/?id=%s", rid_from_query)
     elif not code_ok and not rid_ok:
         # Telnyx templates often send confirmation_code / id as JSON null at the root even
         # when guest fields or nested context still identify the row (same as prior GET /lookup).
@@ -1217,12 +1214,16 @@ async def amend_reservation_by_body_code(
         )
         hints: list[str | dict[str, str]] = [
             {
-                "fix": "Add the numeric row id to the amend URL",
-                "example": "PATCH /api/reservations/amend?id=11 (same 11 as PATCH /api/reservations/11/status and GET /lookup response field id).",
+                "fix": "Put the row id in the amend path (same pattern as …/11/status)",
+                "example": "PATCH /api/reservations/amend/11 — Telnyx: …/amend/{{reservation_id}} with the lookup id.",
             },
             {
-                "fix": "Or patch by path (no /amend body identity needed)",
-                "example": "PATCH /api/reservations/11 with JSON body {\"preorder\":[{\"menu_item_id\":\"bulgogi\",\"quantity\":1}]}",
+                "fix": "Or add the id as a query string on /amend",
+                "example": "PATCH /api/reservations/amend?id=11 (same id as GET /lookup).",
+            },
+            {
+                "fix": "Or patch the reservation directly (body-only preorder)",
+                "example": "PATCH /api/reservations/11 with JSON {\"preorder\":[{\"menu_item_id\":\"bulgogi\",\"quantity\":1}]}",
             },
         ]
         if amend_identity_fail_hint:
@@ -1305,6 +1306,60 @@ async def amend_reservation_by_body_code(
         sorted(body.model_fields_set),
     )
     return row
+
+
+@router.patch("/amend", response_model=ReservationRead)
+async def amend_reservation_by_body_code(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    reservation_id: int | None = Query(
+        None,
+        ge=1,
+        description="Numeric row id from GET /lookup when the JSON body only has null placeholders (Telnyx).",
+    ),
+    amend_row_id: int | None = Query(
+        None,
+        ge=1,
+        alias="id",
+        description="Alias for reservation_id in the query string (?id=11).",
+    ),
+):
+    """Update a booking when tools post JSON instead of PATCH /{id}.
+
+    Identify the row with **one of**: confirmation_code in the body, **reservation_id** / **id** in the body,
+    **?reservation_id=** or **?id=** on the URL (same id as GET /lookup / PATCH /{id}/status), guest_name+phone
+    (unique match), nested scavenging, or **PATCH /amend/{id}** when Telnyx omits query strings.
+    """
+    return await _patch_amend_from_request(
+        request,
+        response,
+        db,
+        path_row_id=None,
+        query_reservation_id=reservation_id,
+        query_amend_row_id=amend_row_id,
+    )
+
+
+@router.patch("/amend/{row_id}", response_model=ReservationRead)
+async def amend_reservation_by_path_id(
+    request: Request,
+    response: Response,
+    row_id: int = Path(
+        ge=1,
+        description="Same numeric id as GET /lookup and PATCH /{id}/status (use /amend/{{id}} in Telnyx).",
+    ),
+    db: Session = Depends(get_db),
+):
+    """PATCH /amend with id in the path — mirrors …/{id}/status for HTTP tools that substitute path only."""
+    return await _patch_amend_from_request(
+        request,
+        response,
+        db,
+        path_row_id=row_id,
+        query_reservation_id=None,
+        query_amend_row_id=None,
+    )
 
 
 @router.patch("/{reservation_id}/status", response_model=ReservationRead)
