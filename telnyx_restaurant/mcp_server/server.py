@@ -15,7 +15,9 @@ _INSTRUCTIONS = (
     "Hanok Table reservation API tools. Always call get_reservation (lookup) before "
     "update_reservation_details or set_reservation_status so you have the numeric "
     "reservation id. Use list_menu_items before building preorder lines. "
-    "Details patch: PATCH /{id}/amend; lifecycle/cancel: PATCH /{id}/status."
+    "Details patch: PATCH /{id}/amend; lifecycle/cancel: PATCH /{id}/status. "
+    "After cancel_reservation or set_reservation_status succeeds, say a brief spoken "
+    "confirmation (e.g. reservation cancelled, code HNK-…) — do not stay silent until the user speaks."
 )
 
 mcp = FastMCP(

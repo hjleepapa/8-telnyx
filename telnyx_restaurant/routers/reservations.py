@@ -14,7 +14,8 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-from starlette.requests import Request
+from starlette.concurrency import run_in_threadpool
+from starlette.requests import ClientDisconnect, Request
 
 from telnyx_restaurant.config import (
     hanok_default_reservation_duration_minutes,
@@ -344,44 +345,8 @@ def _flat_infer_cancel_from_voice_aliases(flat: dict[str, Any]) -> None:
             return
 
 
-async def _patch_at_status_url(
-    request: Request,
-    db: Session,
-    *,
-    row: Reservation,
-    query_status: str | None,
-    cancel: str | None,
-) -> tuple[Reservation, bool]:
-    """Telnyx often binds `…/status` for all updates — accept full ReservationUpdate here too.
-
-    Returns (row, changed) so callers can set X-Hanok-Reservation-Changed and avoid implying a mutation.
-    """
-    # Same JSON + form rules as POST /amend (incl. json-parse of preorder-ish form fields).
-    body = await read_json_or_form_body(request)
-    flat = _unwrap_nested_reservation_payload(dict(body))
-    for k in (
-        "confirmation_code",
-        "code",
-        "confirmationCode",
-        "hnk_code",
-        "reservation_code",
-        "next_reservation_code",
-    ):
-        flat.pop(k, None)
-
-    _flat_apply_cancel_and_query_status(flat, query_status=query_status, cancel=cancel)
-    _flat_infer_cancel_from_voice_aliases(flat)
-
-    if hanok_reservation_verbose_logging():
-        logger.info(
-            "PATCH …/status row_id=%s query_status=%r cancel=%r flat_keys=%s body=%s",
-            row.id,
-            query_status,
-            cancel,
-            sorted(flat.keys())[:40],
-            _shallow_body_summary(flat, max_keys=24),
-        )
-
+def _patch_at_status_core(db: Session, row: Reservation, flat: dict[str, Any]) -> tuple[Reservation, bool]:
+    """Sync DB work for PATCH …/status (run in threadpool — do not call from async without offload)."""
     patch: ReservationUpdate | None = None
     patch_exc: ValidationError | None = None
     try:
@@ -473,12 +438,72 @@ async def _patch_at_status_url(
     return row, True
 
 
+def _patch_at_status_in_thread(row_id: int, flat: dict[str, Any]) -> tuple[ReservationRead, bool]:
+    """Open a short-lived session in a worker thread so sync SQLAlchemy cannot block the event loop."""
+    from telnyx_restaurant import db as db_mod
+
+    db_mod.get_engine()
+    SL = db_mod.SessionLocal
+    if SL is None:
+        raise HTTPException(status_code=503, detail="Database session unavailable.")
+    db = SL()
+    try:
+        row = db.get(Reservation, row_id)
+        if not row:
+            raise HTTPException(status_code=404, detail="Reservation not found")
+        row, changed = _patch_at_status_core(db, row, flat)
+        return ReservationRead.model_validate(row), changed
+    finally:
+        db.close()
+
+
+async def _patch_at_status_url(
+    request: Request,
+    *,
+    row_id: int,
+    query_status: str | None,
+    cancel: str | None,
+) -> tuple[ReservationRead, bool]:
+    """Telnyx often binds `…/status` for all updates — accept full ReservationUpdate here too.
+
+    Body is read asynchronously; DB work runs in a threadpool so MCP/voice clients are not stalled.
+    """
+    body = await read_json_or_form_body(request)
+    flat = _unwrap_nested_reservation_payload(dict(body))
+    for k in (
+        "confirmation_code",
+        "code",
+        "confirmationCode",
+        "hnk_code",
+        "reservation_code",
+        "next_reservation_code",
+    ):
+        flat.pop(k, None)
+
+    _flat_apply_cancel_and_query_status(flat, query_status=query_status, cancel=cancel)
+    _flat_infer_cancel_from_voice_aliases(flat)
+
+    if hanok_reservation_verbose_logging():
+        logger.info(
+            "PATCH …/status row_id=%s query_status=%r cancel=%r flat_keys=%s body=%s",
+            row_id,
+            query_status,
+            cancel,
+            sorted(flat.keys())[:40],
+            _shallow_body_summary(flat, max_keys=24),
+        )
+
+    return await run_in_threadpool(_patch_at_status_in_thread, row_id, flat)
+
+
 async def read_status_request_payload(request: Request) -> dict[str, Any]:
     """Telnyx HTTP tools often use form encoding or plain text, not JSON — avoid FastAPI Body 422."""
     hdr = (request.headers.get("content-type") or "").lower()
     if "application/x-www-form-urlencoded" in hdr or "multipart/form-data" in hdr:
         try:
             form = await request.form()
+        except ClientDisconnect:
+            return {}
         except Exception:
             return {}
         out: dict[str, Any] = {}
@@ -488,7 +513,10 @@ async def read_status_request_payload(request: Request) -> dict[str, Any]:
             out[str(key)] = str(val)
         return out
 
-    raw = await request.body()
+    try:
+        raw = await request.body()
+    except ClientDisconnect:
+        return {}
     if not raw or not raw.strip():
         return {}
 
@@ -573,6 +601,9 @@ async def read_json_or_form_body(request: Request) -> dict[str, Any]:
     if "application/x-www-form-urlencoded" in hdr or "multipart/form-data" in hdr:
         try:
             form = await request.form()
+        except ClientDisconnect:
+            logger.warning("read_json_or_form_body: client disconnected during form()")
+            return {}
         except Exception:
             return {}
         out: dict[str, Any] = {}
@@ -610,7 +641,12 @@ async def read_json_or_form_body(request: Request) -> dict[str, Any]:
                 out[k] = v
         return out
 
-    raw = await request.body()
+    try:
+        raw = await request.body()
+    except ClientDisconnect:
+        logger.warning("read_json_or_form_body: client disconnected during body()")
+        return {}
+
     if not raw or not raw.strip():
         return {}
 
@@ -1189,11 +1225,11 @@ async def update_status_by_code(
     ).scalar_one_or_none()
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
-    row, changed = await _patch_at_status_url(
-        request, db, row=row, query_status=status, cancel=cancel
+    out, changed = await _patch_at_status_url(
+        request, row_id=row.id, query_status=status, cancel=cancel
     )
     _set_changed_header(response, changed)
-    return row
+    return out
 
 
 @router.patch("/by-code/{code}", response_model=ReservationRead)
@@ -1529,11 +1565,11 @@ async def update_status(
     row = db.get(Reservation, reservation_id_int)
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
-    row, changed = await _patch_at_status_url(
-        request, db, row=row, query_status=status, cancel=cancel
+    out, changed = await _patch_at_status_url(
+        request, row_id=row.id, query_status=status, cancel=cancel
     )
     _set_changed_header(response, changed)
-    return row
+    return out
 
 
 @router.patch("/{reservation_id}/amend", response_model=ReservationRead)
