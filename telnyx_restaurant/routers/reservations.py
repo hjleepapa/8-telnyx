@@ -1159,6 +1159,7 @@ async def amend_reservation_by_body_code(
     code_ok = code_raw is not None and str(code_raw).strip()
     rid_ok = rid_raw is not None and str(rid_raw).strip()
     rid_from_query = reservation_id if reservation_id is not None else amend_row_id
+    amend_identity_fail_hint: str | None = None
     if not code_ok and not rid_ok and rid_from_query is not None:
         rid_raw = rid_from_query
         rid_ok = True
@@ -1172,34 +1173,71 @@ async def amend_reservation_by_body_code(
             rid_ok = True
             logger.info("PATCH /amend: identity from guest_name+phone lookup id=%s", row_guess.id)
         else:
+            ident = _flat_guest_identity_for_amend(flat)
+            if ident is None:
+                amend_identity_fail_hint = (
+                    "Guest fallback skipped: no truthy guest_name+guest_phone in the body after unwrap "
+                    "(Telnyx often sends JSON null for every scalar; only `preorder` is real). "
+                    f"flat guest_name={flat.get('guest_name')!r} guest_phone={flat.get('guest_phone')!r}."
+                )
+            else:
+                gn, gp = ident
+                variants = phone_lookup_variants(gp)
+                pool = (
+                    _candidate_pool_for_phone(db, variants, datetime.now(UTC)) if variants else []
+                )
+                matched = [r for r in pool if _guest_name_matches(r.guest_name, gn)]
+                amend_identity_fail_hint = (
+                    f"Guest fallback: {len(pool)} active row(s) for this phone, "
+                    f"{len(matched)} name-match for hint {gn!r} (need exactly one). "
+                    "GET /lookup may still work if query name differs from amend body name."
+                )
             sid = _scavenge_reservation_id_int(raw)
             if sid is not None:
                 rid_raw = sid
                 rid_ok = True
+                amend_identity_fail_hint = None
                 logger.info("PATCH /amend: identity from nested id scavenging id=%s", sid)
             else:
                 sc = _scavenge_confirmation_code_str(raw)
                 if sc:
                     code_raw = sc
                     code_ok = True
+                    amend_identity_fail_hint = None
                     logger.info("PATCH /amend: identity from nested confirmation_code scavenging")
     if not code_ok and not rid_ok:
         logger.warning(
-            "PATCH /amend 422: missing confirmation_code and id after unwrap. "
-            "top_keys=%s flat_keys=%s summary=%s",
+            "PATCH /amend 422: missing reservation identity (preorder not applied). "
+            "query_id=%s top_keys=%s flat_keys=%s summary=%s hint=%s",
+            rid_from_query,
             sorted(raw.keys()),
             sorted(flat.keys()),
             _shallow_body_summary(raw),
+            amend_identity_fail_hint,
         )
+        hints: list[str | dict[str, str]] = [
+            {
+                "fix": "Add the numeric row id to the amend URL",
+                "example": "PATCH /api/reservations/amend?id=11 (same 11 as PATCH /api/reservations/11/status and GET /lookup response field id).",
+            },
+            {
+                "fix": "Or patch by path (no /amend body identity needed)",
+                "example": "PATCH /api/reservations/11 with JSON body {\"preorder\":[{\"menu_item_id\":\"bulgogi\",\"quantity\":1}]}",
+            },
+        ]
+        if amend_identity_fail_hint:
+            hints.append(amend_identity_fail_hint)
         raise HTTPException(
             status_code=422,
-            detail=(
-                "Include confirmation_code (or code, next_reservation_code, …) "
-                "or reservation id: in JSON body, or as query PATCH /amend?reservation_id=11 "
-                "(or ?id=11, same id as GET /lookup and PATCH /…/status), "
-                "or guest_name + guest_phone (unique active booking), "
-                "plus fields to update (party_size, starts_at, preorder, …)."
-            ),
+            detail={
+                "error": "amend_missing_reservation_identity",
+                "explanation": (
+                    "Preorder and other fields are not saved because the server could not determine "
+                    "which reservation row to update. The tool sent keys at the top level but values "
+                    "are often JSON null; GET /lookup used different query params than what appears in this body."
+                ),
+                "hints": hints,
+            },
         )
     logger.info(
         "PATCH /amend: resolved id_hint=%r code_hint=%s flat_keys_after_id_pop=%s",
