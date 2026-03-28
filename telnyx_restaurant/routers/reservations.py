@@ -1089,11 +1089,23 @@ async def amend_reservation_by_body_code(
     request: Request,
     response: Response,
     db: Session = Depends(get_db),
+    reservation_id: int | None = Query(
+        None,
+        ge=1,
+        description="Numeric row id from GET /lookup when the JSON body only has null placeholders (Telnyx).",
+    ),
+    amend_row_id: int | None = Query(
+        None,
+        ge=1,
+        alias="id",
+        description="Alias for reservation_id in the query string (?id=11).",
+    ),
 ):
     """Update a booking when tools post JSON instead of PATCH /{id}.
 
-    Body must include **confirmation_code** (or aliases) **or** numeric **reservation_id** / **id**
-    (same as `ReservationRead.id` from GET /lookup), plus fields to patch.
+    Identify the row with **one of**: confirmation_code in the body, **reservation_id** / **id** in the body,
+    **?reservation_id=** or **?id=** on the URL (same id as GET /lookup / PATCH /{id}/status), guest_name+phone
+    (unique match), or nested scavenging. Then send fields to patch (preorder, party_size, …).
     """
     raw = await read_json_or_form_body(request)
     if not isinstance(raw, dict):
@@ -1141,7 +1153,12 @@ async def amend_reservation_by_body_code(
 
     code_ok = code_raw is not None and str(code_raw).strip()
     rid_ok = rid_raw is not None and str(rid_raw).strip()
-    if not code_ok and not rid_ok:
+    rid_from_query = reservation_id if reservation_id is not None else amend_row_id
+    if not code_ok and not rid_ok and rid_from_query is not None:
+        rid_raw = rid_from_query
+        rid_ok = True
+        logger.info("PATCH /amend: identity from query ?reservation_id/?id=%s", rid_from_query)
+    elif not code_ok and not rid_ok:
         # Telnyx templates often send confirmation_code / id as JSON null at the root even
         # when guest fields or nested context still identify the row (same as prior GET /lookup).
         row_guess = _amend_resolve_row_via_guest_lookup(db, flat)
@@ -1173,7 +1190,8 @@ async def amend_reservation_by_body_code(
             status_code=422,
             detail=(
                 "Include confirmation_code (or code, next_reservation_code, …) "
-                "or reservation_id / id (number from GET /api/reservations/lookup), "
+                "or reservation id: in JSON body, or as query PATCH /amend?reservation_id=11 "
+                "(or ?id=11, same id as GET /lookup and PATCH /…/status), "
                 "or guest_name + guest_phone (unique active booking), "
                 "plus fields to update (party_size, starts_at, preorder, …)."
             ),

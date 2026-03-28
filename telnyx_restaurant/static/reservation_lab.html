@@ -206,9 +206,16 @@
     <section>
       <h2>PATCH /amend (raw JSON)</h2>
       <p class="hint">
-        Body is sent as-is. Include <code>confirmation_code</code> or <code>id</code> (or use
-        <strong>Fill from session</strong>).
+        Body is sent as-is. Identify the row with <code>confirmation_code</code> / <code>id</code>
+        in JSON, or set query <code>?id=</code> / <code>?reservation_id=</code> (same number as
+        <strong>/lookup</strong> and <strong>/{id}/status</strong>) when Telnyx sends only nulls in the body.
       </p>
+      <label for="amend-query-id">Query: reservation row id (optional)</label>
+      <input type="text" id="amend-query-id" placeholder="11 — leave empty and use checkbox below" />
+      <label style="margin-top: 0.5rem">
+        <input type="checkbox" id="amend-use-session-id" checked />
+        Append <code>?id=…</code> from session after lookup/create
+      </label>
       <textarea id="amend-body"></textarea>
       <div>
         <button type="button" class="secondary" id="btn-fill-amend-session">Fill from session + bulgogi preorder</button>
@@ -367,7 +374,15 @@
             logLine("Amend JSON parse error: " + e.message);
             return;
           }
-          await doFetch("PATCH", "/api/reservations/amend", body);
+          var qid = document.getElementById("amend-query-id").value.trim();
+          if (!qid && document.getElementById("amend-use-session-id").checked) {
+            qid = sessionStorage.getItem(sessionKeyId()) || "";
+          }
+          var qs = "";
+          if (qid && /^\d+$/.test(qid)) {
+            qs = "?id=" + encodeURIComponent(qid);
+          }
+          await doFetch("PATCH", "/api/reservations/amend" + qs, body);
         });
 
         function getStoredCodeId() {
