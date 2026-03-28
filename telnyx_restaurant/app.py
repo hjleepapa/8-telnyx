@@ -30,10 +30,8 @@ _RESERVATION_LAB = _STATIC / "reservation_lab.html"
 _APP_REV = os.environ.get("RENDER_GIT_COMMIT", os.environ.get("APP_GIT_REVISION", "local"))
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Log deploy fingerprint; create tables and optional demo seed."""
-    log = logging.getLogger("uvicorn.error")
+def _lifespan_startup(log: logging.Logger) -> None:
+    """DB seed and boot warnings; runs inside root lifespan."""
     log.warning(
         "Hanok Table: rev=%s index_exists=%s app_py=%s",
         _APP_REV[:12] if _APP_REV else "?",
@@ -61,7 +59,22 @@ async def lifespan(app: FastAPI):
                 db.close()
     except Exception:
         log.exception("Database startup skipped — app will run without Postgres until DB is reachable")
-    yield
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Log deploy fingerprint; DB seed; Streamable HTTP MCP task group when mounted."""
+    log = logging.getLogger("uvicorn.error")
+    _lifespan_startup(log)
+
+    if hanok_mcp_http_mount_enabled():
+        from telnyx_restaurant.mcp_server.server import mcp as _hanok_mcp
+
+        # FastAPI does not run mounted Starlette sub-app lifespans; MCP requires session_manager.run().
+        async with _hanok_mcp.session_manager.run():
+            yield
+    else:
+        yield
 
 
 app = FastAPI(

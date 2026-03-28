@@ -60,7 +60,7 @@ Do this instead:
    - `HANOK_MCP_HTTP_MOUNT=1`
    - `HANOK_PUBLIC_BASE_URL=https://your-host` (or `HANOK_MCP_API_BASE_URL` if you prefer an explicit API origin for tools)
    - Optional: `HANOK_MCP_HTTP_MOUNT_PATH=/mcp` (default is `/mcp`)
-2. Redeploy. FastAPI mounts the MCP **streamable HTTP** app at that path.
+2. Redeploy. FastAPI mounts the MCP **streamable HTTP** app at that path. (The app lifespan runs `session_manager.run()` so Telnyx’s POSTs do not hit “Task group is not initialized”.)
 3. In Telnyx **Create MCP Server**:
    - **Name:** e.g. `hanok_table_mcp`
    - **Type:** HTTP
