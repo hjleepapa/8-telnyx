@@ -108,7 +108,7 @@ Configure these **HTTPS URLs** on Mission Control (exact host is yours; example:
 | `/`, `/index.html` | Hanok landing; EN/KO; Telnyx AI web component. |
 | `/reserve-online` | Pre-order form posting to the API. |
 | `/reservation/status` | Lookup by confirmation code (food totals). |
-| `/admin/reservations` | Month calendar of **non-cancelled** reservations; detail overlay. Optional `?token=` if `ADMIN_DASHBOARD_TOKEN` is set. |
+| `/admin/reservations` | **Day / week / month** calendar (UTC) of **non-cancelled** reservations; detail overlay. Optional `?token=` if `ADMIN_DASHBOARD_TOKEN` is set. |
 | `/health` | Liveness (`GET` or `POST`). |
 
 ---

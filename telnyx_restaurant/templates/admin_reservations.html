@@ -78,6 +78,39 @@
         gap: 0.75rem;
         margin-bottom: 1rem;
       }
+      .cal-view-tabs {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.35rem;
+        background: #fff;
+        border: 1px solid var(--cream);
+        border-radius: 10px;
+        padding: 4px;
+        box-shadow: 0 2px 8px rgba(26, 18, 16, 0.06);
+      }
+      .cal-view-tabs button {
+        border: none;
+        background: transparent;
+        color: var(--muted);
+        font-family: inherit;
+        font-size: 0.78rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        padding: 0.45rem 0.75rem;
+        border-radius: 7px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .cal-view-tabs button[aria-selected="true"] {
+        background: var(--gochujang);
+        color: #fff;
+      }
+      .cal-view-tabs button[aria-selected="false"]:hover {
+        background: var(--cream);
+        color: var(--ink);
+      }
       .cal-nav {
         display: flex;
         align-items: center;
@@ -115,6 +148,66 @@
         border-radius: 14px;
         border: 1px solid var(--cream);
         box-shadow: 0 8px 32px rgba(26, 18, 16, 0.08);
+      }
+      .cal-grid.cal-grid--week .cal-cell {
+        min-height: 12rem;
+      }
+      .day-view {
+        background: #fff;
+        border-radius: 14px;
+        border: 1px solid var(--cream);
+        box-shadow: 0 8px 32px rgba(26, 18, 16, 0.08);
+        overflow: hidden;
+      }
+      .day-view-head {
+        padding: 0.85rem 1rem;
+        background: #faf7f2;
+        border-bottom: 1px solid var(--cream);
+        font-weight: 700;
+        font-size: 0.95rem;
+        color: var(--ink);
+      }
+      .day-view-list {
+        padding: 0.65rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        max-height: min(70vh, 520px);
+        overflow-y: auto;
+      }
+      .day-slot {
+        display: grid;
+        grid-template-columns: 4.5rem 1fr;
+        gap: 0.65rem;
+        align-items: start;
+        padding: 0.65rem 0.75rem;
+        border-radius: 10px;
+        border: 1px solid var(--cream);
+        background: #fffdf9;
+      }
+      .day-slot time {
+        font-size: 0.8rem;
+        font-weight: 700;
+        color: var(--gochujang);
+        white-space: nowrap;
+      }
+      .day-slot .day-slot-body {
+        min-width: 0;
+      }
+      .day-slot .day-slot-title {
+        font-weight: 700;
+        font-size: 0.88rem;
+        margin-bottom: 0.2rem;
+      }
+      .day-slot .day-slot-meta {
+        font-size: 0.78rem;
+        color: var(--muted);
+      }
+      .day-slot-empty {
+        padding: 2.5rem 1rem;
+        text-align: center;
+        color: var(--muted);
+        font-size: 0.9rem;
       }
       .cal-dow {
         text-align: center;
@@ -337,7 +430,7 @@
       <div class="top-inner">
         <div>
           <h1>Hanok Table — Reservations</h1>
-          <p>Calendar view · Select a booking for details</p>
+          <p>Day, week, or month (UTC) · Select a booking for details</p>
         </div>
         <a href="/">← Restaurant site</a>
       </div>
@@ -358,14 +451,25 @@
       </div>
       {% else %}
       <div class="cal-toolbar">
+        <div class="cal-view-tabs" role="tablist" aria-label="Calendar scope">
+          <button type="button" role="tab" id="view-day" aria-controls="cal-mount" aria-selected="false">Day</button>
+          <button type="button" role="tab" id="view-week" aria-controls="cal-mount" aria-selected="false">Week</button>
+          <button type="button" role="tab" id="view-month" aria-controls="cal-mount" aria-selected="true">Month</button>
+        </div>
         <div class="cal-nav">
-          <button type="button" id="cal-prev" aria-label="Previous month">‹</button>
+          <button type="button" id="cal-prev" aria-label="Previous">‹</button>
           <div id="cal-month-label"></div>
-          <button type="button" id="cal-next" aria-label="Next month">›</button>
+          <button type="button" id="cal-next" aria-label="Next">›</button>
         </div>
         <button type="button" class="cal-nav" id="cal-today" style="border: 1px solid var(--cream); background: #fff; border-radius: 8px; padding: 0.45rem 0.85rem; font-weight: 600; cursor: pointer; font-family: inherit; font-size: 0.85rem">Today</button>
       </div>
-      <div class="cal-grid" id="cal-grid" role="grid" aria-label="Reservation calendar"></div>
+      <div id="cal-mount">
+        <div class="cal-grid cal-grid--month" id="cal-grid" role="grid" aria-label="Reservation calendar"></div>
+        <div class="day-view" id="day-view" hidden>
+          <div class="day-view-head" id="day-view-head"></div>
+          <div class="day-view-list" id="day-view-list"></div>
+        </div>
+      </div>
       {% endif %}
     </div>
 
@@ -389,6 +493,23 @@
         } catch (e) {
           reservations = [];
         }
+
+        var monthNames = [
+          "January",
+          "February",
+          "March",
+          "April",
+          "May",
+          "June",
+          "July",
+          "August",
+          "September",
+          "October",
+          "November",
+          "December",
+        ];
+        var monthNamesShort = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+        var weekdayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
         function utcDayKey(iso) {
           if (!iso) return "";
@@ -429,19 +550,10 @@
           });
         });
 
-        var viewYear, viewMonth;
-        function syncViewFromToday() {
+        function todayCursor() {
           var n = new Date();
-          viewYear = n.getUTCFullYear();
-          viewMonth = n.getUTCMonth();
+          return { y: n.getUTCFullYear(), m: n.getUTCMonth(), d: n.getUTCDate() };
         }
-        syncViewFromToday();
-
-        var grid = document.getElementById("cal-grid");
-        var labelEl = document.getElementById("cal-month-label");
-        var overlay = document.getElementById("detail-overlay");
-        var detailBody = document.getElementById("detail-body");
-        var detailTitle = document.getElementById("detail-title");
 
         function pad(n) {
           return n < 10 ? "0" + n : String(n);
@@ -451,24 +563,159 @@
           return y + "-" + pad(m + 1) + "-" + pad(d);
         }
 
-        function render() {
-          if (!grid) return;
-          var monthNames = [
-            "January",
-            "February",
-            "March",
-            "April",
-            "May",
-            "June",
-            "July",
-            "August",
-            "September",
-            "October",
-            "November",
-            "December",
-          ];
-          labelEl.textContent = monthNames[viewMonth] + " " + viewYear;
+        function addDaysUTC(cy, cm, cd, delta) {
+          var dt = new Date(Date.UTC(cy, cm, cd + delta));
+          return { y: dt.getUTCFullYear(), m: dt.getUTCMonth(), d: dt.getUTCDate() };
+        }
 
+        function addMonthsUTC(cy, cm, cd, delta) {
+          var first = new Date(Date.UTC(cy, cm + delta, 1));
+          var ny = first.getUTCFullYear();
+          var nm = first.getUTCMonth();
+          var dim = new Date(Date.UTC(ny, nm + 1, 0)).getUTCDate();
+          var dd = Math.min(cd, dim);
+          return { y: ny, m: nm, d: dd };
+        }
+
+        function startOfWeekUTC(cy, cm, cd) {
+          var dt = new Date(Date.UTC(cy, cm, cd));
+          var dow = dt.getUTCDay();
+          return addDaysUTC(cy, cm, cd, -dow);
+        }
+
+        var viewMode = "month";
+        var cursor = todayCursor();
+
+        var grid = document.getElementById("cal-grid");
+        var dayView = document.getElementById("day-view");
+        var dayViewHead = document.getElementById("day-view-head");
+        var dayViewList = document.getElementById("day-view-list");
+        var labelEl = document.getElementById("cal-month-label");
+        var btnPrev = document.getElementById("cal-prev");
+        var btnNext = document.getElementById("cal-next");
+        var btnToday = document.getElementById("cal-today");
+        var tabDay = document.getElementById("view-day");
+        var tabWeek = document.getElementById("view-week");
+        var tabMonth = document.getElementById("view-month");
+        var overlay = document.getElementById("detail-overlay");
+        var detailBody = document.getElementById("detail-body");
+        var detailTitle = document.getElementById("detail-title");
+
+        if (!grid || !labelEl || !dayView || !dayViewHead || !dayViewList) return;
+
+        function syncTabs() {
+          tabDay.setAttribute("aria-selected", viewMode === "day" ? "true" : "false");
+          tabWeek.setAttribute("aria-selected", viewMode === "week" ? "true" : "false");
+          tabMonth.setAttribute("aria-selected", viewMode === "month" ? "true" : "false");
+        }
+
+        function updateNavAria() {
+          if (viewMode === "day") {
+            btnPrev.setAttribute("aria-label", "Previous day");
+            btnNext.setAttribute("aria-label", "Next day");
+          } else if (viewMode === "week") {
+            btnPrev.setAttribute("aria-label", "Previous week");
+            btnNext.setAttribute("aria-label", "Next week");
+          } else {
+            btnPrev.setAttribute("aria-label", "Previous month");
+            btnNext.setAttribute("aria-label", "Next month");
+          }
+        }
+
+        function formatTitle() {
+          if (viewMode === "day") {
+            var dt0 = new Date(Date.UTC(cursor.y, cursor.m, cursor.d));
+            return weekdayNames[dt0.getUTCDay()] + ", " + monthNames[cursor.m] + " " + cursor.d + ", " + cursor.y;
+          }
+          if (viewMode === "week") {
+            var sw = startOfWeekUTC(cursor.y, cursor.m, cursor.d);
+            var ew = addDaysUTC(sw.y, sw.m, sw.d, 6);
+            if (sw.y === ew.y && sw.m === ew.m) {
+              return monthNamesShort[sw.m] + " " + sw.d + " – " + ew.d + ", " + sw.y;
+            }
+            if (sw.y === ew.y) {
+              return (
+                monthNamesShort[sw.m] +
+                " " +
+                sw.d +
+                " – " +
+                monthNamesShort[ew.m] +
+                " " +
+                ew.d +
+                ", " +
+                sw.y
+              );
+            }
+            return (
+              monthNamesShort[sw.m] +
+              " " +
+              sw.d +
+              ", " +
+              sw.y +
+              " – " +
+              monthNamesShort[ew.m] +
+              " " +
+              ew.d +
+              ", " +
+              ew.y
+            );
+          }
+          return monthNames[cursor.m] + " " + cursor.y;
+        }
+
+        function escapeHtml(s) {
+          var d = document.createElement("div");
+          d.textContent = s;
+          return d.innerHTML;
+        }
+
+        function chip(r) {
+          var b = document.createElement("button");
+          b.type = "button";
+          b.className = "cal-chip";
+          b.innerHTML =
+            "<small>" +
+            escapeHtml(timeStr(r.starts_at)) +
+            "</small> · " +
+            escapeHtml((r.guest_name || "").split(" ")[0] || "Guest");
+          b.addEventListener("click", function () {
+            openDetail(r);
+          });
+          return b;
+        }
+
+        function renderCell(dayNum, y, m, otherMonth, todayKey, maxShow) {
+          var key = ymd(y, m, dayNum);
+          var cell = document.createElement("div");
+          cell.className = "cal-cell" + (otherMonth ? " other-month" : "");
+          if (key === todayKey) cell.classList.add("today");
+
+          var num = document.createElement("div");
+          num.className = "cal-day-num";
+          num.textContent = String(dayNum);
+          cell.appendChild(num);
+
+          var evWrap = document.createElement("div");
+          evWrap.className = "cal-events";
+          var list = byDay[key] || [];
+          for (var j = 0; j < Math.min(list.length, maxShow); j++) {
+            evWrap.appendChild(chip(list[j]));
+          }
+          if (list.length > maxShow) {
+            var more = document.createElement("div");
+            more.style.fontSize = "0.58rem";
+            more.style.color = "var(--muted)";
+            more.style.fontWeight = "600";
+            more.textContent = "+" + (list.length - maxShow) + " more";
+            evWrap.appendChild(more);
+          }
+          cell.appendChild(evWrap);
+          grid.appendChild(cell);
+        }
+
+        function renderMonth() {
+          var viewYear = cursor.y;
+          var viewMonth = cursor.m;
           var first = new Date(Date.UTC(viewYear, viewMonth, 1));
           var startDow = first.getUTCDay();
           var daysInMonth = new Date(Date.UTC(viewYear, viewMonth + 1, 0)).getUTCDate();
@@ -488,78 +735,114 @@
 
           var cellCount = 0;
           var i;
-
           for (i = 0; i < startDow; i++) {
             var pd = prevMonthDays - startDow + i + 1;
             var py = viewMonth === 0 ? viewYear - 1 : viewYear;
             var pm = viewMonth === 0 ? 11 : viewMonth - 1;
-            renderCell(pd, py, pm, true, todayKey);
+            renderCell(pd, py, pm, true, todayKey, 3);
             cellCount++;
           }
-
           for (i = 1; i <= daysInMonth; i++) {
-            renderCell(i, viewYear, viewMonth, false, todayKey);
+            renderCell(i, viewYear, viewMonth, false, todayKey, 3);
             cellCount++;
           }
-
           var nextFill = 42 - cellCount;
           if (nextFill < 0) nextFill = 0;
           var ny = viewMonth === 11 ? viewYear + 1 : viewYear;
           var nm = viewMonth === 11 ? 0 : viewMonth + 1;
           for (i = 1; i <= nextFill; i++) {
-            renderCell(i, ny, nm, true, todayKey);
+            renderCell(i, ny, nm, true, todayKey, 3);
           }
         }
 
-        function renderCell(dayNum, y, m, otherMonth, todayKey) {
-          var key = ymd(y, m, dayNum);
-          var cell = document.createElement("div");
-          cell.className = "cal-cell" + (otherMonth ? " other-month" : "");
-          if (key === todayKey) cell.classList.add("today");
-
-          var num = document.createElement("div");
-          num.className = "cal-day-num";
-          num.textContent = String(dayNum);
-          cell.appendChild(num);
-
-          var evWrap = document.createElement("div");
-          evWrap.className = "cal-events";
-          var list = byDay[key] || [];
-          var maxShow = 3;
-          for (var j = 0; j < Math.min(list.length, maxShow); j++) {
-            evWrap.appendChild(chip(list[j]));
-          }
-          if (list.length > maxShow) {
-            var more = document.createElement("div");
-            more.style.fontSize = "0.58rem";
-            more.style.color = "var(--muted)";
-            more.style.fontWeight = "600";
-            more.textContent = "+" + (list.length - maxShow) + " more";
-            evWrap.appendChild(more);
-          }
-          cell.appendChild(evWrap);
-          grid.appendChild(cell);
-        }
-
-        function chip(r) {
-          var b = document.createElement("button");
-          b.type = "button";
-          b.className = "cal-chip";
-          b.innerHTML =
-            "<small>" +
-            escapeHtml(timeStr(r.starts_at)) +
-            "</small> · " +
-            escapeHtml(r.guest_name.split(" ")[0] || "Guest");
-          b.addEventListener("click", function () {
-            openDetail(r);
+        function renderWeek() {
+          var sw = startOfWeekUTC(cursor.y, cursor.m, cursor.d);
+          grid.innerHTML = "";
+          var dows = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+          dows.forEach(function (d) {
+            var h = document.createElement("div");
+            h.className = "cal-dow";
+            h.textContent = d;
+            grid.appendChild(h);
           });
-          return b;
+          var tn = new Date();
+          var todayKey = ymd(tn.getUTCFullYear(), tn.getUTCMonth(), tn.getUTCDate());
+          for (var i = 0; i < 7; i++) {
+            var day = addDaysUTC(sw.y, sw.m, sw.d, i);
+            renderCell(day.d, day.y, day.m, false, todayKey, 6);
+          }
         }
 
-        function escapeHtml(s) {
-          var d = document.createElement("div");
-          d.textContent = s;
-          return d.innerHTML;
+        function renderDay() {
+          var key = ymd(cursor.y, cursor.m, cursor.d);
+          dayViewHead.textContent = formatTitle();
+          dayViewList.innerHTML = "";
+          var list = byDay[key] || [];
+          if (!list.length) {
+            var empty = document.createElement("div");
+            empty.className = "day-slot-empty";
+            empty.textContent = "No reservations on this day (UTC).";
+            dayViewList.appendChild(empty);
+            return;
+          }
+          list.forEach(function (r) {
+            var dr = document.createElement("div");
+            dr.className = "day-slot";
+            dr.setAttribute("role", "button");
+            dr.tabIndex = 0;
+            dr.style.cursor = "pointer";
+            var tm = document.createElement("time");
+            tm.textContent = timeStr(r.starts_at);
+            var body = document.createElement("div");
+            body.className = "day-slot-body";
+            body.innerHTML =
+              '<div class="day-slot-title">' +
+              escapeHtml(r.guest_name || "") +
+              "</div>" +
+              '<div class="day-slot-meta">' +
+              escapeHtml(String(r.party_size)) +
+              " guests · " +
+              escapeHtml(r.confirmation_code) +
+              ' · <span class="badge ' +
+              badgeClass(r.status) +
+              '">' +
+              escapeHtml(r.status) +
+              "</span></div>";
+            dr.appendChild(tm);
+            dr.appendChild(body);
+            function open() {
+              openDetail(r);
+            }
+            dr.addEventListener("click", open);
+            dr.addEventListener("keydown", function (e) {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                open();
+              }
+            });
+            dayViewList.appendChild(dr);
+          });
+        }
+
+        function render() {
+          syncTabs();
+          updateNavAria();
+          labelEl.textContent = formatTitle();
+          if (viewMode === "day") {
+            grid.style.display = "none";
+            dayView.style.display = "";
+            grid.setAttribute("aria-hidden", "true");
+            dayView.removeAttribute("hidden");
+            renderDay();
+          } else {
+            grid.style.display = "";
+            dayView.style.display = "none";
+            grid.removeAttribute("aria-hidden");
+            dayView.setAttribute("hidden", "");
+            grid.className = "cal-grid " + (viewMode === "week" ? "cal-grid--week" : "cal-grid--month");
+            if (viewMode === "week") renderWeek();
+            else renderMonth();
+          }
         }
 
         function row(label, html) {
@@ -631,24 +914,36 @@
           overlay.setAttribute("aria-hidden", "true");
         }
 
-        document.getElementById("cal-prev").addEventListener("click", function () {
-          if (viewMonth === 0) {
-            viewMonth = 11;
-            viewYear--;
-          } else viewMonth--;
+        btnPrev.addEventListener("click", function () {
+          if (viewMode === "day") cursor = addDaysUTC(cursor.y, cursor.m, cursor.d, -1);
+          else if (viewMode === "week") cursor = addDaysUTC(cursor.y, cursor.m, cursor.d, -7);
+          else cursor = addMonthsUTC(cursor.y, cursor.m, cursor.d, -1);
           render();
         });
-        document.getElementById("cal-next").addEventListener("click", function () {
-          if (viewMonth === 11) {
-            viewMonth = 0;
-            viewYear++;
-          } else viewMonth++;
+        btnNext.addEventListener("click", function () {
+          if (viewMode === "day") cursor = addDaysUTC(cursor.y, cursor.m, cursor.d, 1);
+          else if (viewMode === "week") cursor = addDaysUTC(cursor.y, cursor.m, cursor.d, 7);
+          else cursor = addMonthsUTC(cursor.y, cursor.m, cursor.d, 1);
           render();
         });
-        document.getElementById("cal-today").addEventListener("click", function () {
-          syncViewFromToday();
+        btnToday.addEventListener("click", function () {
+          cursor = todayCursor();
           render();
         });
+
+        tabDay.addEventListener("click", function () {
+          viewMode = "day";
+          render();
+        });
+        tabWeek.addEventListener("click", function () {
+          viewMode = "week";
+          render();
+        });
+        tabMonth.addEventListener("click", function () {
+          viewMode = "month";
+          render();
+        });
+
         document.getElementById("detail-close").addEventListener("click", closeDetail);
         overlay.addEventListener("click", function (e) {
           if (e.target === overlay) closeDetail();
