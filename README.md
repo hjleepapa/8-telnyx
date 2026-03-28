@@ -78,6 +78,8 @@ There is **no** `GET /api/availability` in this repo yet; availability can be mo
 | PATCH | `/{id}/status` | Same as **`/by-code/…/status`**: status-only or **full partial update** in the JSON body. |
 | GET | `/{id}` | Fetch one row by id. |
 
+**PATCH responses:** Successful PATCH endpoints return **`X-Hanok-Reservation-Changed: 1`** when any stored field actually changed, and **`0`** when the body was accepted but matched existing values (no DB write). Voice agents often treat HTTP 200 alone as “updated”; use this header or re-**GET** the row to confirm.
+
 **Pre-orders:** Lines reference **menu_item_id** (or dish names resolved to catalog ids). Stored as JSON on the row with computed subtotal, discount, and total cents. **`preorder: []`** on PATCH is treated as **no change** (voice tools often send an empty list when updating party/time); use **`preorder: null`** to **clear** the cart.
 
 ---

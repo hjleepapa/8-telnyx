@@ -10,7 +10,7 @@ import string
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -32,6 +32,37 @@ from telnyx_restaurant.schemas_res import (
 
 router = APIRouter(prefix="/api/reservations", tags=["reservations"])
 logger = logging.getLogger(__name__)
+
+CHANGED_HDR = "X-Hanok-Reservation-Changed"
+
+
+def _normalize_starts_at_cmp(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=UTC)
+    return dt.astimezone(UTC)
+
+
+def _booking_mutable_snapshot(row: Reservation) -> tuple:
+    """Comparable snapshot for detecting real PATCH mutations (avoids pointless commits / LLM confusion)."""
+    return (
+        row.guest_name,
+        row.guest_phone,
+        row.party_size,
+        _normalize_starts_at_cmp(row.starts_at),
+        row.status,
+        row.preorder_json,
+        row.special_requests,
+        row.food_subtotal_cents,
+        row.preorder_discount_cents,
+        row.food_total_cents,
+    )
+
+
+def _set_changed_header(response: Response | None, changed: bool) -> None:
+    if response is not None:
+        response.headers[CHANGED_HDR] = "1" if changed else "0"
 
 _PATCH_NO_FIELDS_DETAIL = (
     "No recognized fields to apply after removing confirmation_code. The server did not update the row. "
@@ -66,9 +97,10 @@ def _reject_modifying_cancelled(row: Reservation) -> None:
         )
 
 
-def _apply_reservation_update(row: Reservation, body: ReservationUpdate) -> None:
+def _apply_reservation_update(row: Reservation, body: ReservationUpdate) -> bool:
     # Caller must use _require_reservation_update_fields before this when a PATCH should do work.
     # Telnyx/tools often include JSON nulls for untouched fields; never write NULL into NOT NULL columns.
+    before = _booking_mutable_snapshot(row)
     if "guest_name" in body.model_fields_set and body.guest_name is not None:
         row.guest_name = body.guest_name  # type: ignore[assignment]
     if "guest_phone" in body.model_fields_set and body.guest_phone is not None:
@@ -104,7 +136,11 @@ def _apply_reservation_update(row: Reservation, body: ReservationUpdate) -> None
             row.food_subtotal_cents = subtotal
             row.preorder_discount_cents = discount
             row.food_total_cents = total
+    after = _booking_mutable_snapshot(row)
+    if after == before:
+        return False
     row.updated_at = datetime.now(UTC)
+    return True
 
 
 def _merge_status_from_cancel_query(
@@ -144,8 +180,11 @@ async def _patch_at_status_url(
     row: Reservation,
     query_status: str | None,
     cancel: str | None,
-) -> Reservation:
-    """Telnyx often binds `…/status` for all updates — accept full ReservationUpdate here too."""
+) -> tuple[Reservation, bool]:
+    """Telnyx often binds `…/status` for all updates — accept full ReservationUpdate here too.
+
+    Returns (row, changed) so callers can set X-Hanok-Reservation-Changed and avoid implying a mutation.
+    """
     # Same JSON + form rules as POST /amend (incl. json-parse of preorder-ish form fields).
     body = await read_json_or_form_body(request)
     flat = _unwrap_nested_reservation_payload(dict(body))
@@ -173,10 +212,13 @@ async def _patch_at_status_url(
     if patch is not None and eff:
         if eff - {"status"}:
             _reject_modifying_cancelled(row)
-        _apply_reservation_update(row, patch)
-        db.commit()
+        changed = _apply_reservation_update(row, patch)
+        if changed:
+            db.commit()
+        else:
+            db.rollback()
         db.refresh(row)
-        return row
+        return row, changed
 
     try:
         parsed = ReservationStatusUpdate.model_validate(flat)
@@ -212,11 +254,15 @@ async def _patch_at_status_url(
             ),
         ) from exc
 
+    if row.status == parsed.status:
+        db.rollback()
+        db.refresh(row)
+        return row, False
     row.status = parsed.status
     row.updated_at = datetime.now(UTC)
     db.commit()
     db.refresh(row)
-    return row
+    return row, True
 
 
 async def read_status_request_payload(request: Request) -> dict[str, Any]:
@@ -742,6 +788,7 @@ def get_reservation_by_code(code: str, db: Session = Depends(get_db)):
 async def update_status_by_code(
     code: str,
     request: Request,
+    response: Response,
     db: Session = Depends(get_db),
     status: str | None = Query(
         None,
@@ -759,15 +806,18 @@ async def update_status_by_code(
     ).scalar_one_or_none()
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
-    return await _patch_at_status_url(
+    row, changed = await _patch_at_status_url(
         request, db, row=row, query_status=status, cancel=cancel
     )
+    _set_changed_header(response, changed)
+    return row
 
 
 @router.patch("/by-code/{code}", response_model=ReservationRead)
 def patch_reservation_by_code(
     code: str,
     body: ReservationUpdate,
+    response: Response,
     db: Session = Depends(get_db),
 ):
     """Update party size, time, pre-order, or guest fields using confirmation code (voice-friendly)."""
@@ -779,15 +829,20 @@ def patch_reservation_by_code(
         raise HTTPException(status_code=404, detail="Reservation not found")
     _reject_modifying_cancelled(row)
     _require_reservation_update_fields(body)
-    _apply_reservation_update(row, body)
-    db.commit()
+    changed = _apply_reservation_update(row, body)
+    if changed:
+        db.commit()
+    else:
+        db.rollback()
     db.refresh(row)
+    _set_changed_header(response, changed)
     return row
 
 
 @router.patch("/amend", response_model=ReservationRead)
 async def amend_reservation_by_body_code(
     request: Request,
+    response: Response,
     db: Session = Depends(get_db),
 ):
     """Update a booking when Telnyx cannot bind numeric `reservation_id` in the path.
@@ -830,9 +885,13 @@ async def amend_reservation_by_body_code(
         raise HTTPException(status_code=404, detail="Reservation not found")
     _reject_modifying_cancelled(row)
     _require_reservation_update_fields(body)
-    _apply_reservation_update(row, body)
-    db.commit()
+    changed = _apply_reservation_update(row, body)
+    if changed:
+        db.commit()
+    else:
+        db.rollback()
     db.refresh(row)
+    _set_changed_header(response, changed)
     return row
 
 
@@ -840,6 +899,7 @@ async def amend_reservation_by_body_code(
 async def update_status(
     reservation_id: str,
     request: Request,
+    response: Response,
     db: Session = Depends(get_db),
     status: str | None = Query(
         None,
@@ -855,9 +915,11 @@ async def update_status(
     row = db.get(Reservation, reservation_id_int)
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
-    return await _patch_at_status_url(
+    row, changed = await _patch_at_status_url(
         request, db, row=row, query_status=status, cancel=cancel
     )
+    _set_changed_header(response, changed)
+    return row
 
 
 @router.get("/{reservation_id}", response_model=ReservationRead)
@@ -873,6 +935,7 @@ def get_reservation(reservation_id: str, db: Session = Depends(get_db)):
 def patch_reservation(
     reservation_id: str,
     body: ReservationUpdate,
+    response: Response,
     db: Session = Depends(get_db),
 ):
     """Update party size, time, pre-order, or guest details (partial PATCH)."""
@@ -882,7 +945,11 @@ def patch_reservation(
         raise HTTPException(status_code=404, detail="Reservation not found")
     _reject_modifying_cancelled(row)
     _require_reservation_update_fields(body)
-    _apply_reservation_update(row, body)
-    db.commit()
+    changed = _apply_reservation_update(row, body)
+    if changed:
+        db.commit()
+    else:
+        db.rollback()
     db.refresh(row)
+    _set_changed_header(response, changed)
     return row
