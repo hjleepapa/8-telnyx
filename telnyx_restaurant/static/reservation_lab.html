@@ -207,9 +207,9 @@
       <h2>PATCH /amend (raw JSON)</h2>
       <p class="hint">
         Body is sent as-is. Identify the row with <code>confirmation_code</code> / <code>id</code>
-        in JSON, or use query <code>?id=</code> / <code>?reservation_id=</code>, or
-        <strong>path</strong> <code>/amend/{id}</code> (same number as <strong>/lookup</strong> and
-        <strong>/{id}/status</strong>) when Telnyx substitutes id in the path only.
+        in JSON, or query <code>?id=</code>, or path <strong><code>/{id}/amend</code></strong> (same as
+        <strong><code>/{id}/status</code></strong> — replace <code>status</code> with <code>amend</code>),
+        or <code>/amend/{id}</code>.
       </p>
       <label for="amend-query-id">Query: reservation row id (optional)</label>
       <input type="text" id="amend-query-id" placeholder="11 — leave empty and use checkbox below" />
@@ -225,7 +225,8 @@
       </div>
       <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem">
         <button type="button" class="primary" id="btn-amend">PATCH /amend?id=…</button>
-        <button type="button" class="primary" id="btn-amend-path">PATCH /amend/{id} (path)</button>
+        <button type="button" class="primary" id="btn-amend-id-slash">PATCH /{id}/amend (Telnyx)</button>
+        <button type="button" class="primary" id="btn-amend-path">PATCH /amend/{id}</button>
       </div>
     </section>
 
@@ -411,6 +412,34 @@
             return;
           }
           await doFetch("PATCH", "/api/reservations/amend/" + encodeURIComponent(qid), body);
+        });
+
+        document.getElementById("btn-amend-id-slash").addEventListener("click", async function () {
+          var raw = document.getElementById("amend-body").value.trim();
+          if (!raw) {
+            logLine("Amend body empty.");
+            return;
+          }
+          var body;
+          try {
+            body = JSON.parse(raw);
+          } catch (e) {
+            logLine("Amend JSON parse error: " + e.message);
+            return;
+          }
+          var qid = document.getElementById("amend-query-id").value.trim();
+          if (!qid && document.getElementById("amend-use-session-id").checked) {
+            qid = sessionStorage.getItem(sessionKeyId()) || "";
+          }
+          if (!qid || !/^\d+$/.test(qid)) {
+            logLine("/{id}/amend needs numeric id (input or session from lookup).");
+            return;
+          }
+          await doFetch(
+            "PATCH",
+            "/api/reservations/" + encodeURIComponent(qid) + "/amend",
+            body,
+          );
         });
 
         function getStoredCodeId() {

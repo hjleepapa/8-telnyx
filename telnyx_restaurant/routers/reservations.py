@@ -1214,8 +1214,12 @@ async def _patch_amend_from_request(
         )
         hints: list[str | dict[str, str]] = [
             {
-                "fix": "Put the row id in the amend path (same pattern as …/11/status)",
-                "example": "PATCH /api/reservations/amend/11 — Telnyx: …/amend/{{reservation_id}} with the lookup id.",
+                "fix": "Put the row id before /amend (same pattern as …/11/status)",
+                "example": "PATCH /api/reservations/11/amend — Telnyx: …/{{reservation_id}}/amend (duplicate the status URL and replace `status` with `amend`).",
+            },
+            {
+                "fix": "Or id after /amend segment",
+                "example": "PATCH /api/reservations/amend/11 — Telnyx: …/amend/{{reservation_id}}.",
             },
             {
                 "fix": "Or add the id as a query string on /amend",
@@ -1328,8 +1332,8 @@ async def amend_reservation_by_body_code(
     """Update a booking when tools post JSON instead of PATCH /{id}.
 
     Identify the row with **one of**: confirmation_code in the body, **reservation_id** / **id** in the body,
-    **?reservation_id=** or **?id=** on the URL (same id as GET /lookup / PATCH /{id}/status), guest_name+phone
-    (unique match), nested scavenging, or **PATCH /amend/{id}** when Telnyx omits query strings.
+    **?reservation_id=** or **?id=** on the URL, **PATCH /{id}/amend** (same path shape as **/{id}/status**),
+    **PATCH /amend/{id}**, guest_name+phone (unique match), or nested scavenging.
     """
     return await _patch_amend_from_request(
         request,
@@ -1387,6 +1391,25 @@ async def update_status(
     )
     _set_changed_header(response, changed)
     return row
+
+
+@router.patch("/{reservation_id}/amend", response_model=ReservationRead)
+async def amend_reservation_id_amend(
+    reservation_id: str,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    """Same body unwrapping as PATCH /amend; id in path mirrors …/{id}/status (typical Telnyx template)."""
+    reservation_id_int = _parse_reservation_id_path(reservation_id)
+    return await _patch_amend_from_request(
+        request,
+        response,
+        db,
+        path_row_id=reservation_id_int,
+        query_reservation_id=None,
+        query_amend_row_id=None,
+    )
 
 
 @router.get("/{reservation_id}", response_model=ReservationRead)
