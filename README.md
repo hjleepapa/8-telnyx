@@ -121,6 +121,7 @@ Configure these **HTTPS URLs** on Mission Control (exact host is yours; example:
 | **`HANOK_REMINDER_DELAY_SECONDS`** | Seconds before placing reminder call (1–300; default 5). |
 | **`HANOK_PUBLIC_BASE_URL`** | Public site origin **without** trailing slash (e.g. `https://telnyx.convonetai.com`) for per-dial `webhook_url`. |
 | **`PUBLIC_BASE_URL`**, **`RENDER_EXTERNAL_URL`** | Fallbacks for the same origin if `HANOK_PUBLIC_BASE_URL` is unset. |
+| **`HANOK_RESERVATION_VERBOSE_LOG`** | If `1` / `true`, logs truncated PATCH bodies for **`/amend`** and **`…/status`** at INFO. |
 | **`RENDER_GIT_COMMIT`** / **`APP_GIT_REVISION`** | Set by host or locally; logged at startup for deploy fingerprint. |
 
 See [`telnyx_restaurant/.env.example`](telnyx_restaurant/.env.example) for a template.

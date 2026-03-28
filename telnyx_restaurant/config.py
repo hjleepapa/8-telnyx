@@ -70,3 +70,12 @@ def hanok_public_base_url() -> str | None:
     if not v:
         return None
     return v.rstrip("/")
+
+
+def hanok_reservation_verbose_logging() -> bool:
+    """If true, log PATCH /amend and …/status bodies (truncated) at INFO for debugging Telnyx tools."""
+    return (os.environ.get("HANOK_RESERVATION_VERBOSE_LOG") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )

@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 
+from telnyx_restaurant.config import hanok_reservation_verbose_logging
 from telnyx_restaurant.db import get_db
 from telnyx_restaurant.menu_catalog import MENU_ITEMS
 from telnyx_restaurant.phone_normalize import phone_lookup_variants, to_e164_us
@@ -32,6 +33,22 @@ from telnyx_restaurant.schemas_res import (
 
 router = APIRouter(prefix="/api/reservations", tags=["reservations"])
 logger = logging.getLogger(__name__)
+
+
+def _shallow_body_summary(raw: dict[str, Any], *, max_keys: int = 30) -> dict[str, Any]:
+    """Truncate values for logs (no full preorder blobs)."""
+    out: dict[str, Any] = {}
+    for k in sorted(raw.keys())[:max_keys]:
+        v = raw[k]
+        if isinstance(v, dict):
+            out[k] = f"<dict {len(v)} keys>"
+        elif isinstance(v, list):
+            out[k] = f"<list len={len(v)}>"
+        elif isinstance(v, str) and len(v) > 100:
+            out[k] = f"{v[:100]}…"
+        else:
+            out[k] = v
+    return out
 
 CHANGED_HDR = "X-Hanok-Reservation-Changed"
 
@@ -200,6 +217,16 @@ async def _patch_at_status_url(
 
     _flat_apply_cancel_and_query_status(flat, query_status=query_status, cancel=cancel)
 
+    if hanok_reservation_verbose_logging():
+        logger.info(
+            "PATCH …/status row_id=%s query_status=%r cancel=%r flat_keys=%s body=%s",
+            row.id,
+            query_status,
+            cancel,
+            sorted(flat.keys())[:40],
+            _shallow_body_summary(flat, max_keys=24),
+        )
+
     patch: ReservationUpdate | None = None
     patch_exc: ValidationError | None = None
     try:
@@ -218,6 +245,12 @@ async def _patch_at_status_url(
         else:
             db.rollback()
         db.refresh(row)
+        logger.info(
+            "PATCH …/status row_id=%s path=reservation_update eff=%s changed=%s",
+            row.id,
+            sorted(eff),
+            changed,
+        )
         return row, changed
 
     try:
@@ -257,11 +290,22 @@ async def _patch_at_status_url(
     if row.status == parsed.status:
         db.rollback()
         db.refresh(row)
+        logger.info(
+            "PATCH …/status row_id=%s path=status_only noop (already %s) flat_keys=%s",
+            row.id,
+            parsed.status,
+            sorted(flat.keys())[:30],
+        )
         return row, False
     row.status = parsed.status
     row.updated_at = datetime.now(UTC)
     db.commit()
     db.refresh(row)
+    logger.info(
+        "PATCH …/status row_id=%s path=status_only status->%s",
+        row.id,
+        parsed.status,
+    )
     return row, True
 
 
@@ -856,10 +900,31 @@ async def amend_reservation_by_body_code(
     """
     raw = await read_json_or_form_body(request)
     if not isinstance(raw, dict):
+        logger.warning("PATCH /amend 422: body is not a JSON object (type=%s)", type(raw).__name__)
         raise HTTPException(
             status_code=422,
             detail="Send a JSON object or form fields with confirmation_code and fields to update.",
         )
+    _code_like = frozenset(
+        (
+            "confirmation_code",
+            "code",
+            "confirmationCode",
+            "hnk_code",
+            "reservation_code",
+            "next_reservation_code",
+        )
+    )
+    _id_like = frozenset(("id", "reservation_id", "reservationId", "booking_id"))
+    logger.info(
+        "PATCH /amend: top_keys=%s has_code_key=%s has_id_key=%s",
+        sorted(raw.keys())[:45],
+        bool(_code_like.intersection(raw.keys())),
+        bool(_id_like.intersection(raw.keys())),
+    )
+    if hanok_reservation_verbose_logging():
+        logger.info("PATCH /amend raw summary: %s", _shallow_body_summary(raw))
+
     flat = _unwrap_nested_reservation_payload(dict(raw))
     code_raw = (
         flat.pop("confirmation_code", None)
@@ -880,6 +945,13 @@ async def amend_reservation_by_body_code(
     code_ok = code_raw is not None and str(code_raw).strip()
     rid_ok = rid_raw is not None and str(rid_raw).strip()
     if not code_ok and not rid_ok:
+        logger.warning(
+            "PATCH /amend 422: missing confirmation_code and id after unwrap. "
+            "top_keys=%s flat_keys=%s summary=%s",
+            sorted(raw.keys()),
+            sorted(flat.keys()),
+            _shallow_body_summary(raw),
+        )
         raise HTTPException(
             status_code=422,
             detail=(
@@ -888,13 +960,20 @@ async def amend_reservation_by_body_code(
                 "plus fields to update (party_size, starts_at, preorder, …)."
             ),
         )
+    logger.info(
+        "PATCH /amend: resolved id_hint=%r code_hint=%s flat_keys_after_id_pop=%s",
+        (str(rid_raw)[:24] + "…") if rid_raw is not None and len(str(rid_raw)) > 24 else rid_raw,
+        bool(code_ok),
+        sorted(flat.keys())[:35],
+    )
     try:
         body = ReservationUpdate.model_validate(flat)
     except ValidationError as exc:
         logger.warning(
-            "PATCH /amend validation error: keys=%s errors=%s",
+            "PATCH /amend 422 ReservationUpdate: flat_keys=%s errors=%s summary=%s",
             sorted(flat.keys())[:40],
-            exc.errors()[:8],
+            exc.errors()[:10],
+            _shallow_body_summary(flat, max_keys=20),
         )
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
 
@@ -906,17 +985,33 @@ async def amend_reservation_by_body_code(
         try:
             rid = int(str(rid_raw).strip(), 10)
         except ValueError:
+            logger.warning(
+                "PATCH /amend 422: id not an integer rid_raw=%r (unsubstituted {{id}} in Telnyx?)",
+                rid_raw,
+            )
             raise HTTPException(
                 status_code=422,
                 detail="reservation_id / id must be a positive integer from the lookup response.",
             ) from None
         if rid < 1:
+            logger.warning("PATCH /amend 422: id out of range rid_raw=%r", rid_raw)
             raise HTTPException(status_code=422, detail="reservation_id must be a positive integer.")
         row = db.get(Reservation, rid)
     if not row:
+        logger.warning("PATCH /amend 404: no row for code_ok=%s rid=%s", code_ok, rid_raw if not code_ok else None)
         raise HTTPException(status_code=404, detail="Reservation not found")
     _reject_modifying_cancelled(row)
-    _require_reservation_update_fields(body)
+    try:
+        _require_reservation_update_fields(body)
+    except HTTPException:
+        logger.warning(
+            "PATCH /amend 422: no patchable fields row_id=%s model_fields_set=%s effective=%s "
+            "(empty preorder [] does not count; JSON null clears cart).",
+            row.id,
+            body.model_fields_set,
+            _effective_reservation_patch_fields(body),
+        )
+        raise
     changed = _apply_reservation_update(row, body)
     if changed:
         db.commit()
@@ -924,6 +1019,12 @@ async def amend_reservation_by_body_code(
         db.rollback()
     db.refresh(row)
     _set_changed_header(response, changed)
+    logger.info(
+        "PATCH /amend ok row_id=%s changed=%s fields=%s",
+        row.id,
+        changed,
+        sorted(body.model_fields_set),
+    )
     return row
 
 
