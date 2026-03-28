@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from urllib.parse import urlparse
 
 try:
     from dotenv import load_dotenv
@@ -85,6 +86,64 @@ def hanok_mcp_api_base_url() -> str:
     if pub:
         return pub
     return "http://127.0.0.1:8000"
+
+
+def hanok_mcp_streamable_transport_security():
+    """DNS rebinding settings for MCP streamable HTTP (Host / Origin checks).
+
+    Uses ``HANOK_PUBLIC_BASE_URL`` / ``HANOK_MCP_API_BASE_URL`` hostnames when set.
+    Set ``HANOK_MCP_DISABLE_DNS_REBINDING=1`` to turn checks off (not recommended on untrusted networks).
+    """
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    if (os.environ.get("HANOK_MCP_DISABLE_DNS_REBINDING") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    ):
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+
+    hosts: list[str] = []
+    origins: list[str] = []
+
+    def add_public_origin(origin: str) -> None:
+        o = origin.strip().rstrip("/")
+        if not o:
+            return
+        p = urlparse(o)
+        host = (p.hostname or "").lower()
+        if not host or host in ("127.0.0.1", "localhost", "::1"):
+            return
+        hosts.append(host)
+        hosts.append(f"{host}:*")
+        if p.scheme and p.netloc:
+            origins.append(f"{p.scheme}://{p.netloc}")
+
+    pub = hanok_public_base_url()
+    if pub:
+        add_public_origin(pub)
+    mcp_api = (os.environ.get("HANOK_MCP_API_BASE_URL") or "").strip().rstrip("/")
+    if mcp_api:
+        add_public_origin(mcp_api)
+
+    for part in (os.environ.get("HANOK_MCP_ALLOWED_HOSTS") or "").split(","):
+        h = part.strip()
+        if h:
+            hosts.append(h)
+
+    for part in (os.environ.get("HANOK_MCP_ALLOWED_ORIGINS") or "").split(","):
+        o = part.strip().rstrip("/")
+        if o:
+            origins.append(o)
+
+    if not hosts:
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=list(dict.fromkeys(hosts)),
+        allowed_origins=list(dict.fromkeys(origins)),
+    )
 
 
 def hanok_mcp_http_mount_enabled() -> bool:

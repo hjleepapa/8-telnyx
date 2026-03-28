@@ -58,7 +58,8 @@ Do this instead:
 
 1. On **Render** (same web service as `uvicorn`), set:
    - `HANOK_MCP_HTTP_MOUNT=1`
-   - `HANOK_PUBLIC_BASE_URL=https://your-host` (or `HANOK_MCP_API_BASE_URL` if you prefer an explicit API origin for tools)
+   - **`HANOK_PUBLIC_BASE_URL=https://your-host`** (required for MCP **Host** / **Origin** validation — e.g. `https://telnyx.convonetai.com`; see `hanok_mcp_streamable_transport_security()` in `config.py`). Optionally add **`HANOK_MCP_ALLOWED_HOSTS`** / **`HANOK_MCP_ALLOWED_ORIGINS`** if clients use another hostname, or **`HANOK_MCP_DISABLE_DNS_REBINDING=1`** only if you accept the risk.
+   - `HANOK_MCP_API_BASE_URL` if the REST origin should differ from the public URL.
    - Optional: `HANOK_MCP_HTTP_MOUNT_PATH=/mcp` (default is `/mcp`)
 2. Redeploy. FastAPI mounts the MCP **streamable HTTP** app at that path. (The app lifespan runs `session_manager.run()` so Telnyx’s POSTs do not hit “Task group is not initialized”.)
 3. In Telnyx **Create MCP Server**:

@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-from telnyx_restaurant.config import hanok_mcp_api_base_url
+from telnyx_restaurant.config import hanok_mcp_api_base_url, hanok_mcp_streamable_transport_security
 
 _INSTRUCTIONS = (
     "Hanok Table reservation API tools. Always call get_reservation (lookup) before "
@@ -23,6 +23,7 @@ mcp = FastMCP(
     instructions=_INSTRUCTIONS,
     json_response=True,
     stateless_http=True,
+    transport_security=hanok_mcp_streamable_transport_security(),
 )
 
 
