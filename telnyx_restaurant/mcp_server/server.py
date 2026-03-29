@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any
 
 import httpx
@@ -15,6 +16,9 @@ _INSTRUCTIONS = (
     "Hanok Table reservation API tools. Always call get_reservation (lookup) before "
     "update_reservation_details or set_reservation_status so you have the numeric "
     "reservation id. Use list_menu_items before building preorder lines. "
+    "When the guest orders food, pass preorder on create/update: either preorder_items "
+    "(e.g. bulgogi:2,kimchi_jjigae:1) or preorder_lines_json — do not submit create_reservation "
+    "with no preorder if they chose dishes. "
     "Details patch: PATCH /{id}/amend; lifecycle/cancel: PATCH /{id}/status. "
     "After cancel_reservation or set_reservation_status succeeds, say a brief spoken "
     "confirmation (e.g. reservation cancelled, code HNK-…) — do not stay silent until the user speaks."
@@ -36,6 +40,62 @@ def _http_timeout() -> httpx.Timeout:
     except ValueError:
         sec = 45.0
     return httpx.Timeout(sec)
+
+
+def _preorder_lines_from_simple(spec: str) -> list[dict[str, Any]]:
+    """Parse ``bulgogi:2, bibimbap:1`` or ``2x bulgogi`` into API preorder lines (menu ids from catalog)."""
+    from telnyx_restaurant.menu_catalog import resolve_menu_item_id
+
+    lines: list[dict[str, Any]] = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        qty = 1
+        dish_part = part
+        m = re.match(r"^(\d+)\s*x\s*(.+)$", part, re.I)
+        if m:
+            qty = max(1, int(m.group(1)))
+            dish_part = m.group(2).strip()
+        elif ":" in part:
+            left, _, right = part.partition(":")
+            left, right = left.strip(), right.strip()
+            if right.isdigit():
+                dish_part = left
+                qty = max(1, int(right))
+        mid = resolve_menu_item_id(dish_part.strip(), None)
+        lines.append({"menu_item_id": mid, "quantity": qty})
+    if not lines:
+        raise ValueError(
+            "preorder_items had no lines — use ids from list_menu_items (e.g. bulgogi:2,dolsot_bibimbap:1)"
+        )
+    return lines
+
+
+def _preorder_for_api_body(
+    preorder_lines_json: str | None,
+    preorder_items: str | None,
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Build preorder list for JSON body; return (list | None, error_response_body | None)."""
+    if preorder_lines_json and preorder_lines_json.strip():
+        try:
+            data = json.loads(preorder_lines_json)
+        except json.JSONDecodeError as e:
+            return None, json.dumps({"error": "invalid_preorder_json", "detail": str(e)}, indent=2)
+        if isinstance(data, list):
+            return (data if data else None), None
+        if isinstance(data, dict):
+            return [data], None
+        return None, json.dumps(
+            {"error": "invalid_preorder_json", "detail": "JSON must be an array or object"},
+            indent=2,
+        )
+    if preorder_items and preorder_items.strip():
+        try:
+            return _preorder_lines_from_simple(preorder_items.strip()), None
+        except ValueError as e:
+            return None, json.dumps({"error": "invalid_preorder_items", "detail": str(e)}, indent=2)
+    return None, None
 
 
 def _fmt_response(status_code: int, text: str) -> str:
@@ -108,12 +168,18 @@ async def create_reservation(
     party_size: int,
     starts_at: str,
     preorder_lines_json: str | None = None,
+    preorder_items: str | None = None,
     special_requests: str | None = None,
     source_channel: str = "voice",
 ) -> str:
     """
     Create a reservation. starts_at must be ISO-8601 (e.g. 2026-07-04T18:00:00+00:00).
-    preorder_lines_json: optional JSON array, e.g. [{"menu_item_id":"bulgogi","quantity":2}]
+
+    Pre-order (if the guest ordered food — call list_menu_items first):
+    - preorder_items: easiest for voice — comma-separated id:quantity, e.g. ``bulgogi:2,kimchi_jjigae:1``
+      or ``2x bulgogi, 1x dolsot_bibimbap`` (menu_item ids / aliases from list_menu_items).
+    - preorder_lines_json: alternatively a JSON array, e.g. [{"menu_item_id":"bulgogi","quantity":2}]
+    If both are set, preorder_lines_json wins.
     """
     body: dict[str, Any] = {
         "guest_name": _clean_str(guest_name),
@@ -124,11 +190,11 @@ async def create_reservation(
     }
     if special_requests and special_requests.strip():
         body["special_requests"] = special_requests.strip()
-    if preorder_lines_json and preorder_lines_json.strip():
-        try:
-            body["preorder"] = json.loads(preorder_lines_json)
-        except json.JSONDecodeError as e:
-            return json.dumps({"error": "invalid_preorder_json", "detail": str(e)}, indent=2)
+    preorder, err_body = _preorder_for_api_body(preorder_lines_json, preorder_items)
+    if err_body:
+        return err_body
+    if preorder:
+        body["preorder"] = preorder
     return await _http_json(
         "POST",
         "/api/reservations",
@@ -143,6 +209,7 @@ async def update_reservation_details(
     party_size: int | None = None,
     starts_at: str | None = None,
     preorder_lines_json: str | None = None,
+    preorder_items: str | None = None,
     special_requests: str | None = None,
     guest_name: str | None = None,
     guest_phone: str | None = None,
@@ -150,7 +217,7 @@ async def update_reservation_details(
     """
     Change food pre-order, party size, time, notes, or guest contact.
     PATCHes /api/reservations/{id}/amend. Omit fields you do not change.
-    preorder_lines_json: JSON array or null to skip; use "[]" only if the API treats empty as no-op.
+    preorder_lines_json: JSON array; preorder_items: e.g. bulgogi:2,kimchi_jjigae:1 (JSON wins if both set).
     """
     body: dict[str, Any] = {}
     if party_size is not None:
@@ -163,16 +230,21 @@ async def update_reservation_details(
         body["guest_name"] = str(guest_name).strip()
     if guest_phone is not None and str(guest_phone).strip():
         body["guest_phone"] = str(guest_phone).strip()
-    if preorder_lines_json is not None and preorder_lines_json.strip():
+    if preorder_lines_json is not None and str(preorder_lines_json).strip():
         try:
             body["preorder"] = json.loads(preorder_lines_json)
         except json.JSONDecodeError as e:
             return json.dumps({"error": "invalid_preorder_json", "detail": str(e)}, indent=2)
+    elif preorder_items is not None and preorder_items.strip():
+        try:
+            body["preorder"] = _preorder_lines_from_simple(preorder_items.strip())
+        except ValueError as e:
+            return json.dumps({"error": "invalid_preorder_items", "detail": str(e)}, indent=2)
     if not body:
         return json.dumps(
             {
                 "error": "no_fields",
-                "detail": "Provide at least one of party_size, starts_at, preorder_lines_json, special_requests, guest_name, guest_phone",
+                "detail": "Provide at least one of party_size, starts_at, preorder_lines_json, preorder_items, special_requests, guest_name, guest_phone",
             },
             indent=2,
         )
