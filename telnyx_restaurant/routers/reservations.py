@@ -103,9 +103,8 @@ _PATCH_NO_FIELDS_DETAIL = (
     '{"confirmation_code":"HNK-ABCD","party_size":4,"starts_at":"2026-03-28T19:00:00+00:00"} '
     'or {"confirmation_code":"HNK-ABCD","preorder":[{"menu_item_id":"bulgogi","quantity":1}]}. '
     "Empty array preorder/items [] does not change food. "
-    "JSON null on preorder clears the cart only when no other field in the same request carries "
-    "a real value (party_size, starts_at, guest fields, status, special_requests); otherwise null "
-    "is treated as a Telnyx placeholder."
+    "JSON null on preorder clears the cart when it is the real intent: not a Telnyx multi-key "
+    "template where party_size, starts_at, guest fields, and preorder are all JSON null placeholders."
 )
 
 
@@ -127,9 +126,30 @@ def _has_truthy_non_preorder_patch(body: ReservationUpdate) -> bool:
     return False
 
 
+def _telnyx_null_placeholder_bundle(body: ReservationUpdate) -> bool:
+    """True when the body looks like a Telnyx amend template: several booking keys, all JSON null.
+
+    Those clients send confirmation_code, guest_name, party_size, preorder, etc. on every call.
+    preorder: null in that shape means 'unchanged', not 'clear cart'.
+    """
+    fs = body.model_fields_set
+    bundle = frozenset(
+        ("party_size", "starts_at", "guest_name", "guest_phone", "special_requests", "preorder")
+    )
+    present = bundle & fs
+    if len(present) < 2:
+        return False
+    for key in present:
+        if getattr(body, key) is not None:
+            return False
+    return True
+
+
 def _preorder_null_clears_cart(body: ReservationUpdate) -> bool:
     """Whether JSON preorder: null should clear stored cart (vs Telnyx null alongside party/time)."""
     if "preorder" not in body.model_fields_set or body.preorder is not None:
+        return False
+    if _telnyx_null_placeholder_bundle(body):
         return False
     return not _has_truthy_non_preorder_patch(body)
 
@@ -1533,7 +1553,7 @@ async def _patch_amend_from_request(
     except HTTPException:
         logger.warning(
             "PATCH /amend 422: no patchable fields row_id=%s model_fields_set=%s effective=%s "
-            "(empty preorder [] does not count; JSON null clears cart).",
+            "(empty preorder [] does not count; lone JSON null on preorder clears cart, not all-null Telnyx templates).",
             row.id,
             body.model_fields_set,
             _effective_reservation_patch_fields(body),
