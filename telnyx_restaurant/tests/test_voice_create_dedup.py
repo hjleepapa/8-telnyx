@@ -28,6 +28,7 @@ def _voice_row(**kwargs: object) -> Reservation:
         "duration_minutes": 120,
         "guest_priority": "normal",
         "seating_status": "not_applicable",
+        "preferred_locale": "en",
     }
     defaults.update(kwargs)
     return Reservation(**defaults)

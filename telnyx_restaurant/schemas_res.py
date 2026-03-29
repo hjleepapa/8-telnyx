@@ -562,6 +562,24 @@ class ReservationCreate(BaseModel):
             "seating_priority",
         ),
     )
+    preferred_locale: str = Field(
+        "en",
+        max_length=16,
+        validation_alias=AliasChoices(
+            "preferred_locale",
+            "preferredLocale",
+            "locale",
+            "language",
+            "lang",
+        ),
+    )
+
+    @field_validator("preferred_locale", mode="before")
+    @classmethod
+    def preferred_locale_norm(cls, v: Any) -> Any:
+        from telnyx_restaurant.locale_prefs import normalize_preferred_locale
+
+        return normalize_preferred_locale(v)
 
     @field_validator("waitlist_if_full", mode="before")
     @classmethod
@@ -763,6 +781,26 @@ class ReservationUpdate(BaseModel):
         ),
     )
     preorder: list[PreorderLineIn] | None = Field(None, validation_alias=PREORDER_ALIASES)
+    preferred_locale: str | None = Field(
+        None,
+        max_length=16,
+        validation_alias=AliasChoices(
+            "preferred_locale",
+            "preferredLocale",
+            "locale",
+            "language",
+            "lang",
+        ),
+    )
+
+    @field_validator("preferred_locale", mode="before")
+    @classmethod
+    def preferred_locale_update_norm(cls, v: Any) -> Any:
+        if v is None or (isinstance(v, str) and not str(v).strip()):
+            return None
+        from telnyx_restaurant.locale_prefs import normalize_preferred_locale
+
+        return normalize_preferred_locale(v)
 
     @field_validator("guest_phone", mode="before")
     @classmethod
@@ -847,6 +885,7 @@ class ReservationRead(BaseModel):
     preorder_discount_cents: int = 0
     food_total_cents: int = 0
     source_channel: str = "online"
+    preferred_locale: str = "en"
     reminder_call_status: str | None = None
     duration_minutes: int = 120
     seating_status: str = "not_applicable"

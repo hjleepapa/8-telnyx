@@ -13,7 +13,9 @@ from mcp.server.fastmcp import FastMCP
 from telnyx_restaurant.config import hanok_mcp_api_base_url, hanok_mcp_streamable_transport_security
 
 _INSTRUCTIONS = (
-    "Hanok Table reservation API tools. Always call get_reservation (lookup) before "
+    "Hanok Table reservation API tools. The Telnyx dynamic-variables webhook may provide "
+    "locale_hint (en-US or ko-KR) from the guest's stored preferred_locale — follow that language "
+    "for the conversation when set. Always call get_reservation (lookup) before "
     "update_reservation_details or set_reservation_status so you have the numeric "
     "reservation id. Use list_menu_items before building preorder lines. "
     "When the guest orders food, pass preorder on create/update: either preorder_items "
@@ -170,6 +172,7 @@ async def create_reservation(
     preorder_lines_json: str | None = None,
     preorder_items: str | None = None,
     special_requests: str | None = None,
+    preferred_locale: str | None = None,
     source_channel: str = "voice",
 ) -> str:
     """
@@ -180,6 +183,7 @@ async def create_reservation(
       or ``2x bulgogi, 1x dolsot_bibimbap`` (menu_item ids / aliases from list_menu_items).
     - preorder_lines_json: alternatively a JSON array, e.g. [{"menu_item_id":"bulgogi","quantity":2}]
     If both are set, preorder_lines_json wins.
+    preferred_locale: optional ``en`` or ``ko`` (stored for dynamic webhook / future calls).
     """
     body: dict[str, Any] = {
         "guest_name": _clean_str(guest_name),
@@ -188,6 +192,10 @@ async def create_reservation(
         "starts_at": _clean_str(starts_at),
         "source_channel": (source_channel or "voice").strip().lower(),
     }
+    if preferred_locale is not None and str(preferred_locale).strip():
+        from telnyx_restaurant.locale_prefs import normalize_preferred_locale
+
+        body["preferred_locale"] = normalize_preferred_locale(preferred_locale)
     if special_requests and special_requests.strip():
         body["special_requests"] = special_requests.strip()
     preorder, err_body = _preorder_for_api_body(preorder_lines_json, preorder_items)
@@ -213,6 +221,7 @@ async def update_reservation_details(
     special_requests: str | None = None,
     guest_name: str | None = None,
     guest_phone: str | None = None,
+    preferred_locale: str | None = None,
 ) -> str:
     """
     Change food pre-order, party size, time, notes, or guest contact.
@@ -240,11 +249,15 @@ async def update_reservation_details(
             body["preorder"] = _preorder_lines_from_simple(preorder_items.strip())
         except ValueError as e:
             return json.dumps({"error": "invalid_preorder_items", "detail": str(e)}, indent=2)
+    if preferred_locale is not None and str(preferred_locale).strip():
+        from telnyx_restaurant.locale_prefs import normalize_preferred_locale
+
+        body["preferred_locale"] = normalize_preferred_locale(preferred_locale)
     if not body:
         return json.dumps(
             {
                 "error": "no_fields",
-                "detail": "Provide at least one of party_size, starts_at, preorder_lines_json, preorder_items, special_requests, guest_name, guest_phone",
+                "detail": "Provide at least one of party_size, starts_at, preorder_lines_json, preorder_items, special_requests, guest_name, guest_phone, preferred_locale",
             },
             indent=2,
         )

@@ -52,6 +52,9 @@ class Reservation(Base):
     source_channel: Mapped[str] = mapped_column(
         String(32), default="online", server_default="online", index=True
     )
+    preferred_locale: Mapped[str] = mapped_column(
+        String(16), default="en", server_default="en"
+    )
     reminder_call_status: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # Seating / table allocation (optional feature via HANOK_TABLE_ALLOCATION_ENABLED)
     duration_minutes: Mapped[int] = mapped_column(Integer, default=120, server_default="120")

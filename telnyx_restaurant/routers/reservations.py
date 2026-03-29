@@ -89,6 +89,7 @@ def _booking_mutable_snapshot(row: Reservation) -> tuple:
         row.food_subtotal_cents,
         row.preorder_discount_cents,
         row.food_total_cents,
+        row.preferred_locale,
     )
 
 
@@ -99,7 +100,7 @@ def _set_changed_header(response: Response | None, changed: bool) -> None:
 _PATCH_NO_FIELDS_DETAIL = (
     "No recognized fields to apply after removing confirmation_code. The server did not update the row. "
     "Include at least one of: preorder lines, party_size, starts_at, status, guest_name, "
-    "guest_phone, special_requests. Examples: "
+    "guest_phone, special_requests, preferred_locale. Examples: "
     '{"confirmation_code":"HNK-ABCD","party_size":4,"starts_at":"2026-03-28T19:00:00+00:00"} '
     'or {"confirmation_code":"HNK-ABCD","preorder":[{"menu_item_id":"bulgogi","quantity":1}]}. '
     "Empty array preorder/items [] does not change food. "
@@ -123,6 +124,8 @@ def _has_truthy_non_preorder_patch(body: ReservationUpdate) -> bool:
         return True
     if "special_requests" in fs and body.special_requests is not None:
         return True
+    if "preferred_locale" in fs and body.preferred_locale is not None:
+        return True
     return False
 
 
@@ -134,7 +137,15 @@ def _telnyx_null_placeholder_bundle(body: ReservationUpdate) -> bool:
     """
     fs = body.model_fields_set
     bundle = frozenset(
-        ("party_size", "starts_at", "guest_name", "guest_phone", "special_requests", "preorder")
+        (
+            "party_size",
+            "starts_at",
+            "guest_name",
+            "guest_phone",
+            "special_requests",
+            "preorder",
+            "preferred_locale",
+        )
     )
     present = bundle & fs
     if len(present) < 2:
@@ -210,6 +221,8 @@ def _apply_reservation_update(db: Session, row: Reservation, body: ReservationUp
             row.starts_at = st if st.tzinfo else st.replace(tzinfo=UTC)
     if "special_requests" in body.model_fields_set:
         row.special_requests = body.special_requests
+    if "preferred_locale" in body.model_fields_set and body.preferred_locale is not None:
+        row.preferred_locale = body.preferred_locale  # type: ignore[assignment]
     if "status" in body.model_fields_set and body.status is not None:
         row.status = body.status
     if "preorder" in body.model_fields_set:
@@ -1101,6 +1114,7 @@ async def create_reservation(
         preorder_discount_cents=discount,
         food_total_cents=total,
         source_channel=body.source_channel,
+        preferred_locale=body.preferred_locale,
         reminder_call_status=(
             "no_outbound_reminder_source_api"
             if body.source_channel == "api"

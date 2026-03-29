@@ -10,6 +10,10 @@ Lookup matches `guest_phone` using normalized variants (+1 / 11-digit / 10-digit
 High-value pre-orders (``food_total_cents`` ≥ ``HANOK_PREMIUM_PREORDER_CENTS``, default 50000 = $500)
 add ``guest_is_high_value_preorder``, ``guest_preorder_value_tier``, and ``concierge_service_hint``
 so the assistant can personalize cancel/change flows before MCP calls.
+
+``preferred_locale`` on the guest's reservation (``en`` / ``ko``) sets ``locale_hint`` (``en-US`` / ``ko-KR``)
+for Telnyx instructions, e.g. “Conduct the conversation in Korean when ``locale_hint`` is ``ko-KR``.”
+Online booking in Korean sends ``preferred_locale: ko``; the PSTN call does not read browser localStorage alone.
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from telnyx_restaurant.models import Reservation, ReservationStatus
 from telnyx_restaurant.phone_normalize import phone_lookup_variants
 from telnyx_restaurant.preorder_calc import preorder_summary_text
 from telnyx_restaurant.reminders import build_reminder_speak_text, telnyx_hangup, telnyx_speak
+from telnyx_restaurant.locale_prefs import assistant_locale_hint
 from telnyx_restaurant.webhook_payload import extract_caller_number
 
 router = APIRouter()
@@ -37,6 +42,11 @@ logger = logging.getLogger(__name__)
 
 _hanok_cc_lock = threading.Lock()
 _hanok_cc_ids: set[str] = set()
+
+
+def _locale_profile_fields(row: Reservation) -> dict[str, Any]:
+    pref = (getattr(row, "preferred_locale", None) or "en").strip() or "en"
+    return {"preferred_locale": pref, "locale_hint": assistant_locale_hint(pref)}
 
 
 def _food_display(cents: int) -> str:
@@ -74,7 +84,8 @@ def _demo_profile_for_caller(caller_number: str | None) -> dict[str, Any]:
             "vip_tier": "gold",
             "preferred_venue_slug": "harbor-bistro",
             "default_party_size": 4,
-            "locale_hint": "en-US",
+            "preferred_locale": "en",
+            "locale_hint": assistant_locale_hint("en"),
             "has_upcoming_reservation": True,
             "reservation_preorder_summary": "none",
             "reservation_food_subtotal_cents": 0,
@@ -94,7 +105,8 @@ def _demo_profile_for_caller(caller_number: str | None) -> dict[str, Any]:
             "vip_tier": "gold",
             "preferred_venue_slug": "hanok-table",
             "default_party_size": 6,
-            "locale_hint": "en-US",
+            "preferred_locale": "ko",
+            "locale_hint": assistant_locale_hint("ko"),
             "has_upcoming_reservation": True,
             "next_reservation_code": "HNK-DEMO9",
             "next_reservation_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
@@ -113,7 +125,8 @@ def _demo_profile_for_caller(caller_number: str | None) -> dict[str, Any]:
         "vip_tier": "standard",
         "preferred_venue_slug": "harbor-bistro",
         "default_party_size": 2,
-        "locale_hint": "en-US",
+        "preferred_locale": "en",
+        "locale_hint": assistant_locale_hint("en"),
         "has_upcoming_reservation": False,
         "reservation_preorder_summary": "none",
         "reservation_food_subtotal_cents": 0,
@@ -167,7 +180,7 @@ def _profile_from_db(caller: str | None) -> dict[str, Any] | None:
                     "vip_tier": "returning",
                     "preferred_venue_slug": "hanok-table",
                     "default_party_size": any_row.party_size,
-                    "locale_hint": "en-US",
+                    **(_locale_profile_fields(any_row)),
                     "has_upcoming_reservation": False,
                     # Same key as the upcoming branch so HTTP tools can bind confirmation_code even
                     # when the only row in range is in the past (e.g. modify pre-order after the meal).
@@ -192,7 +205,7 @@ def _profile_from_db(caller: str | None) -> dict[str, Any] | None:
             "vip_tier": "confirmed_guest",
             "preferred_venue_slug": "hanok-table",
             "default_party_size": row.party_size,
-            "locale_hint": "en-US",
+            **(_locale_profile_fields(row)),
             "has_upcoming_reservation": True,
             "next_reservation_code": row.confirmation_code,
             "next_reservation_at": row.starts_at.isoformat(),

@@ -93,6 +93,11 @@ def _ensure_reservation_columns(engine) -> None:
         statements.append(
             "ALTER TABLE reservations ADD COLUMN seating_status VARCHAR(32) NOT NULL DEFAULT 'not_applicable'"
         )
+    if "preferred_locale" not in cols:
+        statements.append(
+            "ALTER TABLE reservations ADD COLUMN preferred_locale "
+            "VARCHAR(16) NOT NULL DEFAULT 'en'"
+        )
 
     if not statements:
         return

@@ -60,6 +60,7 @@ def _reservation_calendar_dict(r: Reservation) -> dict:
         "preorder_discount_cents": r.preorder_discount_cents,
         "food_total_cents": r.food_total_cents,
         "source_channel": r.source_channel,
+        "preferred_locale": getattr(r, "preferred_locale", None) or "en",
         "reminder_call_status": r.reminder_call_status or "",
     }
 

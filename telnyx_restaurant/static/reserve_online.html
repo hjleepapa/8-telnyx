@@ -371,6 +371,12 @@
             return;
           }
 
+          var preferredLocale = "en";
+          try {
+            var stored = localStorage.getItem("hanok-lang");
+            if (stored === "ko" || stored === "en") preferredLocale = stored;
+          } catch (e) {}
+
           const body = {
             guest_name: document.getElementById("guest_name").value.trim(),
             guest_phone: document.getElementById("guest_phone").value.trim(),
@@ -380,6 +386,7 @@
               document.getElementById("special_requests").value.trim() || null,
             preorder: collectPreorder(),
             source_channel: "online",
+            preferred_locale: preferredLocale,
           };
 
           fetch("/api/reservations", {
