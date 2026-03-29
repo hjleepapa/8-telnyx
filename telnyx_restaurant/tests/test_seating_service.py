@@ -12,6 +12,7 @@ from telnyx_restaurant.models import Reservation, ReservationStatus
 from telnyx_restaurant.seating_service import (
     book_on_create,
     release_and_promote_after_cancel,
+    reseat_reservation_after_amend,
     try_allocate_and_consume,
 )
 
@@ -159,3 +160,73 @@ def test_promote_smaller_party_when_earlier_larger_cannot_fit(
     assert r_small.seating_status == "allocated"
     assert json.loads(r_small.tables_allocated_json or "[]") == [4]
     assert r_big.seating_status == "waitlist"
+
+
+def test_amend_reschedule_allocated_promotes_waitlist_at_old_slot(
+    seating_env: None, db_session: Session
+) -> None:
+    """Changing starts_at must release the old slot and promote waitlisted parties there."""
+    start_a = datetime(2026, 7, 20, 19, 0, tzinfo=UTC)
+    start_b = datetime(2026, 7, 21, 19, 0, tzinfo=UTC)
+    hold = _row(code="HNK-MV1", party=6, starts=start_a)
+    wait = _row(code="HNK-MV2", party=6, starts=start_a, phone="+15550002222")
+    db_session.add_all([hold, wait])
+    db_session.flush()
+    book_on_create(db_session, hold, waitlist_ok=True)
+    book_on_create(db_session, wait, waitlist_ok=True)
+    assert hold.seating_status == "allocated"
+    assert wait.seating_status == "waitlist"
+
+    old_starts = hold.starts_at
+    old_party = hold.party_size
+    old_dur = hold.duration_minutes
+    old_seat = hold.seating_status
+    old_json = hold.tables_allocated_json
+
+    hold.starts_at = start_b
+    reseat_reservation_after_amend(
+        db_session,
+        hold,
+        old_starts_at=old_starts,
+        old_party_size=old_party,
+        old_duration_minutes=old_dur,
+        old_seating_status=old_seat,
+        old_tables_allocated_json=old_json,
+    )
+    db_session.refresh(wait)
+    db_session.refresh(hold)
+    assert wait.seating_status == "allocated"
+    assert json.loads(wait.tables_allocated_json or "[]") == [6]
+    assert hold.seating_status == "allocated"
+
+
+def test_waitlist_promotion_schedules_reminder_for_voice(
+    seating_env: None, db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When a waitlisted voice/online guest is promoted, queue the outbound reminder."""
+    promoted_ids: list[int] = []
+
+    def _capture(row: Reservation) -> None:
+        promoted_ids.append(row.id)
+
+    monkeypatch.setattr(
+        "telnyx_restaurant.seating_service.schedule_reminder_on_table_allocated",
+        _capture,
+    )
+    start = datetime(2026, 7, 25, 19, 0, tzinfo=UTC)
+    hold = _row(code="HNK-RH1", party=6, starts=start)
+    wait = _row(
+        code="HNK-RW1",
+        party=6,
+        starts=start,
+        phone="+15550003333",
+    )
+    wait.source_channel = "voice"
+    db_session.add_all([hold, wait])
+    db_session.flush()
+    book_on_create(db_session, hold, waitlist_ok=True)
+    book_on_create(db_session, wait, waitlist_ok=True)
+    release_and_promote_after_cancel(db_session, hold)
+    db_session.refresh(wait)
+    assert wait.seating_status == "allocated"
+    assert promoted_ids == [wait.id]

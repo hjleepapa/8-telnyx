@@ -19,6 +19,7 @@ from telnyx_restaurant.config import (
     hanok_vip_preorder_threshold_cents,
 )
 from telnyx_restaurant.models import Reservation, ReservationStatus, TableSlotInventory
+from telnyx_restaurant.reminders import schedule_reminder_on_table_allocated
 from telnyx_restaurant.table_allocation import (
     allocate_tables,
     effective_counts_across_slots,
@@ -211,6 +212,89 @@ def book_on_create(db: Session, row: Reservation, *, waitlist_ok: bool) -> BookO
     )
 
 
+def reseat_reservation_after_amend(
+    db: Session,
+    row: Reservation,
+    *,
+    old_starts_at: datetime,
+    old_party_size: int,
+    old_duration_minutes: int,
+    old_seating_status: str,
+    old_tables_allocated_json: str | None,
+) -> None:
+    """Release inventory for the previous slot when time/party changes, promote waitlist there, then allocate at the new slot."""
+    if not hanok_table_allocation_enabled():
+        return
+    step = hanok_slot_step_minutes()
+    old_t0 = floor_slot_start(_norm_dt(old_starts_at), step)
+    new_t0 = floor_slot_start(_norm_dt(row.starts_at), step)
+    d_old = (
+        int(old_duration_minutes)
+        if old_duration_minutes
+        else hanok_default_reservation_duration_minutes()
+    )
+    d_new = (
+        int(row.duration_minutes)
+        if row.duration_minutes
+        else hanok_default_reservation_duration_minutes()
+    )
+    if old_t0 == new_t0 and d_old == d_new and old_party_size == row.party_size:
+        return
+
+    if old_seating_status == "allocated" and old_tables_allocated_json:
+        allocation: list[int] | None = None
+        try:
+            raw = json.loads(old_tables_allocated_json)
+            if isinstance(raw, list):
+                allocation = [int(x) for x in raw]
+            else:
+                raise ValueError("not a list")
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            logger.warning(
+                "reseat_after_amend: bad old tables_allocated_json id=%s err=%s", row.id, e
+            )
+        if allocation is not None:
+            try:
+                release_allocation(db, old_starts_at, d_old, allocation)
+            except Exception:
+                logger.exception("reseat_after_amend: release_allocation failed reservation_id=%s", row.id)
+        promote_waitlist(db, old_starts_at, d_old)
+
+    row.tables_allocated_json = None
+    row.seating_status = "not_applicable"
+
+    alloc = try_allocate_and_consume(db, row.party_size, row.starts_at, d_new)
+    if alloc:
+        row.tables_allocated_json = json.dumps(alloc)
+        row.seating_status = "allocated"
+        row.updated_at = datetime.now(UTC)
+        logger.info(
+            "Reseat after amend reservation_id=%s tables=%s party=%s",
+            row.id,
+            alloc,
+            row.party_size,
+        )
+        db.flush()
+        if old_seating_status == "waitlist":
+            try:
+                schedule_reminder_on_table_allocated(row)
+            except Exception:
+                logger.exception(
+                    "Reseat reminder scheduling failed reservation_id=%s", row.id
+                )
+        return
+
+    row.tables_allocated_json = None
+    row.seating_status = "waitlist"
+    row.updated_at = datetime.now(UTC)
+    logger.info(
+        "Reseat after amend -> waitlist reservation_id=%s party=%s",
+        row.id,
+        row.party_size,
+    )
+    db.flush()
+
+
 def release_and_promote_after_cancel(db: Session, row: Reservation) -> None:
     if not hanok_table_allocation_enabled():
         return
@@ -273,6 +357,12 @@ def promote_waitlist(db: Session, starts_at: datetime, duration_minutes: int) ->
         w.updated_at = datetime.now(UTC)
         promoted += 1
         logger.info("Waitlist promoted reservation_id=%s tables=%s", w.id, alloc)
+        try:
+            schedule_reminder_on_table_allocated(w)
+        except Exception:
+            logger.exception(
+                "Waitlist promotion reminder scheduling failed reservation_id=%s", w.id
+            )
     if promoted:
         db.flush()
     return promoted

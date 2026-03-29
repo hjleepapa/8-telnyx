@@ -18,6 +18,7 @@ from telnyx_restaurant.config import (
     telnyx_connection_id,
     telnyx_from_number,
 )
+from telnyx_restaurant.models import Reservation
 from telnyx_restaurant.phone_normalize import to_e164_us
 from telnyx_restaurant.preorder_calc import preorder_summary_text
 
@@ -44,6 +45,24 @@ def build_reminder_speak_text(state: dict[str, Any]) -> str:
     parts.append(f"Your confirmation code is {code}.")
     parts.append("If you need to make changes, please call the restaurant. We look forward to seeing you.")
     return " ".join(parts)
+
+
+def schedule_reminder_on_table_allocated(row: Reservation) -> None:
+    """Schedule outbound reminder when a guest gains a table (e.g. waitlist → allocated).
+
+    Skips ``source_channel=api`` — same rule as POST create.
+    """
+    ch = (row.source_channel or "").strip().lower()
+    if ch == "api":
+        return
+    if not row.id:
+        return
+    schedule_demo_reminder_call(
+        reservation_id=row.id,
+        guest_phone=row.guest_phone,
+        guest_name=row.guest_name,
+        confirmation_code=row.confirmation_code,
+    )
 
 
 def schedule_demo_reminder_call(

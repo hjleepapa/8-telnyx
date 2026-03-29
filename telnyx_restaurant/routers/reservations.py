@@ -37,6 +37,7 @@ from telnyx_restaurant.seating_service import (
     book_on_create,
     effective_priority_for_row,
     iter_day_slot_starts,
+    reseat_reservation_after_amend,
     snapshot_effective_availability,
 )
 from telnyx_restaurant.table_allocation import floor_slot_start
@@ -210,6 +211,11 @@ def _apply_reservation_update(db: Session, row: Reservation, body: ReservationUp
     # Telnyx/tools often include JSON nulls for untouched fields; never write NULL into NOT NULL columns.
     before_status = row.status
     before = _booking_mutable_snapshot(row)
+    old_starts_for_seat = row.starts_at
+    old_party_for_seat = row.party_size
+    old_duration_for_seat = row.duration_minutes
+    old_seating_for_seat = row.seating_status
+    old_tables_json_for_seat = row.tables_allocated_json
     if "guest_name" in body.model_fields_set and body.guest_name is not None:
         row.guest_name = body.guest_name  # type: ignore[assignment]
     if "guest_phone" in body.model_fields_set and body.guest_phone is not None:
@@ -263,6 +269,17 @@ def _apply_reservation_update(db: Session, row: Reservation, body: ReservationUp
         from telnyx_restaurant.seating_service import release_and_promote_after_cancel
 
         release_and_promote_after_cancel(db, row)
+        return True
+    if hanok_table_allocation_enabled() and row.status != ReservationStatus.cancelled.value:
+        reseat_reservation_after_amend(
+            db,
+            row,
+            old_starts_at=old_starts_for_seat,
+            old_party_size=old_party_for_seat,
+            old_duration_minutes=old_duration_for_seat,
+            old_seating_status=old_seating_for_seat,
+            old_tables_allocated_json=old_tables_json_for_seat,
+        )
     return True
 
 
