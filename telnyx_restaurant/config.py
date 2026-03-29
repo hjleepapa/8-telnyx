@@ -173,6 +173,15 @@ def hanok_voice_create_dedup_seconds() -> int:
         return 120
 
 
+def hanok_premium_preorder_cents_threshold() -> int:
+    """``food_total_cents`` at or above this marks high-value pre-orders (dynamic webhook variables). Default 50000 ($500)."""
+    raw = (os.environ.get("HANOK_PREMIUM_PREORDER_CENTS") or "50000").strip()
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 50000
+
+
 def hanok_reservation_verbose_logging() -> bool:
     """If true, log PATCH /amend and …/status bodies (truncated) at INFO for debugging Telnyx tools."""
     return (os.environ.get("HANOK_RESERVATION_VERBOSE_LOG") or "").strip().lower() in (
