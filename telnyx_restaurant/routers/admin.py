@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse
@@ -18,13 +20,29 @@ from telnyx_restaurant.preorder_calc import preorder_summary_text
 router = APIRouter(tags=["admin"])
 
 
+def _display_tz() -> ZoneInfo:
+    return ZoneInfo((os.environ.get("HANOK_ADMIN_DISPLAY_TIMEZONE") or "America/Los_Angeles").strip())
+
+
+def _starts_at_display_local(r: Reservation) -> str:
+    """Human-readable wall time for admin UI (restaurant-local TZ; stored UTC)."""
+    if not r.starts_at:
+        return ""
+    wall = r.starts_at.astimezone(_display_tz())
+    return (
+        wall.strftime("%Y-%m-%d %I:%M %p ")
+        + wall.tzname()
+        + " (your time)"
+    )
+
+
 def _preorder_summary_short(r: Reservation) -> str:
     text = preorder_summary_text(r.preorder_items)
     return text if text else "—"
 
 
 def _reservation_calendar_dict(r: Reservation) -> dict:
-    """JSON-friendly row for calendar UI (UTC date bucket from starts_at)."""
+    """JSON-friendly row for calendar UI (calendar groups by HANOK_ADMIN_DISPLAY_TIMEZONE day)."""
     lines = r.preorder_items
     return {
         "id": r.id,
@@ -33,7 +51,7 @@ def _reservation_calendar_dict(r: Reservation) -> dict:
         "guest_phone": r.guest_phone,
         "party_size": r.party_size,
         "starts_at": r.starts_at.isoformat() if r.starts_at else "",
-        "starts_at_display": r.starts_at.strftime("%Y-%m-%d %H:%M UTC") if r.starts_at else "",
+        "starts_at_display": _starts_at_display_local(r),
         "status": r.status,
         "special_requests": r.special_requests,
         "preorder_summary": _preorder_summary_short(r),
@@ -88,6 +106,7 @@ def admin_reservations(
         cal_rows = [_reservation_calendar_dict(r) for r in active]
         statuses = sorted({r["status"] for r in cal_rows}) if cal_rows else []
         cancelled_n = sum(1 for r in rows if r.status == cancelled)
+        display_tz = (os.environ.get("HANOK_ADMIN_DISPLAY_TIMEZONE") or "America/Los_Angeles").strip()
         return _TEMPLATES.TemplateResponse(
             request,
             "admin_reservations.html",
@@ -96,6 +115,8 @@ def admin_reservations(
                 "statuses": statuses,
                 "row_count": len(cal_rows),
                 "cancelled_hidden": cancelled_n,
+                "calendar_display_tz": display_tz,
+                "calendar_tz_label": "Pacific (PT)",
             },
         )
     finally:

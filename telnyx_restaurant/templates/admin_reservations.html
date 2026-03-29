@@ -430,7 +430,7 @@
       <div class="top-inner">
         <div>
           <h1>Hanok Table — Reservations</h1>
-          <p>Day, week, or month (UTC) · Select a booking for details</p>
+          <p>Day, week, or month ({{ calendar_tz_label | default("Pacific (PT)", true) }}) · Times shown in your restaurant timezone · Select a booking for details</p>
         </div>
         <a href="/">← Restaurant site</a>
       </div>
@@ -484,8 +484,14 @@
     </div>
 
     <script id="admin-res-data" type="application/json">{{ reservations_json | safe }}</script>
+    <script id="admin-cal-tz" type="application/json">{{ calendar_display_tz | default("America/Los_Angeles", true) | tojson }}</script>
     <script>
       (function () {
+        var rawTz = document.getElementById("admin-cal-tz");
+        var DISPLAY_TZ = "America/Los_Angeles";
+        try {
+          DISPLAY_TZ = JSON.parse(rawTz ? rawTz.textContent : '"America/Los_Angeles"');
+        } catch (e) {}
         var raw = document.getElementById("admin-res-data");
         var reservations = [];
         try {
@@ -511,18 +517,24 @@
         var monthNamesShort = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
         var weekdayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-        function utcDayKey(iso) {
+        function dayBucketKey(iso) {
           if (!iso) return "";
           var d = new Date(iso);
           if (isNaN(d.getTime())) return "";
-          return d.toISOString().slice(0, 10);
+          return d.toLocaleDateString("en-CA", { timeZone: DISPLAY_TZ });
         }
 
         function timeStr(iso) {
           if (!iso) return "";
           var d = new Date(iso);
           if (isNaN(d.getTime())) return "";
-          return d.toISOString().slice(11, 16) + " UTC";
+          return (
+            d.toLocaleTimeString("en-US", {
+              timeZone: DISPLAY_TZ,
+              hour: "numeric",
+              minute: "2-digit",
+            }) + " PT"
+          );
         }
 
         function badgeClass(s) {
@@ -539,7 +551,7 @@
 
         var byDay = {};
         reservations.forEach(function (r) {
-          var k = utcDayKey(r.starts_at);
+          var k = dayBucketKey(r.starts_at);
           if (!k) return;
           if (!byDay[k]) byDay[k] = [];
           byDay[k].push(r);
@@ -550,9 +562,30 @@
           });
         });
 
+        function wallDatePartsInTz(date, tz) {
+          var fmt = new Intl.DateTimeFormat("en-US", {
+            timeZone: tz,
+            year: "numeric",
+            month: "numeric",
+            day: "numeric",
+          });
+          var y,
+            m,
+            d,
+            ok = false;
+          fmt.formatToParts(date).forEach(function (p) {
+            if (p.type === "year") {
+              y = parseInt(p.value, 10);
+              ok = true;
+            }
+            if (p.type === "month") m = parseInt(p.value, 10) - 1;
+            if (p.type === "day") d = parseInt(p.value, 10);
+          });
+          return ok ? { y: y, m: m, d: d } : { y: 1970, m: 0, d: 1 };
+        }
+
         function todayCursor() {
-          var n = new Date();
-          return { y: n.getUTCFullYear(), m: n.getUTCMonth(), d: n.getUTCDate() };
+          return wallDatePartsInTz(new Date(), DISPLAY_TZ);
         }
 
         function pad(n) {
@@ -731,7 +764,8 @@
           });
 
           var tn = new Date();
-          var todayKey = ymd(tn.getUTCFullYear(), tn.getUTCMonth(), tn.getUTCDate());
+          var tnp = wallDatePartsInTz(tn, DISPLAY_TZ);
+          var todayKey = ymd(tnp.y, tnp.m, tnp.d);
 
           var cellCount = 0;
           var i;
@@ -766,7 +800,8 @@
             grid.appendChild(h);
           });
           var tn = new Date();
-          var todayKey = ymd(tn.getUTCFullYear(), tn.getUTCMonth(), tn.getUTCDate());
+          var tnp = wallDatePartsInTz(tn, DISPLAY_TZ);
+          var todayKey = ymd(tnp.y, tnp.m, tnp.d);
           for (var i = 0; i < 7; i++) {
             var day = addDaysUTC(sw.y, sw.m, sw.d, i);
             renderCell(day.d, day.y, day.m, false, todayKey, 6);
@@ -781,7 +816,7 @@
           if (!list.length) {
             var empty = document.createElement("div");
             empty.className = "day-slot-empty";
-            empty.textContent = "No reservations on this day (UTC).";
+            empty.textContent = "No reservations on this day (Pacific).";
             dayViewList.appendChild(empty);
             return;
           }
