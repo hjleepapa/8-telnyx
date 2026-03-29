@@ -1,6 +1,6 @@
 # Telnyx Voice AI — Hanok Table (Restaurant Reservations)
 
-> **Telnyx challenge stack:** Voice AI assistant for **Hanok Table** (demo Korean restaurant), backed by **FastAPI**, **PostgreSQL**, **dynamic webhook variables**, **Call Control** outbound reminders, and an in-repo **MCP server** that wraps the same REST API. For deploy-specific Telnyx + Render steps, see [`telnyx_restaurant/mcp_server/README.md`](telnyx_restaurant/mcp_server/README.md).
+> **Hanok Table** is a **Korean-inspired demo restaurant** you can book by **phone** through a **Telnyx AI Assistant**. This repo is one deployable backend: **FastAPI**, **PostgreSQL**, **custom MCP tools**, **dynamic webhook variables**, and **Call Control** outbound reminders—with optional **table allocation and waitlist** logic.
 
 [![Telnyx](https://img.shields.io/badge/Telnyx-Voice%20AI-00D4AA.svg)](https://developers.telnyx.com/)
 [![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-000000.svg)](https://modelcontextprotocol.io/)
@@ -9,26 +9,82 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
----
-
-## Overview
-
-This repository is a **single Python service** (`telnyx_restaurant`) that:
-
-- Exposes a **REST API** for reservations (create, lookup, partial update, status/cancel) with **menu-backed pre-orders** and pricing.
-- Serves **Telnyx webhooks**: dynamic **variables** for assistant instructions (`locale_hint`, reservation summaries, premium-guest hints) and **Call Control** callbacks for outbound reminder TTS.
-- Mounts **Streamable HTTP MCP** on the same uvicorn process when enabled (`HANOK_MCP_HTTP_MOUNT=1`) so Telnyx can use **`https://<host>/mcp/`** without a separate MCP worker.
-- Serves a **static site** (landing EN/KO, reserve-online, reservation status) and a **server-rendered admin calendar** (non-cancelled bookings; **times shown in Pacific / configurable display TZ**).
-
-**Time semantics:** `starts_at` is stored in **UTC**. Values **with** an explicit offset (`Z`, `-07:00`, …) keep their meaning. **Naive** ISO strings (e.g. `2026-03-30T18:00:00` from voice tools) are interpreted as **restaurant wall time** (`HANOK_RESERVATION_WALL_TIMEZONE` or `HANOK_ADMIN_DISPLAY_TIMEZONE`, default `America/Los_Angeles`), not as UTC.
-
-**Locale:** `preferred_locale` (`en` / `ko`) on each reservation drives **`locale_hint`** (`en-US` / `ko-KR`) from **`POST /webhooks/telnyx/variables`** when the caller matches a DB row. The landing-page language toggle alone does not reach PSTN; **online reserve** sends `hanok-lang` from `localStorage`, or MCP/voice can set `preferred_locale`.
-
-**Data:** Synthetic demo only — labs and reviewer demos, not production PII.
+**Repository:** [github.com/hjleepapa/8-telnyx](https://github.com/hjleepapa/8-telnyx)
 
 ---
 
-## Architecture
+## Telnyx challenge — core requirements
+
+This project is structured around the four required pillars below. Each maps directly to what you configure in **Telnyx Mission Control** and what runs on your **public host**.
+
+### 1. AI assistant (required)
+
+| Requirement | How this project satisfies it |
+|-------------|-------------------------------|
+| Build an assistant in the **Telnyx Portal** (Assistant Builder) | Configure your assistant against **Hanok Table**: book by phone, look up reservations, change party size or time, pre-order menu items, cancel, and (when enabled) understand **waitlisted vs table-assigned** bookings. |
+| **Compelling use case** | Full **voice reservation flow** with **menu-backed pre-orders**, optional **table inventory / waitlist**, **VIP waitlist priority** by explicit flag or large pre-order total, and **outbound reminder calls** when a table is confirmed or when a waitlisted guest is promoted. |
+| **Callable via phone number** | Point a **Telnyx number** at your assistant; the assistant uses MCP (and/or HTTP tools) against your deployed API. |
+| **Real conversational interactions** | Tools support natural aliases (phones, names, confirmation codes, `HNK-…` codes); voice **dedup** reduces double-booking from repeated tool calls. |
+
+**What you configure in Telnyx:** assistant instructions should tell the model to read **tool JSON** after creates (especially `seating_status`: **allocated** vs **waitlist**) and to use **dynamic variables** (below) when the portal merges them into prompts.
+
+---
+
+### 2. MCP server integration (required)
+
+| Requirement | How this project satisfies it |
+|-------------|-------------------------------|
+| **Custom MCP server** the assistant can use | [`telnyx_restaurant/mcp_server/server.py`](telnyx_restaurant/mcp_server/server.py) implements a **FastMCP** server with tools backed by your **same** reservation REST API. |
+| **Meaningful tools / resources** | **Menu** lookup, **create** reservation (with `preorder_items` / lines), **lookup** by name+phone, **fetch by code**, **amend** (time, party, pre-order, notes, contact), **status / cancel**, optional **seating availability** by date. |
+| **Enhances the assistant** | The assistant does not need hard-coded menu prices or ad-hoc HTTP shaping for every tool—MCP exposes structured operations over **httpx** to `POST /api/reservations`, `GET /lookup`, `PATCH …/amend`, etc. |
+
+**Deploy URL (HTTP transport):** enable **`HANOK_MCP_HTTP_MOUNT=1`** and point Telnyx at **`https://<your-host>/mcp/`** (trailing slash recommended). Deep copy-paste steps: [`telnyx_restaurant/mcp_server/README.md`](telnyx_restaurant/mcp_server/README.md).
+
+**Local / stdio:** `PYTHONPATH=. python -m telnyx_restaurant.mcp_server`
+
+---
+
+### 3. Dynamic webhook variables (required)
+
+| Requirement | How this project satisfies it |
+|-------------|-------------------------------|
+| **Implement dynamic webhook variables** | **`POST /webhooks/telnyx/variables`** returns JSON keyed for instruction templates (map keys in Telnyx to these fields). |
+| **Personalize / fetch context** | Caller ANI is matched to **`guest_phone`** (normalized variants). Response includes guest name, **upcoming reservation** metadata, pre-order summary and **food totals**, **seating / waitlist** fields when table allocation is on, and **concierge** hints for high-value pre-orders. |
+| **Show how data improves the flow** | Example: if `guest_is_high_value_preorder` is **yes**, instructions can use `concierge_service_hint` and `cancel_retention_offer` on cancel intent; if `reservation_seating_status` is **waitlist**, the assistant should **not** say a table is confirmed until **allocated**. |
+| **Deployed API** | Variables resolve against **PostgreSQL**; set **`DB_URI`** on your host. Without a DB, behavior is limited (demo ANI suffixes still return synthetic profiles in code). |
+
+**Webhook URL:** `POST https://<your-public-host>/webhooks/telnyx/variables`
+
+**Useful keys (non-exhaustive):** `guest_display_name`, `next_reservation_code`, `next_reservation_at`, `reservation_preorder_summary`, `reservation_food_total_cents`, `guest_is_high_value_preorder`, `concierge_service_hint`, `cancel_retention_offer`, `reservation_seating_status`, `guest_waitlist_priority`, `waitlist_fairness_hint` (plus `preferred_locale` / `locale_hint` — see **Future improvements** below).
+
+**Related:** **`POST /webhooks/telnyx/call-control`** handles **Call Control** for **outbound reminder** TTS (`client_state` + optional DB fallback).
+
+---
+
+### 4. Public deployment (required)
+
+| Requirement | How this project satisfies it |
+|-------------|-------------------------------|
+| **Deploy publicly** | Example: **Render** web service + **PostgreSQL** (see checklist below). Other hosts work if they run **`uvicorn telnyx_restaurant.app:app`** with **`DB_URI`**. |
+| **Working URLs / numbers for reviewers** | **You** publish your live **`https://…`** origin and the **Telnyx phone number** attached to the assistant. This README documents paths; it does not hard-code a challenge-specific number. |
+| **Clear documentation** | **This file** + [`telnyx_restaurant/mcp_server/README.md`](telnyx_restaurant/mcp_server/README.md) + [`telnyx_restaurant/.env.example`](telnyx_restaurant/.env.example). |
+
+**Minimum public checklist**
+
+1. **Web:** `https://<host>/health` returns **200**.
+2. **DB:** `DB_URI` / `DATABASE_URL` set; migrations applied via app startup / `db.py` guards.
+3. **Optional MCP:** `HANOK_MCP_HTTP_MOUNT=1`, **`HANOK_PUBLIC_BASE_URL=https://<host>`** (helps Telnyx HTTP client and reminder `webhook_url` override).
+4. **Telnyx:** Assistant **MCP** → `https://<host>/mcp/`; **Dynamic variables** + **Call Control** → `…/variables` and `…/call-control`.
+5. **Outbound reminders (demo):** `TELNYX_API_KEY`, `TELNYX_CONNECTION_ID`, `TELNYX_FROM_NUMBER`.
+
+**Render (example):**
+
+- **Start:** `uvicorn telnyx_restaurant.app:app --host 0.0.0.0 --port $PORT` (or use root **`Procfile`**).
+- If `/` 404s but `/health` works, confirm **`static/index.html`** ships and **Root Directory** is repo root.
+
+---
+
+## Architecture (high level)
 
 ```mermaid
 flowchart TB
@@ -49,31 +105,21 @@ flowchart TB
   Assistant -->|Dynamic variables JSON| Vars[POST /webhooks/telnyx/variables]
   Vars --> App
   CC -->|call.answered etc.| App
-  Assistant -->|MCP tools recommended| MCPApp
-  MCPApp -->|httpx AsyncClient same origin| App
+  Assistant -->|MCP tools| MCPApp
+  MCPApp -->|httpx same origin| App
 ```
 
 | Layer | Role |
 |-------|------|
-| **`app.py`** | FastAPI entry: **lifespan** runs DB seed; when MCP HTTP mount is on, runs **`mcp.session_manager.run()`** (required for Streamable HTTP). Mounts static assets, optional **`/mcp`** MCP app. |
-| **`routers/reservations.py`** | `/api/reservations` — create, list, lookup, **PATCH `/amend`**, **`/{id}/status`**, deduped voice creates (`HANOK_VOICE_CREATE_DEDUP_SECONDS`), **naive `starts_at` → wall-clock TZ → UTC**. |
-| **`routers/webhook.py`** | `POST …/variables` (caller → DB profile: `locale_hint`, `preferred_locale`, preorder summary, premium concierge fields). `POST …/call-control` (reminder TTS + hangup). |
-| **`routers/admin.py`** | `GET /admin/reservations` — calendar buckets and chip times in **`HANOK_ADMIN_DISPLAY_TIMEZONE`** (default `America/Los_Angeles`). |
-| **`datetime_wall.py`** | `interpret_starts_at_as_utc_storage` — naive vs aware `starts_at` rules. |
-| **`locale_prefs.py`** | `normalize_preferred_locale`, `assistant_locale_hint` for webhook + API. |
-| **`schemas_res.py`** | Pydantic: Telnyx-tolerant payloads, **`preferred_locale`**, pre-order aliases. |
-| **`menu_catalog.py`** | Demo menu, id resolution, fuzzy names. |
-| **`preorder_calc.py`** | Serialize lines, **7%** pre-order discount. |
-| **`reminders.py`** | Post-create: delayed **`POST /v2/calls`** with `client_state`; speak via Call Control webhook. |
-| **`db.py` / `models.py`** | SQLAlchemy; **`Reservation.preferred_locale`**; optional **`table_slot_inventory`**. |
-| **`table_allocation.py` / `seating_service.py`** | Optional table allocation + waitlist (see env). |
-| **`mcp_server/server.py`** | FastMCP tools → REST (`preorder_items`, `preferred_locale`, async httpx). |
+| **`routers/reservations.py`** | `/api/reservations` — create, list, lookup, PATCH **amend**, status/cancel, voice create dedup, **naive `starts_at` → wall-clock TZ → UTC**, **re-seat on amend** when table allocation is enabled. |
+| **`routers/webhook.py`** | Dynamic **variables** + **call-control** for reminders. |
+| **`routers/admin.py`** | **`GET /admin/reservations`** — calendar (day / week / month; view mode persisted in **localStorage**). |
+| **`seating_service.py`** | Optional inventory, **waitlist promotion** (VIP by flag or pre-order total), **reminder** when a waitlisted guest gets a table. |
+| **`mcp_server/server.py`** | MCP tools → same REST API. |
 
-Remarks:
+**Time semantics:** `starts_at` is stored in **UTC**. Values **with** an explicit offset keep their meaning. **Naive** ISO strings are interpreted as **restaurant wall time** (`HANOK_RESERVATION_WALL_TIMEZONE`, default aligned with `HANOK_ADMIN_DISPLAY_TIMEZONE`, typically `America/Los_Angeles`).
 
-- **Optional table allocation:** `HANOK_TABLE_ALLOCATION_ENABLED=1` (see `.env.example`).
-- **`GET /api/reservations/seating/availability?date=YYYY-MM-DD`** uses a **UTC calendar date** for the grid bucket when allocation is enabled.
-- **Amend / time change:** changing `party_size` or `starts_at` does **not** automatically re-seat yet; cancel + re-book releases capacity correctly.
+**Data:** Synthetic demo / reviewer use — not production PII.
 
 ---
 
@@ -81,74 +127,42 @@ Remarks:
 
 | Method | Path | Purpose |
 |--------|------|---------|
-| GET | `/menu/items` | Public menu for pre-order tools and web form. |
-| GET | `/seating/availability` | When allocation enabled: `?date=YYYY-MM-DD` — per-slot snapshot (UTC day). |
+| GET | `/menu/items` | Menu for tools and web. |
+| GET | `/seating/availability` | If allocation enabled: `?date=YYYY-MM-DD`. |
 | GET | `` | List reservations (JSON). |
-| POST | `` | Create reservation. Fields include **`preferred_locale`** (`en`/`ko`), **`source_channel`**, optional preorder, **`waitlist_if_full`**, **`guest_priority`**. |
-| GET | `/lookup` | **Primary lookup:** `guest_name` + `phone` / `guest_phone`. |
-| GET | `/lookup-by-phone` | Legacy phone-based lookup. |
-| GET | `/by-code/{code}` | Fetch by **HNK-…** code. |
-| PATCH | `/amend` | Body: identity + fields to change (`preorder`, `party_size`, `starts_at`, **`preferred_locale`**, …). |
-| PATCH | `/by-code/{code}` | Partial update by code. |
-| PATCH | `/by-code/{code}/status` | Status and/or full partial update when tools hit `…/status`. |
-| PATCH | `/{id}` | Partial update by numeric id. |
-| PATCH | `/{id}/status` | Same pattern as by-code status URL. |
-| GET | `/{id}` | Fetch one row by id. |
+| POST | `` | Create (`waitlist_if_full`, `guest_priority`, preorder, `source_channel`, etc.). |
+| GET | `/lookup` | **`guest_name` + phone** (primary). |
+| GET | `/by-code/{code}` | By **HNK-…** |
+| PATCH | `/amend`, `/{id}/amend`, `/by-code/...` | Partial updates; **`X-Hanok-Reservation-Changed`** header reflects real DB writes. |
 
-**PATCH responses:** **`X-Hanok-Reservation-Changed: 1`** if the row mutated, **`0`** if the body matched existing values (no DB write). Voice agents should not treat HTTP 200 alone as “changed”.
-
-**Pre-orders:** **`preorder: []`** on PATCH = no change; **`preorder: null`** clears the cart only when not a Telnyx “all-null” template (see code). **`preorder_items`** (MCP) and JSON lines both supported on create/amend paths.
+Full route table and PATCH semantics are in code comments and earlier sections; see also **OpenAPI** at **`/docs`** on your host.
 
 ---
 
-## Telnyx webhooks
-
-| URL | Purpose |
-|-----|---------|
-| **`POST …/webhooks/telnyx/variables`** | JSON for instruction templates: `guest_display_name`, `next_reservation_code`, `next_reservation_at`, preorder totals, **`locale_hint`** / **`preferred_locale`**, premium preorder flags (`HANOK_PREMIUM_PREORDER_CENTS`), **`concierge_service_hint`**. Keyed off **caller number** when reservations exist. |
-| **`POST …/webhooks/telnyx/call-control`** | **` call.answered`**: decode `client_state` (or DB fallback) → **speak** reminder → optional **hangup** after TTS. |
-
-**Outbound reminder:** Requires `TELNYX_API_KEY`, `TELNYX_CONNECTION_ID`, `TELNYX_FROM_NUMBER`. Set **`HANOK_PUBLIC_BASE_URL`** so outbound `POST /v2/calls` can set **`webhook_url`** to this service’s **call-control** path.
-
-**Assistant instructions:** Use **`{{locale_hint}}`** (e.g. respond in Korean when `ko-KR`). Widget/phone share the same assistant configuration; browser `localStorage` does not automatically set `locale_hint` unless a reservation exists with `preferred_locale=ko` or you configure bilingual behavior in the portal.
-
----
-
-## Static pages & admin
+## Static site & admin
 
 | Route | Description |
 |-------|-------------|
-| `/`, `/index.html` | Landing; EN/KO; **`telnyx-ai-agent`** widget; language stored in **`hanok-lang`**. |
-| `/reserve-online.html` | Pre-order form; sends **`preferred_locale`** from `hanok-lang`. |
+| `/` | Landing + widget hookup points. |
+| `/reserve-online.html` | Web booking + pre-order. |
 | `/reservation/status` | Guest lookup by confirmation code. |
-| `/admin/reservations` | Day / week / month calendar (**display TZ**, default Pacific); detail overlay. Optional `?token=` if `ADMIN_DASHBOARD_TOKEN` is set. |
+| `/admin/reservations` | Staff calendar (**`?token=`** if `ADMIN_DASHBOARD_TOKEN`). |
+| `/reservation-lab` | Optional API lab (`HANOK_RESERVATION_LAB=1`). |
 | `/health` | Liveness. |
 
 ---
 
 ## Environment variables
 
-| Variable | Description |
-|----------|-------------|
-| **`DB_URI`** / **`DATABASE_URL`** | Postgres URL for SQLAlchemy + psycopg2; `sslmode=require` appended for typical Render hosts when missing. |
-| **`ADMIN_DASHBOARD_TOKEN`** | If set, admin (+ optional lab) requires matching `?token=`. |
-| **`TELNYX_API_KEY`** / **`TELNYX_API_TOKEN`** | Telnyx REST bearer (outbound call + speak). |
-| **`TELNYX_CONNECTION_ID`** | Call Control application id for `POST /v2/calls`. |
-| **`TELNYX_FROM_NUMBER`** | Outbound caller ID (+E.164). |
-| **`HANOK_REMINDER_DELAY_SECONDS`** | Delay before reminder dial (1–300; default 5). |
-| **`HANOK_PUBLIC_BASE_URL`** | Public origin without trailing slash (webhook overrides, MCP DNS rebinding allowlist). |
-| **`HANOK_RESERVATION_WALL_TIMEZONE`** | IANA TZ for **naive** `starts_at` (default: falls back to admin display TZ, then `America/Los_Angeles`). |
-| **`HANOK_ADMIN_DISPLAY_TIMEZONE`** | Admin calendar + default wall clock for naive times if reservation wall TZ unset. |
-| **`HANOK_PREMIUM_PREORDER_CENTS`** | Food total threshold for premium dynamic-variable hints (default 50000 ≈ $500). |
-| **`HANOK_VOICE_CREATE_DEDUP_SECONDS`** | Voice duplicate **POST** create window (0 = off; default 120). |
-| **`HANOK_MCP_HTTP_MOUNT`**, **`HANOK_MCP_HTTP_MOUNT_PATH`** | Mount Streamable MCP on same app (e.g. path `/mcp`). |
-| **`HANOK_MCP_API_BASE_URL`**, **`HANOK_MCP_ALLOWED_HOSTS`**, **`HANOK_MCP_ALLOWED_ORIGINS`**, **`HANOK_MCP_DISABLE_DNS_REBINDING`** | MCP HTTP client + transport security (421 / DNS rebinding). |
-| **`HANOK_MCP_HTTP_TIMEOUT_SECONDS`** | MCP outbound HTTP timeout (default 45). |
-| **`HANOK_TABLE_ALLOCATION_ENABLED`**, **`HANOK_TABLE_SLOT_MINUTES`**, **`HANOK_RESERVATION_DURATION_MINUTES`**, **`HANOK_MAX_TABLES_PER_PARTY`**, **`HANOK_TABLE_INVENTORY_JSON`**, **`HANOK_VIP_PREORDER_CENTS`** | Optional seating / waitlist (see `.env.example`). |
-| **`HANOK_RESERVATION_VERBOSE_LOG`**, **`HANOK_RESERVATION_LAB`** | Debug logging; optional **`/reservation-lab`** UI. |
-| **`RENDER_GIT_COMMIT`** / **`APP_GIT_REVISION`** | Deploy fingerprint in logs. |
+See **[`telnyx_restaurant/.env.example`](telnyx_restaurant/.env.example)** for the full list. Highlights:
 
-Template: [`telnyx_restaurant/.env.example`](telnyx_restaurant/.env.example).
+| Variable | Role |
+|----------|------|
+| **`DB_URI`** / **`DATABASE_URL`** | Postgres (Render-friendly SSL hinting in code). |
+| **`HANOK_PUBLIC_BASE_URL`** | Public origin (reminder `webhook_url`, MCP). |
+| **`HANOK_MCP_HTTP_MOUNT`**, path / DNS rebinding | MCP on same process. |
+| **`TELNYX_*`** | Outbound reminders + Call Control. |
+| **`HANOK_TABLE_ALLOCATION_ENABLED`**, **`HANOK_TABLE_INVENTORY_JSON`**, **`HANOK_VIP_PREORDER_CENTS`**, **`HANOK_PREMIUM_PREORDER_CENTS`** | Seating + waitlist + premium / VIP tiers. |
 
 ---
 
@@ -157,50 +171,15 @@ Template: [`telnyx_restaurant/.env.example`](telnyx_restaurant/.env.example).
 ```
 8.telnyx/
 ├── README.md
-├── LICENSE
 ├── Procfile
-├── requirements.txt          # delegates to telnyx_restaurant/requirements.txt
+├── requirements.txt
 └── telnyx_restaurant/
-    ├── app.py                 # lifespan: DB seed + MCP session_manager when mounted
-    ├── config.py
-    ├── datetime_wall.py       # naive starts_at → UTC storage
-    ├── locale_prefs.py        # preferred_locale + locale_hint helpers
-    ├── db.py
-    ├── models.py
-    ├── seed.py
-    ├── phone_normalize.py
-    ├── menu_catalog.py
-    ├── preorder_calc.py
-    ├── reminders.py
-    ├── schemas_res.py
-    ├── webhook_payload.py     # caller extraction for variables webhook
-    ├── routers/
-    │   ├── admin.py
-    │   ├── reservations.py
-    │   └── webhook.py
-    ├── templates/
-    │   └── admin_reservations.html
-    ├── static/
-    │   ├── index.html
-    │   ├── reserve_online.html
-    │   └── reservation_status.html
-    ├── mcp_server/
-    │   ├── README.md
-    │   ├── server.py
-    │   └── __main__.py
+    ├── app.py
+    ├── routers/{admin,reservations,webhook}.py
+    ├── mcp_server/{server.py,README.md}
+    ├── static/, templates/
     └── tests/
 ```
-
----
-
-## Deployment (Render)
-
-1. **Web service** from repo **root**; e.g. `uvicorn telnyx_restaurant.app:app --host 0.0.0.0 --port $PORT` (or `Procfile`).
-2. Attach **PostgreSQL**; set **`DB_URI`** on the web service.
-3. Set **`HANOK_PUBLIC_BASE_URL`**, **`HANOK_MCP_HTTP_MOUNT=1`** if using Telnyx **HTTP MCP** → URL **`https://<your-host>/mcp/`** (trailing slash avoids some 307 patterns).
-4. Telnyx Portal: **dynamic variables** + **Call Control** webhooks point at this app; prefer **MCP-only** reservation tools or keep HTTP tool URLs consistent with the route table above.
-
-**Checklist:** If `/` 404s but `/health` works, ensure **`static/index.html`** ships and Render **Root Directory** is repo root.
 
 ---
 
@@ -209,41 +188,34 @@ Template: [`telnyx_restaurant/.env.example`](telnyx_restaurant/.env.example).
 ```bash
 git clone https://github.com/hjleepapa/8-telnyx.git
 cd 8-telnyx
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp telnyx_restaurant/.env.example telnyx_restaurant/.env
 uvicorn telnyx_restaurant.app:app --reload --host 0.0.0.0 --port 8080
 ```
 
-- **Home:** http://localhost:8080/
-- **Health:** http://localhost:8080/health
-- **Variables (try):** `POST http://localhost:8080/webhooks/telnyx/variables` with `{"caller_number": "+15551234567"}`
+- **Docs:** http://localhost:8080/docs  
+- **Variables try:** `POST http://localhost:8080/webhooks/telnyx/variables` with `{"caller_number": "+1…"}`  
 
-Without `DB_URI`, DB-backed routes return **503** where applicable.
+**Tests:** `python -m pytest telnyx_restaurant/tests -v`
 
-**Tests:** `python3 -m pytest telnyx_restaurant/tests -v`
-
-**Reservation lab (optional):** `HANOK_RESERVATION_LAB=1`, open **`/reservation-lab`** (`?token=` if admin token is set).
+**Demo seed script (waitlist):** `python scripts/seed_waitlist_demo.py --help`
 
 ---
 
-## MCP
+## Security & license
 
-In-process **Streamable HTTP** (`HANOK_MCP_HTTP_MOUNT=1`) exposes the same tool surface as [`telnyx_restaurant/mcp_server/server.py`](telnyx_restaurant/mcp_server/server.py): menu, lookup, create (**`preorder_items`**, **`preferred_locale`**), amend, status/cancel, optional seating availability. Separate stdio/SSE process: `PYTHONPATH=. python -m telnyx_restaurant.mcp_server`. Details: [`telnyx_restaurant/mcp_server/README.md`](telnyx_restaurant/mcp_server/README.md). Product: [Telnyx MCP](https://developers.telnyx.com/).
-
----
-
-## Security & ops
-
-- Synthetic data only for public demos.
-- Do not commit `.env`; rotate credentials if exposed.
-- Scanner probes (`/.env`, `/.git`, …) returning **404** is normal.
+- Demo data only; do not commit real **`.env`** secrets.
+- **MIT** — [LICENSE](LICENSE).
 
 ---
 
-## License
+## Future improvements: locale & Korean (`locale_hint`)
 
-MIT — see [LICENSE](LICENSE).
+The API and web UI already support **`preferred_locale`** (`en` / `ko`) on reservations. Dynamic variables can expose **`locale_hint`** (`en-US` / `ko-KR`) so instructions can say “speak Korean when `locale_hint` is ko-KR.”
 
-**Repository:** [github.com/hjleepapa/8-telnyx](https://github.com/hjleepapa/8-telnyx)
+**Current limitation:** In testing, **Korean speech-to-text (STT) quality in Telnyx** has been **unreliable** compared to English. Until STT for Korean improves, this README treats **Korean voice** as a **future integration path** rather than the primary demo story. The **English** assistant + **same backend** (MCP, variables, waitlist, reminders) remains the center of the challenge deliverable. You can still collect `preferred_locale=ko` from **web** bookings and use it for **dynamic variables** or post-call flows.
+
+---
+
+**Deploy details & MCP copy-paste:** [`telnyx_restaurant/mcp_server/README.md`](telnyx_restaurant/mcp_server/README.md)
