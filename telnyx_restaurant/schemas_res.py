@@ -642,7 +642,7 @@ class ReservationCreate(BaseModel):
         if isinstance(v, str):
             s = v.strip()
             if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
-                return f"{s}T18:00:00+00:00"
+                return f"{s}T18:00:00"
         return v
 
     @field_validator("party_size", mode="before")
@@ -825,7 +825,7 @@ class ReservationUpdate(BaseModel):
         if isinstance(v, str):
             s = v.strip()
             if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
-                return f"{s}T18:00:00+00:00"
+                return f"{s}T18:00:00"
         return v
 
     @field_validator("party_size", mode="before")

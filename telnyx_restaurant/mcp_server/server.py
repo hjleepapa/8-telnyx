@@ -176,7 +176,10 @@ async def create_reservation(
     source_channel: str = "voice",
 ) -> str:
     """
-    Create a reservation. starts_at must be ISO-8601 (e.g. 2026-07-04T18:00:00+00:00).
+    Create a reservation. starts_at must be ISO-8601.
+    Prefer an explicit offset (e.g. 2026-03-30T18:00:00-07:00 for 6 PM Pacific).
+    If you omit the zone (2026-03-30T18:00:00), the API treats that clock time as the
+    restaurant's local timezone (default America/Los_Angeles), not UTC.
 
     Pre-order (if the guest ordered food — call list_menu_items first):
     - preorder_items: easiest for voice — comma-separated id:quantity, e.g. ``bulgogi:2,kimchi_jjigae:1``

@@ -20,10 +20,12 @@ from starlette.requests import ClientDisconnect, Request
 from telnyx_restaurant.config import (
     hanok_default_reservation_duration_minutes,
     hanok_reservation_verbose_logging,
+    hanok_reservation_wall_clock_timezone,
     hanok_slot_step_minutes,
     hanok_table_allocation_enabled,
     hanok_voice_create_dedup_seconds,
 )
+from telnyx_restaurant.datetime_wall import interpret_starts_at_as_utc_storage
 from telnyx_restaurant.db import get_db
 from telnyx_restaurant.menu_catalog import MENU_ITEMS
 from telnyx_restaurant.phone_normalize import phone_lookup_variants, to_e164_us
@@ -101,7 +103,7 @@ _PATCH_NO_FIELDS_DETAIL = (
     "No recognized fields to apply after removing confirmation_code. The server did not update the row. "
     "Include at least one of: preorder lines, party_size, starts_at, status, guest_name, "
     "guest_phone, special_requests, preferred_locale. Examples: "
-    '{"confirmation_code":"HNK-ABCD","party_size":4,"starts_at":"2026-03-28T19:00:00+00:00"} '
+    '{"confirmation_code":"HNK-ABCD","party_size":4,"starts_at":"2026-03-28T19:00:00-07:00"} '
     'or {"confirmation_code":"HNK-ABCD","preorder":[{"menu_item_id":"bulgogi","quantity":1}]}. '
     "Empty array preorder/items [] does not change food. "
     "JSON null on preorder clears the cart when it is the real intent: not a Telnyx multi-key "
@@ -218,7 +220,10 @@ def _apply_reservation_update(db: Session, row: Reservation, body: ReservationUp
     if "starts_at" in body.model_fields_set:
         st = body.starts_at
         if st is not None:
-            row.starts_at = st if st.tzinfo else st.replace(tzinfo=UTC)
+            row.starts_at = interpret_starts_at_as_utc_storage(
+                st,
+                hanok_reservation_wall_clock_timezone(),
+            )
     if "special_requests" in body.model_fields_set:
         row.special_requests = body.special_requests
     if "preferred_locale" in body.model_fields_set and body.preferred_locale is not None:
@@ -1037,8 +1042,9 @@ async def create_reservation(
 
     gp_strip = body.guest_phone.strip()
     guest_phone_e164 = to_e164_us(gp_strip) if gp_strip else gp_strip
-    starts_at_norm = (
-        body.starts_at if body.starts_at.tzinfo else body.starts_at.replace(tzinfo=UTC)
+    starts_at_norm = interpret_starts_at_as_utc_storage(
+        body.starts_at,
+        hanok_reservation_wall_clock_timezone(),
     )
     if hanok_table_allocation_enabled():
         starts_at_norm = floor_slot_start(starts_at_norm, hanok_slot_step_minutes())

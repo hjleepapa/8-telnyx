@@ -60,6 +60,22 @@ def hanok_reminder_delay_seconds() -> float:
         return 5.0
 
 
+def hanok_reservation_wall_clock_timezone():
+    """IANA zone for naive ``starts_at`` (voice/MCP strings without offset = this wall clock).
+
+    Prefer ``HANOK_RESERVATION_WALL_TIMEZONE``; else ``HANOK_ADMIN_DISPLAY_TIMEZONE``;
+    default ``America/Los_Angeles``.
+    """
+    from zoneinfo import ZoneInfo
+
+    raw = (
+        (os.environ.get("HANOK_RESERVATION_WALL_TIMEZONE") or "").strip()
+        or (os.environ.get("HANOK_ADMIN_DISPLAY_TIMEZONE") or "").strip()
+        or "America/Los_Angeles"
+    )
+    return ZoneInfo(raw)
+
+
 def hanok_public_base_url() -> str | None:
     """Public HTTPS origin for Telnyx webhooks (no trailing slash), e.g. https://telnyx.convonetai.com."""
     v = (
