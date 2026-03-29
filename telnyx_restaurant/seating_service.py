@@ -7,7 +7,7 @@ import logging
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from sqlalchemy import Select, case, select
+from sqlalchemy import Select, case, or_, select
 from sqlalchemy.orm import Session
 
 from telnyx_restaurant.config import (
@@ -47,12 +47,26 @@ def _inv_slot(dt: datetime) -> datetime:
 
 
 def effective_priority_for_row(declared: str, food_total_cents: int) -> str:
+    """Return stored tier for the reservation row.
+
+    - Explicit ``guest_priority`` **vip** from the client always wins.
+    - Otherwise **vip** when ``food_total_cents`` ≥ ``HANOK_VIP_PREORDER_CENTS`` (default $500).
+    - Else **normal**.
+    """
     d = (declared or "normal").strip().lower()
     if d == "vip":
         return "vip"
-    if food_total_cents >= hanok_vip_preorder_threshold_cents():
+    if int(food_total_cents or 0) >= hanok_vip_preorder_threshold_cents():
         return "vip"
     return "normal"
+
+
+def sync_guest_priority_from_spend(row: Reservation) -> None:
+    """Refresh ``row.guest_priority`` from current cart totals (call after create or preorder amend)."""
+    row.guest_priority = effective_priority_for_row(
+        row.guest_priority or "normal",
+        int(row.food_total_cents or 0),
+    )
 
 
 def _rows_to_maps(
@@ -331,7 +345,12 @@ def promote_waitlist(db: Session, starts_at: datetime, duration_minutes: int) ->
     step = hanok_slot_step_minutes()
     t0 = floor_slot_start(_norm_dt(starts_at), step)
     d = int(duration_minutes) if duration_minutes else hanok_default_reservation_duration_minutes()
-    prio = case((Reservation.guest_priority == "vip", 0), else_=1)
+    threshold = hanok_vip_preorder_threshold_cents()
+    is_priority = or_(
+        Reservation.guest_priority == "vip",
+        Reservation.food_total_cents >= threshold,
+    )
+    prio = case((is_priority, 0), else_=1)
     candidates = (
         db.execute(
             select(Reservation)

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from telnyx_restaurant.models import Reservation
 from telnyx_restaurant.routers.reservations import _apply_reservation_update
 from telnyx_restaurant.schemas_res import ReservationUpdate
@@ -92,3 +94,33 @@ def test_preorder_null_only_still_clears_cart(db_session) -> None:
     assert row.preorder_json is None
     assert row.food_subtotal_cents == 0
     assert row.food_total_cents == 0
+
+
+def test_preorder_amend_sets_guest_priority_from_spend(
+    db_session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cart totals crossing HANOK_VIP_PREORDER_CENTS upgrade guest_priority for waitlist/UI."""
+    monkeypatch.setenv("HANOK_VIP_PREORDER_CENTS", "2000")
+    row = Reservation(
+        confirmation_code="HNK-PREV",
+        guest_name="Sarah",
+        guest_phone="+15550007777",
+        party_size=2,
+        starts_at=datetime(2026, 6, 1, 18, 0, tzinfo=UTC),
+        status="confirmed",
+        guest_priority="normal",
+        preorder_json='[{"menu_item_id":"bulgogi","quantity":1,"name_en":"Bulgogi","line_total_cents":2500}]',
+        food_subtotal_cents=2500,
+        preorder_discount_cents=0,
+        food_total_cents=2500,
+        seating_status="waitlist",
+    )
+    db_session.add(row)
+    db_session.flush()
+
+    body = ReservationUpdate.model_validate(
+        {"preorder": [{"menu_item_id": "bulgogi", "quantity": 2}]},
+    )
+    assert _apply_reservation_update(db_session, row, body) is True
+    assert row.food_total_cents >= 2000
+    assert row.guest_priority == "vip"

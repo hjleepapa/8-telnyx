@@ -126,6 +126,33 @@ def test_promote_vip_before_normal(seating_env: None, db_session: Session) -> No
     assert norm.seating_status == "waitlist"
 
 
+def test_promote_high_preorder_before_earlier_normal_waitlister(
+    seating_env: None, db_session: Session,
+) -> None:
+    """Large food_total (VIP spend tier) outranks earlier waitlisters with guest_priority normal."""
+    start = datetime(2026, 7, 26, 20, 0, tzinfo=UTC)
+    hold = _row(code="HNK-HL3", party=6, starts=start)
+    db_session.add(hold)
+    db_session.flush()
+    book_on_create(db_session, hold, waitlist_ok=True)
+
+    sam = _row(code="HNK-SAM1", party=6, starts=start, name="Sam", phone="+15550004441")
+    sarah = _row(code="HNK-SAR1", party=6, starts=start, name="Sarah", phone="+15550004442")
+    sarah.food_total_cents = 50_000
+    db_session.add_all([sam, sarah])
+    db_session.flush()
+    book_on_create(db_session, sam, waitlist_ok=True)
+    book_on_create(db_session, sarah, waitlist_ok=True)
+    assert sam.seating_status == "waitlist"
+    assert sarah.seating_status == "waitlist"
+
+    release_and_promote_after_cancel(db_session, hold)
+    db_session.refresh(sam)
+    db_session.refresh(sarah)
+    assert sarah.seating_status == "allocated"
+    assert sam.seating_status == "waitlist"
+
+
 def test_promote_smaller_party_when_earlier_larger_cannot_fit(
     monkeypatch: pytest.MonkeyPatch, db_session: Session
 ) -> None:

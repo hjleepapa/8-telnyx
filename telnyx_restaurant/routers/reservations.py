@@ -39,6 +39,7 @@ from telnyx_restaurant.seating_service import (
     iter_day_slot_starts,
     reseat_reservation_after_amend,
     snapshot_effective_availability,
+    sync_guest_priority_from_spend,
 )
 from telnyx_restaurant.table_allocation import floor_slot_start
 from telnyx_restaurant.schemas_res import (
@@ -236,6 +237,7 @@ def _apply_reservation_update(db: Session, row: Reservation, body: ReservationUp
         row.preferred_locale = body.preferred_locale  # type: ignore[assignment]
     if "status" in body.model_fields_set and body.status is not None:
         row.status = body.status
+    preorder_changed_food = False
     if "preorder" in body.model_fields_set:
         if body.preorder is None:
             if _preorder_null_clears_cart(body):
@@ -243,6 +245,7 @@ def _apply_reservation_update(db: Session, row: Reservation, body: ReservationUp
                 row.food_subtotal_cents = 0
                 row.preorder_discount_cents = 0
                 row.food_total_cents = 0
+                preorder_changed_food = True
             # else: Telnyx sent preorder: null next to real party_size/starts_at — keep existing cart
         elif not body.preorder:
             # Telnyx tools often send preorder/items: [] in the same template as party_size/time.
@@ -257,6 +260,9 @@ def _apply_reservation_update(db: Session, row: Reservation, body: ReservationUp
             row.food_subtotal_cents = subtotal
             row.preorder_discount_cents = discount
             row.food_total_cents = total
+            preorder_changed_food = True
+    if preorder_changed_food:
+        sync_guest_priority_from_spend(row)
     after = _booking_mutable_snapshot(row)
     if after == before:
         return False
@@ -1149,6 +1155,7 @@ async def create_reservation(
         db.flush()
         if hanok_table_allocation_enabled():
             book_on_create(db, row, waitlist_ok=body.waitlist_if_full)
+        sync_guest_priority_from_spend(row)
         db.commit()
     except SeatingUnavailableError as e:
         db.rollback()
