@@ -8,8 +8,12 @@ Caller resolution (in order): flat `caller_number` / `from`, then
 Lookup matches `guest_phone` using normalized variants (+1 / 11-digit / 10-digit US).
 
 High-value pre-orders (``food_total_cents`` ≥ ``HANOK_PREMIUM_PREORDER_CENTS``, default 50000 = $500)
-add ``guest_is_high_value_preorder``, ``guest_preorder_value_tier``, and ``concierge_service_hint``
-so the assistant can personalize cancel/change flows before MCP calls.
+add ``guest_is_high_value_preorder``, ``guest_preorder_value_tier``, ``concierge_service_hint``,
+and ``cancel_retention_offer`` (complimentary-meal / credit language for cancel intent).
+
+With ``HANOK_TABLE_ALLOCATION_ENABLED``, reservations expose ``reservation_seating_status``,
+``guest_waitlist_priority``, and ``waitlist_fairness_hint`` so the model can explain VIP waitlist ordering
+when a table frees up.
 
 ``preferred_locale`` on the guest's reservation (``en`` / ``ko``) sets ``locale_hint`` (``en-US`` / ``ko-KR``)
 for Telnyx instructions, e.g. “Conduct the conversation in Korean when ``locale_hint`` is ``ko-KR``.”
@@ -28,7 +32,12 @@ from typing import Any
 from fastapi import APIRouter, Body, Request
 from sqlalchemy import select
 
-from telnyx_restaurant.config import database_url, hanok_premium_preorder_cents_threshold
+from telnyx_restaurant.config import (
+    database_url,
+    hanok_premium_preorder_cents_threshold,
+    hanok_table_allocation_enabled,
+    hanok_vip_preorder_threshold_cents,
+)
 from telnyx_restaurant.db import get_engine
 from telnyx_restaurant.models import Reservation, ReservationStatus
 from telnyx_restaurant.phone_normalize import phone_lookup_variants
@@ -67,11 +76,65 @@ def _premium_concierge_variables(*, food_total_cents: int, threshold: int | None
             "Standard guest: be clear and helpful on changes or cancellation; offer menu or pre-order help if relevant."
         )
     )
+    retention = (
+        "If they ask to cancel, briefly offer complimentary chef-selected banchan and a dessert on us, "
+        "or a future reservation credit—only with manager confirmation if your policy requires it."
+        if is_premium
+        else "No automatic retention offer; follow standard cancellation policy."
+    )
     return {
         "guest_is_high_value_preorder": "yes" if is_premium else "no",
         "guest_preorder_value_tier": tier,
         "guest_preorder_total_crossed_premium_threshold": "yes" if is_premium else "no",
         "concierge_service_hint": hint,
+        "cancel_retention_offer": retention,
+    }
+
+
+def _seating_waitlist_profile(
+    *,
+    food_total_cents: int,
+    guest_priority_raw: str | None,
+    seating_status_raw: str | None,
+) -> dict[str, Any]:
+    """Waitlist / VIP ordering context for Telnyx templates (requires HANOK_TABLE_ALLOCATION_ENABLED)."""
+    if not hanok_table_allocation_enabled():
+        return {
+            "reservation_seating_status": "not_applicable",
+            "guest_waitlist_priority": "normal",
+            "waitlist_fairness_hint": (
+                "Table allocation is disabled for this deployment; waitlist promotion rules do not apply."
+            ),
+        }
+    status = (seating_status_raw or "not_applicable").strip() or "not_applicable"
+    priority = (guest_priority_raw or "normal").strip().lower()
+    if priority not in ("vip", "normal"):
+        priority = "normal"
+    vip_threshold = hanok_vip_preorder_threshold_cents()
+    is_vip = priority == "vip" or int(food_total_cents) >= vip_threshold
+
+    if status == "waitlist":
+        if is_vip:
+            hint = (
+                "Guest is waitlisted with VIP priority: when a table opens because another reservation cancelled, "
+                "this guest is confirmed before standard-priority waitlisted guests, even if they joined later."
+            )
+        else:
+            hint = (
+                "Guest is on the waitlist with standard priority: VIP guests (or guests with a very large pre-order) "
+                "are offered the next open table first."
+            )
+    elif status == "allocated":
+        hint = "Table is allocated for this reservation; not waitlisted."
+    elif status == "not_applicable":
+        hint = "No waitlist state for this booking (table allocation not used or slot does not require waitlist)."
+    else:
+        hint = f"Seating status: {status}."
+
+    return {
+        "reservation_seating_status": status,
+        "guest_waitlist_priority": "vip" if is_vip else "normal",
+        "waitlist_fairness_hint": hint,
     }
 
 
@@ -96,6 +159,13 @@ def _demo_profile_for_caller(caller_number: str | None) -> dict[str, Any]:
             "reservation_source_channel": "demo",
         }
         profile.update(_premium_concierge_variables(food_total_cents=0))
+        profile.update(
+            _seating_waitlist_profile(
+                food_total_cents=0,
+                guest_priority_raw="normal",
+                seating_status_raw="not_applicable",
+            )
+        )
         return profile
     # Demo: ANI ending 0009 — premium pre-order ($550+ food total) for dynamic-variables / concierge flow tests.
     if normalized.endswith("0009"):
@@ -119,6 +189,13 @@ def _demo_profile_for_caller(caller_number: str | None) -> dict[str, Any]:
             "reservation_source_channel": "demo",
         }
         profile.update(_premium_concierge_variables(food_total_cents=total))
+        profile.update(
+            _seating_waitlist_profile(
+                food_total_cents=total,
+                guest_priority_raw="normal",
+                seating_status_raw="waitlist",
+            )
+        )
         return profile
     profile = {
         "guest_display_name": "Guest",
@@ -137,6 +214,13 @@ def _demo_profile_for_caller(caller_number: str | None) -> dict[str, Any]:
         "reservation_source_channel": "demo",
     }
     profile.update(_premium_concierge_variables(food_total_cents=0))
+    profile.update(
+        _seating_waitlist_profile(
+            food_total_cents=0,
+            guest_priority_raw="normal",
+            seating_status_raw="not_applicable",
+        )
+    )
     return profile
 
 
@@ -195,6 +279,13 @@ def _profile_from_db(caller: str | None) -> dict[str, Any] | None:
                     "reservation_source_channel": any_row.source_channel,
                 }
                 out.update(_premium_concierge_variables(food_total_cents=int(any_row.food_total_cents)))
+                out.update(
+                    _seating_waitlist_profile(
+                        food_total_cents=int(any_row.food_total_cents),
+                        guest_priority_raw=any_row.guest_priority,
+                        seating_status_raw=any_row.seating_status,
+                    )
+                )
                 return out
             return None
         first = row.guest_name.split()[0] if row.guest_name else "Guest"
@@ -223,6 +314,13 @@ def _profile_from_db(caller: str | None) -> dict[str, Any] | None:
             ),
         }
         out.update(_premium_concierge_variables(food_total_cents=int(row.food_total_cents)))
+        out.update(
+            _seating_waitlist_profile(
+                food_total_cents=int(row.food_total_cents),
+                guest_priority_raw=row.guest_priority,
+                seating_status_raw=row.seating_status,
+            )
+        )
         return out
     finally:
         db.close()

@@ -10,6 +10,7 @@ def test_premium_below_threshold_is_standard() -> None:
     assert v["guest_is_high_value_preorder"] == "no"
     assert v["guest_preorder_value_tier"] == "standard"
     assert "Standard guest" in v["concierge_service_hint"]
+    assert "No automatic retention" in v["cancel_retention_offer"]
 
 
 def test_premium_at_threshold_is_yes() -> None:
@@ -18,6 +19,7 @@ def test_premium_at_threshold_is_yes() -> None:
     assert v["guest_preorder_value_tier"] == "premium_preorder"
     assert v["guest_preorder_total_crossed_premium_threshold"] == "yes"
     assert "High-value" in v["concierge_service_hint"]
+    assert "complimentary" in v["cancel_retention_offer"].lower()
 
 
 def test_premium_disabled_when_threshold_zero() -> None:

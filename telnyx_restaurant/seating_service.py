@@ -266,7 +266,8 @@ def promote_waitlist(db: Session, starts_at: datetime, duration_minutes: int) ->
     for w in candidates:
         alloc = try_allocate_and_consume(db, w.party_size, w.starts_at, w.duration_minutes)
         if not alloc:
-            break
+            # Smaller / different party-size may still fit freed capacity; don't block the queue.
+            continue
         w.tables_allocated_json = json.dumps(alloc)
         w.seating_status = "allocated"
         w.updated_at = datetime.now(UTC)

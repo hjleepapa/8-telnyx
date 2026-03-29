@@ -44,6 +44,7 @@ def _preorder_summary_short(r: Reservation) -> str:
 def _reservation_calendar_dict(r: Reservation) -> dict:
     """JSON-friendly row for calendar UI (calendar groups by HANOK_ADMIN_DISPLAY_TIMEZONE day)."""
     lines = r.preorder_items
+    tabs = r.tables_allocated
     return {
         "id": r.id,
         "confirmation_code": r.confirmation_code,
@@ -62,6 +63,9 @@ def _reservation_calendar_dict(r: Reservation) -> dict:
         "source_channel": r.source_channel,
         "preferred_locale": getattr(r, "preferred_locale", None) or "en",
         "reminder_call_status": r.reminder_call_status or "",
+        "seating_status": getattr(r, "seating_status", None) or "not_applicable",
+        "guest_priority": getattr(r, "guest_priority", None) or "normal",
+        "tables_allocated": tabs if tabs else [],
     }
 
 _TEMPLATES = Jinja2Templates(

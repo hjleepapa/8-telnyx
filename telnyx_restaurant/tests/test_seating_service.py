@@ -123,3 +123,39 @@ def test_promote_vip_before_normal(seating_env: None, db_session: Session) -> No
     db_session.refresh(norm)
     assert vip.seating_status == "allocated"
     assert norm.seating_status == "waitlist"
+
+
+def test_promote_smaller_party_when_earlier_larger_cannot_fit(
+    monkeypatch: pytest.MonkeyPatch, db_session: Session
+) -> None:
+    """Freed capacity may only fit a later waitlister with a smaller party_size."""
+    monkeypatch.setenv("HANOK_TABLE_ALLOCATION_ENABLED", "true")
+    monkeypatch.setenv("HANOK_TABLE_INVENTORY_JSON", '{"4":1,"8":1}')
+    monkeypatch.setenv("HANOK_TABLE_SLOT_MINUTES", "60")
+    monkeypatch.setenv("HANOK_RESERVATION_DURATION_MINUTES", "60")
+    monkeypatch.setenv("HANOK_MAX_TABLES_PER_PARTY", "2")
+    start = datetime(2026, 7, 10, 19, 0, tzinfo=UTC)
+    r1 = _row(code="HNK-T1", party=8, starts=start)
+    r2 = _row(code="HNK-T2", party=4, starts=start)
+    db_session.add_all([r1, r2])
+    db_session.flush()
+    book_on_create(db_session, r1, waitlist_ok=True)
+    book_on_create(db_session, r2, waitlist_ok=True)
+    assert r1.seating_status == "allocated"
+    assert r2.seating_status == "allocated"
+
+    r_big = _row(code="HNK-W8", party=8, starts=start, name="WaitBig", phone="+15550001001")
+    r_small = _row(code="HNK-W4", party=4, starts=start, name="WaitSmall", phone="+15550001002")
+    db_session.add_all([r_big, r_small])
+    db_session.flush()
+    book_on_create(db_session, r_big, waitlist_ok=True)
+    book_on_create(db_session, r_small, waitlist_ok=True)
+    assert r_big.seating_status == "waitlist"
+    assert r_small.seating_status == "waitlist"
+
+    release_and_promote_after_cancel(db_session, r2)
+    db_session.refresh(r_big)
+    db_session.refresh(r_small)
+    assert r_small.seating_status == "allocated"
+    assert json.loads(r_small.tables_allocated_json or "[]") == [4]
+    assert r_big.seating_status == "waitlist"

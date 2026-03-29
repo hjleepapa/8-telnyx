@@ -306,6 +306,18 @@
         background: #ffddd2;
         color: var(--bad);
       }
+      .badge-waitlist {
+        background: #fff3bf;
+        color: #8a6d00;
+      }
+      .badge-allocated {
+        background: #ccf5e7;
+        color: #0b6b4a;
+      }
+      .badge-seat-na {
+        background: #f1f3f5;
+        color: var(--muted);
+      }
       .empty {
         padding: 3rem;
         text-align: center;
@@ -439,6 +451,7 @@
       <p class="meta">
         {{ row_count }} active reservation{% if row_count != 1 %}s{% endif %} on the calendar.
         {% if cancelled_hidden and cancelled_hidden > 0 %}<strong>{{ cancelled_hidden }} cancelled</strong> (hidden from calendar — cancel did run).{% endif %}
+        With table allocation enabled, month/week chips use <strong>· WL</strong> (waitlist, no table yet) or <strong>· T</strong> (table assigned); the day list and detail panel show the same.
         API: <code>GET /api/reservations</code>
       </p>
       {% if row_count == 0 %}
@@ -543,6 +556,36 @@
           if (s === "seated") return "badge-seated";
           if (s === "completed") return "badge-completed";
           return "badge-cancelled";
+        }
+
+        function seatingBadgeClass(seating) {
+          if (seating === "waitlist") return "badge-waitlist";
+          if (seating === "allocated") return "badge-allocated";
+          return "badge-seat-na";
+        }
+
+        function seatingChipSuffix(r) {
+          var s = r.seating_status || "";
+          if (s === "waitlist") return " · WL";
+          if (s === "allocated") return " · T";
+          return "";
+        }
+
+        function seatingDayListBadge(r) {
+          var s = r.seating_status || "";
+          var label = "";
+          var cls = seatingBadgeClass(s);
+          if (s === "waitlist") label = "waitlist";
+          else if (s === "allocated") label = "table assigned";
+          else if (s === "not_applicable") label = "seating n/a";
+          else label = s || "—";
+          return (
+            ' · <span class="badge ' +
+            cls +
+            '" title="HANOK_TABLE_ALLOCATION_ENABLED — waitlist vs allocated">' +
+            escapeHtml(label) +
+            "</span>"
+          );
         }
 
         function money(c) {
@@ -710,7 +753,8 @@
             "<small>" +
             escapeHtml(timeStr(r.starts_at)) +
             "</small> · " +
-            escapeHtml((r.guest_name || "").split(" ")[0] || "Guest");
+            escapeHtml((r.guest_name || "").split(" ")[0] || "Guest") +
+            escapeHtml(seatingChipSuffix(r));
           b.addEventListener("click", function () {
             openDetail(r);
           });
@@ -842,7 +886,9 @@
               badgeClass(r.status) +
               '">' +
               escapeHtml(r.status) +
-              "</span></div>";
+              "</span>" +
+              seatingDayListBadge(r) +
+              "</div>";
             dr.appendChild(tm);
             dr.appendChild(body);
             function open() {
@@ -901,6 +947,41 @@
           detailBody.appendChild(row("Phone", escapeHtml(r.guest_phone)));
           detailBody.appendChild(row("Party", escapeHtml(String(r.party_size))));
           detailBody.appendChild(row("Time", escapeHtml(r.starts_at_display || r.starts_at)));
+
+          var seat = r.seating_status || "not_applicable";
+          var seatLbl =
+            seat === "waitlist"
+              ? "Waitlist (no table yet)"
+              : seat === "allocated"
+                ? "Table allocated"
+                : seat === "not_applicable"
+                  ? "N/A (allocation off or legacy row)"
+                  : seat;
+          detailBody.appendChild(
+            row(
+              "Seating",
+              '<span class="badge ' +
+                seatingBadgeClass(seat) +
+                '">' +
+                escapeHtml(seatLbl) +
+                "</span>"
+            )
+          );
+          var prio = (r.guest_priority || "normal").toLowerCase();
+          detailBody.appendChild(
+            row(
+              "Priority",
+              prio === "vip"
+                ? '<span class="badge badge-pending">VIP</span>'
+                : escapeHtml("standard")
+            )
+          );
+          var tab = r.tables_allocated;
+          var tabStr =
+            tab && tab.length
+              ? "<code>" + escapeHtml(tab.join("+")) + "</code> · table size(s)"
+              : '<span style="color:var(--muted)">—</span>';
+          detailBody.appendChild(row("Tables", tabStr));
 
           var preHtml = "";
           if (r.preorder_items && r.preorder_items.length) {
