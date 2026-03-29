@@ -467,7 +467,7 @@
         <div class="cal-view-tabs" role="tablist" aria-label="Calendar scope">
           <button type="button" role="tab" id="view-day" aria-controls="cal-mount" aria-selected="false">Day</button>
           <button type="button" role="tab" id="view-week" aria-controls="cal-mount" aria-selected="false">Week</button>
-          <button type="button" role="tab" id="view-month" aria-controls="cal-mount" aria-selected="true">Month</button>
+          <button type="button" role="tab" id="view-month" aria-controls="cal-mount" aria-selected="false">Month</button>
         </div>
         <div class="cal-nav">
           <button type="button" id="cal-prev" aria-label="Previous">‹</button>
@@ -659,7 +659,23 @@
           return addDaysUTC(cy, cm, cd, -dow);
         }
 
-        var viewMode = "month";
+        var CAL_VIEW_STORAGE_KEY = "hanok_admin_calendar_view";
+
+        function loadSavedViewMode() {
+          try {
+            var v = localStorage.getItem(CAL_VIEW_STORAGE_KEY);
+            if (v === "day" || v === "week" || v === "month") return v;
+          } catch (e) {}
+          return "month";
+        }
+
+        function saveViewMode(mode) {
+          try {
+            localStorage.setItem(CAL_VIEW_STORAGE_KEY, mode);
+          } catch (e) {}
+        }
+
+        var viewMode = loadSavedViewMode();
         var cursor = todayCursor();
 
         var grid = document.getElementById("cal-grid");
@@ -1049,14 +1065,17 @@
 
         tabDay.addEventListener("click", function () {
           viewMode = "day";
+          saveViewMode("day");
           render();
         });
         tabWeek.addEventListener("click", function () {
           viewMode = "week";
+          saveViewMode("week");
           render();
         });
         tabMonth.addEventListener("click", function () {
           viewMode = "month";
+          saveViewMode("month");
           render();
         });
 
