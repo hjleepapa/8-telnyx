@@ -15,7 +15,7 @@
 
 ## Telnyx challenge — core requirements
 
-This project is structured around the four required pillars below. Each maps directly to what you configure in **Telnyx Mission Control** and what runs on your **public host**.
+This project is structured around the four required pillars below. Each maps directly to what you configure in **Telnyx Mission Control** and what runs on **Render**.
 
 ### 1. AI assistant (required)
 
@@ -38,9 +38,7 @@ This project is structured around the four required pillars below. Each maps dir
 | **Meaningful tools / resources** | **Menu** lookup, **create** reservation (with `preorder_items` / lines), **lookup** by name+phone, **fetch by code**, **amend** (time, party, pre-order, notes, contact), **status / cancel**, optional **seating availability** by date. |
 | **Enhances the assistant** | The assistant does not need hard-coded menu prices or ad-hoc HTTP shaping for every tool—MCP exposes structured operations over **httpx** to `POST /api/reservations`, `GET /lookup`, `PATCH …/amend`, etc. |
 
-**Deploy URL (HTTP transport):** enable **`HANOK_MCP_HTTP_MOUNT=1`** and point Telnyx at **`https://<your-host>/mcp/`** (trailing slash recommended). Deep copy-paste steps: [`telnyx_restaurant/mcp_server/README.md`](telnyx_restaurant/mcp_server/README.md).
-
-**Local / stdio:** `PYTHONPATH=. python -m telnyx_restaurant.mcp_server`
+**Deploy URL (HTTP transport):** on **Render**, set **`HANOK_MCP_HTTP_MOUNT=1`** and point Telnyx at **`https://<your-render-host>/mcp/`** (trailing slash recommended). Steps: [`telnyx_restaurant/mcp_server/README.md`](telnyx_restaurant/mcp_server/README.md).
 
 ---
 
@@ -51,9 +49,9 @@ This project is structured around the four required pillars below. Each maps dir
 | **Implement dynamic webhook variables** | **`POST /webhooks/telnyx/variables`** returns JSON keyed for instruction templates (map keys in Telnyx to these fields). |
 | **Personalize / fetch context** | Caller ANI is matched to **`guest_phone`** (normalized variants). Response includes guest name, **upcoming reservation** metadata, pre-order summary and **food totals**, **seating / waitlist** fields when table allocation is on, and **concierge** hints for high-value pre-orders. |
 | **Show how data improves the flow** | Example: if `guest_is_high_value_preorder` is **yes**, instructions can use `concierge_service_hint` and `cancel_retention_offer` on cancel intent; if `reservation_seating_status` is **waitlist**, the assistant should **not** say a table is confirmed until **allocated**. |
-| **Deployed API** | Variables resolve against **PostgreSQL**; set **`DB_URI`** on your host. Without a DB, behavior is limited (demo ANI suffixes still return synthetic profiles in code). |
+| **Deployed API** | Variables resolve against **PostgreSQL**; set **`DB_URI`** on Render. Without a DB, behavior is limited (demo ANI suffixes still return synthetic profiles in code). |
 
-**Webhook URL:** `POST https://<your-public-host>/webhooks/telnyx/variables`
+**Webhook URL:** `POST https://<your-render-host>/webhooks/telnyx/variables`
 
 **Useful keys (non-exhaustive):** `guest_display_name`, `next_reservation_code`, `next_reservation_at`, `reservation_preorder_summary`, `reservation_food_total_cents`, `guest_is_high_value_preorder`, `concierge_service_hint`, `cancel_retention_offer`, `reservation_seating_status`, `guest_waitlist_priority`, `waitlist_fairness_hint` (plus `preferred_locale` / `locale_hint` — see **Future improvements** below).
 
@@ -65,7 +63,7 @@ This project is structured around the four required pillars below. Each maps dir
 
 | Requirement | How this project satisfies it |
 |-------------|-------------------------------|
-| **Deploy publicly** | Example: **Render** web service + **PostgreSQL** (see checklist below). Other hosts work if they run **`uvicorn telnyx_restaurant.app:app`** with **`DB_URI`**. |
+| **Deploy publicly** | **Render.com** web service + **PostgreSQL** (see checklist below). The app entrypoint is **`uvicorn telnyx_restaurant.app:app`** (root **`Procfile`**). |
 | **Working URLs / numbers for reviewers** | **You** publish your live **`https://…`** origin and the **Telnyx phone number** attached to the assistant. This README documents paths; it does not hard-code a challenge-specific number. |
 | **Clear documentation** | **This file** + [`telnyx_restaurant/mcp_server/README.md`](telnyx_restaurant/mcp_server/README.md) + [`telnyx_restaurant/.env.example`](telnyx_restaurant/.env.example). |
 
@@ -135,7 +133,7 @@ flowchart TB
 | GET | `/by-code/{code}` | By **HNK-…** |
 | PATCH | `/amend`, `/{id}/amend`, `/by-code/...` | Partial updates; **`X-Hanok-Reservation-Changed`** header reflects real DB writes. |
 
-Full route table and PATCH semantics are in code comments and earlier sections; see also **OpenAPI** at **`/docs`** on your host.
+Full route table and PATCH semantics are in code comments and earlier sections; see also **OpenAPI** at **`/docs`** on your Render URL.
 
 ---
 
@@ -181,25 +179,7 @@ See **[`telnyx_restaurant/.env.example`](telnyx_restaurant/.env.example)** for t
     └── tests/
 ```
 
----
-
-## Local development
-
-```bash
-git clone https://github.com/hjleepapa/8-telnyx.git
-cd 8-telnyx
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp telnyx_restaurant/.env.example telnyx_restaurant/.env
-uvicorn telnyx_restaurant.app:app --reload --host 0.0.0.0 --port 8080
-```
-
-- **Docs:** http://localhost:8080/docs  
-- **Variables try:** `POST http://localhost:8080/webhooks/telnyx/variables` with `{"caller_number": "+1…"}`  
-
-**Tests:** `python -m pytest telnyx_restaurant/tests -v`
-
-**Demo seed script (waitlist):** `python scripts/seed_waitlist_demo.py --help`
+**API reference on Render:** `https://<your-render-host>/docs` (OpenAPI).
 
 ---
 
