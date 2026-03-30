@@ -167,13 +167,73 @@
         font-size: 0.95rem;
         color: var(--ink);
       }
+      .day-view-body {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+      .day-section {
+        background: #fffdf9;
+        border-radius: 12px;
+        border: 1px solid var(--cream);
+        overflow: hidden;
+      }
+      .day-section--waitlist {
+        border-color: rgba(188, 108, 37, 0.35);
+        background: linear-gradient(180deg, #fff9f2 0%, #fffdf9 100%);
+      }
+      .day-section-title {
+        font-size: 0.82rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        color: var(--ink);
+        padding: 0.65rem 1rem 0.15rem;
+        margin: 0;
+      }
+      .day-section-hint {
+        font-size: 0.72rem;
+        color: var(--muted);
+        padding: 0 1rem 0.5rem;
+        margin: 0;
+        line-height: 1.4;
+      }
       .day-view-list {
         padding: 0.65rem;
         display: flex;
         flex-direction: column;
         gap: 0.5rem;
-        max-height: min(70vh, 520px);
+        max-height: min(50vh, 380px);
         overflow-y: auto;
+      }
+      .day-section--waitlist .day-view-list {
+        max-height: min(40vh, 320px);
+      }
+      .day-queue-pos {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 1.75rem;
+        height: 1.5rem;
+        padding: 0 0.35rem;
+        border-radius: 6px;
+        font-size: 0.72rem;
+        font-weight: 800;
+        background: var(--cream);
+        color: var(--ink);
+        margin-right: 0.35rem;
+        vertical-align: middle;
+      }
+      .badge-vip-wl {
+        background: linear-gradient(135deg, #7c5c1a, #b8860b);
+        color: #fff;
+        font-size: 0.65rem;
+        font-weight: 800;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        padding: 0.15rem 0.4rem;
+        border-radius: 5px;
+        margin-left: 0.35rem;
       }
       .day-slot {
         display: grid;
@@ -451,7 +511,7 @@
       <p class="meta">
         {{ row_count }} active reservation{% if row_count != 1 %}s{% endif %} on the calendar.
         {% if cancelled_hidden and cancelled_hidden > 0 %}<strong>{{ cancelled_hidden }} cancelled</strong> (hidden from calendar — cancel did run).{% endif %}
-        With table allocation enabled, month/week chips use <strong>· WL</strong> (waitlist, no table yet) or <strong>· T</strong> (table assigned); the day list and detail panel show the same.
+        With table allocation enabled, month/week chips use <strong>· WL</strong> (waitlist, no table yet) or <strong>· T</strong> (table assigned). <strong>Day view</strong> separates <strong>Reservations</strong> from a <strong>Waitlist</strong> queue ordered like promotion (VIP tier and pre-order threshold, then booking time).
         API: <code>GET /api/reservations</code>
       </p>
       {% if row_count == 0 %}
@@ -480,7 +540,20 @@
         <div class="cal-grid cal-grid--month" id="cal-grid" role="grid" aria-label="Reservation calendar"></div>
         <div class="day-view" id="day-view" hidden>
           <div class="day-view-head" id="day-view-head"></div>
-          <div class="day-view-list" id="day-view-list"></div>
+          <div class="day-view-body">
+            <section class="day-section" id="day-section-booked" aria-labelledby="day-booked-title">
+              <h2 class="day-section-title" id="day-booked-title">Reservations</h2>
+              <p class="day-section-hint">Bookings with a table, seating n/a, or not on the waitlist (by time).</p>
+              <div class="day-view-list" id="day-view-booked"></div>
+            </section>
+            <section class="day-section day-section--waitlist" id="day-section-waitlist" aria-labelledby="day-wl-title" hidden>
+              <h2 class="day-section-title" id="day-wl-title">Waitlist</h2>
+              <p class="day-section-hint">
+                Queue order matches table promotion: same start time &amp; stay length together; then VIP tier ahead of standard (explicit VIP or pre-order total at/above <code>HANOK_VIP_PREORDER_CENTS</code>); then earlier bookings first.
+              </p>
+              <div class="day-view-list" id="day-view-waitlist"></div>
+            </section>
+          </div>
         </div>
       </div>
       {% endif %}
@@ -498,6 +571,7 @@
 
     <script id="admin-res-data" type="application/json">{{ reservations_json | safe }}</script>
     <script id="admin-cal-tz" type="application/json">{{ calendar_display_tz | default("America/Los_Angeles", true) | tojson }}</script>
+    <script id="admin-vip-threshold" type="application/json">{{ vip_preorder_threshold_cents | default(50000, true) | tojson }}</script>
     <script>
       (function () {
         var rawTz = document.getElementById("admin-cal-tz");
@@ -592,6 +666,45 @@
           return "$" + (c / 100).toFixed(2);
         }
 
+        var VIP_PREORDER_MIN_CENTS = 50000;
+        try {
+          var thrEl = document.getElementById("admin-vip-threshold");
+          if (thrEl && thrEl.textContent) {
+            var t = JSON.parse(thrEl.textContent);
+            if (typeof t === "number" && t >= 0) VIP_PREORDER_MIN_CENTS = t;
+          }
+        } catch (e) {}
+
+        function effectiveVipTier(r) {
+          var gp = (r.guest_priority || "normal").toLowerCase();
+          if (gp === "vip") return true;
+          var c = parseInt(r.food_total_cents, 10) || 0;
+          return c >= VIP_PREORDER_MIN_CENTS;
+        }
+
+        function waitlistSortCompare(a, b) {
+          var ta = new Date(a.starts_at).getTime();
+          var tb = new Date(b.starts_at).getTime();
+          if (ta !== tb) return ta - tb;
+          var da = parseInt(a.duration_minutes, 10);
+          if (isNaN(da)) da = 120;
+          var db = parseInt(b.duration_minutes, 10);
+          if (isNaN(db)) db = 120;
+          if (da !== db) return da - db;
+          var va = effectiveVipTier(a) ? 0 : 1;
+          var vb = effectiveVipTier(b) ? 0 : 1;
+          if (va !== vb) return va - vb;
+          var ca = rCreatedMs(a);
+          var cb = rCreatedMs(b);
+          return ca - cb;
+        }
+
+        function rCreatedMs(r) {
+          if (!r.created_at) return 0;
+          var t = new Date(r.created_at).getTime();
+          return isNaN(t) ? 0 : t;
+        }
+
         var byDay = {};
         reservations.forEach(function (r) {
           var k = dayBucketKey(r.starts_at);
@@ -681,7 +794,9 @@
         var grid = document.getElementById("cal-grid");
         var dayView = document.getElementById("day-view");
         var dayViewHead = document.getElementById("day-view-head");
-        var dayViewList = document.getElementById("day-view-list");
+        var dayViewBooked = document.getElementById("day-view-booked");
+        var dayViewWaitlist = document.getElementById("day-view-waitlist");
+        var daySectionWaitlist = document.getElementById("day-section-waitlist");
         var labelEl = document.getElementById("cal-month-label");
         var btnPrev = document.getElementById("cal-prev");
         var btnNext = document.getElementById("cal-next");
@@ -693,7 +808,7 @@
         var detailBody = document.getElementById("detail-body");
         var detailTitle = document.getElementById("detail-title");
 
-        if (!grid || !labelEl || !dayView || !dayViewHead || !dayViewList) return;
+        if (!grid || !labelEl || !dayView || !dayViewHead || !dayViewBooked || !dayViewWaitlist || !daySectionWaitlist) return;
 
         function syncTabs() {
           tabDay.setAttribute("aria-selected", viewMode === "day" ? "true" : "false");
@@ -868,57 +983,102 @@
           }
         }
 
+        function buildDayRow(r, options) {
+          options = options || {};
+          var queuePos = options.queuePos;
+          var isWaitlistSection = !!options.isWaitlistSection;
+          var dr = document.createElement("div");
+          dr.className = "day-slot";
+          dr.setAttribute("role", "button");
+          dr.tabIndex = 0;
+          dr.style.cursor = "pointer";
+          var tm = document.createElement("time");
+          tm.textContent = timeStr(r.starts_at);
+          var body = document.createElement("div");
+          body.className = "day-slot-body";
+          var titleBits =
+            (queuePos != null
+              ? '<span class="day-queue-pos" title="Waitlist position">#' + escapeHtml(String(queuePos)) + "</span>"
+              : "") +
+            escapeHtml(r.guest_name || "");
+          if (isWaitlistSection && effectiveVipTier(r)) {
+            titleBits +=
+              ' <span class="badge-vip-wl" title="VIP priority or pre-order at/above configured tier">VIP</span>';
+          }
+          body.innerHTML =
+            '<div class="day-slot-title">' +
+            titleBits +
+            "</div>" +
+            '<div class="day-slot-meta">' +
+            escapeHtml(String(r.party_size)) +
+            " guests · " +
+            escapeHtml(r.confirmation_code) +
+            ' · <span class="badge ' +
+            badgeClass(r.status) +
+            '">' +
+            escapeHtml(r.status) +
+            "</span>" +
+            seatingDayListBadge(r) +
+            "</div>";
+          dr.appendChild(tm);
+          dr.appendChild(body);
+          function open() {
+            openDetail(r);
+          }
+          dr.addEventListener("click", open);
+          dr.addEventListener("keydown", function (e) {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              open();
+            }
+          });
+          return dr;
+        }
+
         function renderDay() {
           var key = ymd(cursor.y, cursor.m, cursor.d);
           dayViewHead.textContent = formatTitle();
-          dayViewList.innerHTML = "";
+          dayViewBooked.innerHTML = "";
+          dayViewWaitlist.innerHTML = "";
           var list = byDay[key] || [];
           if (!list.length) {
             var empty = document.createElement("div");
             empty.className = "day-slot-empty";
             empty.textContent = "No reservations on this day (Pacific).";
-            dayViewList.appendChild(empty);
+            dayViewBooked.appendChild(empty);
+            daySectionWaitlist.hidden = true;
             return;
           }
+          var booked = [];
+          var wl = [];
           list.forEach(function (r) {
-            var dr = document.createElement("div");
-            dr.className = "day-slot";
-            dr.setAttribute("role", "button");
-            dr.tabIndex = 0;
-            dr.style.cursor = "pointer";
-            var tm = document.createElement("time");
-            tm.textContent = timeStr(r.starts_at);
-            var body = document.createElement("div");
-            body.className = "day-slot-body";
-            body.innerHTML =
-              '<div class="day-slot-title">' +
-              escapeHtml(r.guest_name || "") +
-              "</div>" +
-              '<div class="day-slot-meta">' +
-              escapeHtml(String(r.party_size)) +
-              " guests · " +
-              escapeHtml(r.confirmation_code) +
-              ' · <span class="badge ' +
-              badgeClass(r.status) +
-              '">' +
-              escapeHtml(r.status) +
-              "</span>" +
-              seatingDayListBadge(r) +
-              "</div>";
-            dr.appendChild(tm);
-            dr.appendChild(body);
-            function open() {
-              openDetail(r);
-            }
-            dr.addEventListener("click", open);
-            dr.addEventListener("keydown", function (e) {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                open();
-              }
-            });
-            dayViewList.appendChild(dr);
+            if ((r.seating_status || "") === "waitlist") wl.push(r);
+            else booked.push(r);
           });
+          booked.sort(function (a, b) {
+            return new Date(a.starts_at) - new Date(b.starts_at);
+          });
+          wl.sort(waitlistSortCompare);
+
+          if (!booked.length) {
+            var emptyB = document.createElement("div");
+            emptyB.className = "day-slot-empty";
+            emptyB.textContent = "No table-assigned or off-waitlist bookings this day.";
+            dayViewBooked.appendChild(emptyB);
+          } else {
+            booked.forEach(function (r) {
+              dayViewBooked.appendChild(buildDayRow(r, {}));
+            });
+          }
+
+          if (!wl.length) {
+            daySectionWaitlist.hidden = true;
+          } else {
+            daySectionWaitlist.hidden = false;
+            wl.forEach(function (r, i) {
+              dayViewWaitlist.appendChild(buildDayRow(r, { queuePos: i + 1, isWaitlistSection: true }));
+            });
+          }
         }
 
         function render() {
@@ -983,15 +1143,10 @@
                 "</span>"
             )
           );
-          var prio = (r.guest_priority || "normal").toLowerCase();
-          detailBody.appendChild(
-            row(
-              "Priority",
-              prio === "vip"
-                ? '<span class="badge badge-pending">VIP</span>'
-                : escapeHtml("standard")
-            )
-          );
+          var prioLabel = effectiveVipTier(r)
+            ? '<span class="badge badge-pending">VIP tier</span>'
+            : escapeHtml("standard");
+          detailBody.appendChild(row("Priority", prioLabel));
           var tab = r.tables_allocated;
           var tabStr =
             tab && tab.length

@@ -792,6 +792,25 @@ class ReservationUpdate(BaseModel):
             "lang",
         ),
     )
+    guest_priority: str | None = Field(
+        None,
+        validation_alias=AliasChoices(
+            "guest_priority",
+            "guestPriority",
+            "priority",
+            "seating_priority",
+        ),
+    )
+
+    @field_validator("guest_priority", mode="before")
+    @classmethod
+    def guest_priority_update_norm(cls, v: Any) -> Any:
+        if v is None or (isinstance(v, str) and not v.strip()):
+            return None
+        s = str(v).strip().lower()
+        if s in ("vip", "v"):
+            return "vip"
+        return "normal"
 
     @field_validator("preferred_locale", mode="before")
     @classmethod

@@ -14,6 +14,7 @@ from telnyx_restaurant.seating_service import (
     release_and_promote_after_cancel,
     reseat_reservation_after_amend,
     try_allocate_and_consume,
+    waitlist_queue_metadata,
 )
 
 
@@ -225,6 +226,71 @@ def test_amend_reschedule_allocated_promotes_waitlist_at_old_slot(
     assert wait.seating_status == "allocated"
     assert json.loads(wait.tables_allocated_json or "[]") == [6]
     assert hold.seating_status == "allocated"
+
+
+def test_waitlist_queue_metadata_matches_promotion_order(seating_env: None, db_session: Session) -> None:
+    """Position in metadata matches VIP-first, then created_at (same as promote_waitlist)."""
+    start = datetime(2026, 8, 10, 19, 0, tzinfo=UTC)
+    hold = _row(code="HNK-QH", party=6, starts=start)
+    db_session.add(hold)
+    db_session.flush()
+    book_on_create(db_session, hold, waitlist_ok=True)
+
+    sam = _row(code="HNK-QS", party=6, starts=start, name="Sam", phone="+15550009001")
+    sarah = _row(code="HNK-QR", party=6, starts=start, name="Sarah", phone="+15550009002")
+    sarah.guest_priority = "vip"
+    db_session.add_all([sam, sarah])
+    db_session.flush()
+    book_on_create(db_session, sam, waitlist_ok=True)
+    book_on_create(db_session, sarah, waitlist_ok=True)
+    assert sam.seating_status == "waitlist"
+    assert sarah.seating_status == "waitlist"
+
+    m_sarah = waitlist_queue_metadata(db_session, sarah)
+    m_sam = waitlist_queue_metadata(db_session, sam)
+    assert m_sarah is not None and m_sam is not None
+    assert m_sarah["position"] == 1
+    assert m_sam["position"] == 2
+    assert m_sarah["queue_size"] == 2
+    assert m_sarah["estimated_wait_minutes"] == 15
+    assert m_sam["estimated_wait_minutes"] == 30
+
+
+def test_same_slot_reseat_invokes_promote_for_waitlist(
+    seating_env: None, db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Amend without time/party change must still rerun waitlist promotion (VIP tier, preorder, etc.)."""
+    promote_calls: list[tuple[datetime, int]] = []
+
+    def _capture(db: Session, starts_at: datetime, duration_minutes: int) -> int:
+        promote_calls.append((starts_at, duration_minutes))
+        return 0
+
+    monkeypatch.setattr("telnyx_restaurant.seating_service.promote_waitlist", _capture)
+
+    start = datetime(2026, 8, 1, 18, 0, tzinfo=UTC)
+    hold = _row(code="HNK-EARLY", party=6, starts=start)
+    db_session.add(hold)
+    db_session.flush()
+    book_on_create(db_session, hold, waitlist_ok=True)
+
+    wait = _row(code="HNK-WAIT", party=6, starts=start, phone="+15550008003")
+    db_session.add(wait)
+    db_session.flush()
+    book_on_create(db_session, wait, waitlist_ok=True)
+    assert wait.seating_status == "waitlist"
+
+    reseat_reservation_after_amend(
+        db_session,
+        wait,
+        old_starts_at=wait.starts_at,
+        old_party_size=wait.party_size,
+        old_duration_minutes=wait.duration_minutes,
+        old_seating_status=wait.seating_status,
+        old_tables_allocated_json=wait.tables_allocated_json,
+    )
+    assert len(promote_calls) == 1
+    assert promote_calls[0][1] == wait.duration_minutes
 
 
 def test_waitlist_promotion_schedules_reminder_for_voice(

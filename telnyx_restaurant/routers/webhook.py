@@ -12,8 +12,10 @@ add ``guest_is_high_value_preorder``, ``guest_preorder_value_tier``, ``concierge
 and ``cancel_retention_offer`` (complimentary-meal / credit language for cancel intent).
 
 With ``HANOK_TABLE_ALLOCATION_ENABLED``, reservations expose ``reservation_seating_status``,
-``guest_waitlist_priority``, and ``waitlist_fairness_hint`` so the model can explain VIP waitlist ordering
-when a table frees up.
+``guest_waitlist_priority``, ``waitlist_fairness_hint``, and wait-time fields
+(``guest_waitlist_position``, ``guest_waitlist_queue_size``, ``guest_waitlist_estimated_wait_minutes``,
+``guest_waitlist_position_ordinal_en``, ``guest_waitlist_wait_time_hint``) aligned with promotion order
+(position × ``HANOK_WAITLIST_MINUTES_PER_POSITION``, default 15 minutes).
 
 ``preferred_locale`` on the guest's reservation (``en`` / ``ko``) sets ``locale_hint`` (``en-US`` / ``ko-KR``)
 for Telnyx instructions, e.g. “Conduct the conversation in Korean when ``locale_hint`` is ``ko-KR``.”
@@ -37,12 +39,14 @@ from telnyx_restaurant.config import (
     hanok_premium_preorder_cents_threshold,
     hanok_table_allocation_enabled,
     hanok_vip_preorder_threshold_cents,
+    hanok_waitlist_minutes_per_position,
 )
 from telnyx_restaurant.db import get_engine
 from telnyx_restaurant.models import Reservation, ReservationStatus
 from telnyx_restaurant.phone_normalize import phone_lookup_variants
 from telnyx_restaurant.preorder_calc import preorder_summary_text
 from telnyx_restaurant.reminders import build_reminder_speak_text, telnyx_hangup, telnyx_speak
+from telnyx_restaurant.seating_service import waitlist_queue_metadata
 from telnyx_restaurant.locale_prefs import assistant_locale_hint
 from telnyx_restaurant.webhook_payload import extract_caller_number
 
@@ -138,6 +142,79 @@ def _seating_waitlist_profile(
     }
 
 
+_WAITLIST_ORDINALS_EN = (
+    "",
+    "first",
+    "second",
+    "third",
+    "fourth",
+    "fifth",
+    "sixth",
+    "seventh",
+    "eighth",
+    "ninth",
+    "tenth",
+)
+
+
+def _waitlist_position_ordinal_en(n: int) -> str:
+    if 1 <= n <= 10:
+        return _WAITLIST_ORDINALS_EN[n]
+    return f"number {n}"
+
+
+def _waitlist_queue_speech_variables(
+    *,
+    queue_meta: dict[str, int] | None,
+    seating_status_resolved: str | None,
+) -> dict[str, str]:
+    """Telnyx templates: queue slot, ETA minutes (position × per-slot minutes), and a speakable hint."""
+    if not hanok_table_allocation_enabled():
+        return {
+            "guest_waitlist_position": "n/a",
+            "guest_waitlist_queue_size": "n/a",
+            "guest_waitlist_estimated_wait_minutes": "n/a",
+            "guest_waitlist_position_ordinal_en": "n/a",
+            "guest_waitlist_wait_time_hint": "Table allocation is disabled; waitlist position does not apply.",
+        }
+    status = (seating_status_resolved or "not_applicable").strip() or "not_applicable"
+    if status != "waitlist" or queue_meta is None:
+        return {
+            "guest_waitlist_position": "0",
+            "guest_waitlist_queue_size": "0",
+            "guest_waitlist_estimated_wait_minutes": "0",
+            "guest_waitlist_position_ordinal_en": "",
+            "guest_waitlist_wait_time_hint": (
+                "The guest is not on a table waitlist for this reservation (seating is allocated or not applicable)."
+            ),
+        }
+    pos = int(queue_meta["position"])
+    n = int(queue_meta["queue_size"])
+    est = int(queue_meta["estimated_wait_minutes"])
+    ordinal = _waitlist_position_ordinal_en(pos)
+    return {
+        "guest_waitlist_position": str(pos),
+        "guest_waitlist_queue_size": str(n),
+        "guest_waitlist_estimated_wait_minutes": str(est),
+        "guest_waitlist_position_ordinal_en": ordinal,
+        "guest_waitlist_wait_time_hint": (
+            f"You are {ordinal} in line for this seating time ({pos} of {n} on the waitlist). "
+            f"Estimated wait is about {est} minutes."
+        ),
+    }
+
+
+def _merge_waitlist_queue_into_profile(
+    profile: dict[str, Any],
+    *,
+    queue_meta: dict[str, int] | None,
+) -> None:
+    st = str(profile.get("reservation_seating_status") or "not_applicable")
+    profile.update(
+        _waitlist_queue_speech_variables(queue_meta=queue_meta, seating_status_resolved=st)
+    )
+
+
 def _demo_profile_for_caller(caller_number: str | None) -> dict[str, Any]:
     """Synthetic guests when DB has no row for this ANI."""
     normalized = (caller_number or "").strip()
@@ -166,6 +243,7 @@ def _demo_profile_for_caller(caller_number: str | None) -> dict[str, Any]:
                 seating_status_raw="not_applicable",
             )
         )
+        _merge_waitlist_queue_into_profile(profile, queue_meta=None)
         return profile
     # Demo: ANI ending 0009 — premium pre-order ($550+ food total) for dynamic-variables / concierge flow tests.
     if normalized.endswith("0009"):
@@ -196,6 +274,13 @@ def _demo_profile_for_caller(caller_number: str | None) -> dict[str, Any]:
                 seating_status_raw="waitlist",
             )
         )
+        per = hanok_waitlist_minutes_per_position()
+        demo_meta = (
+            {"position": 1, "queue_size": 1, "estimated_wait_minutes": per}
+            if hanok_table_allocation_enabled()
+            else None
+        )
+        _merge_waitlist_queue_into_profile(profile, queue_meta=demo_meta)
         return profile
     profile = {
         "guest_display_name": "Guest",
@@ -221,6 +306,7 @@ def _demo_profile_for_caller(caller_number: str | None) -> dict[str, Any]:
             seating_status_raw="not_applicable",
         )
     )
+    _merge_waitlist_queue_into_profile(profile, queue_meta=None)
     return profile
 
 
@@ -286,6 +372,12 @@ def _profile_from_db(caller: str | None) -> dict[str, Any] | None:
                         seating_status_raw=any_row.seating_status,
                     )
                 )
+                qm = (
+                    waitlist_queue_metadata(db, any_row)
+                    if out.get("reservation_seating_status") == "waitlist"
+                    else None
+                )
+                _merge_waitlist_queue_into_profile(out, queue_meta=qm)
                 return out
             return None
         first = row.guest_name.split()[0] if row.guest_name else "Guest"
@@ -321,6 +413,10 @@ def _profile_from_db(caller: str | None) -> dict[str, Any] | None:
                 seating_status_raw=row.seating_status,
             )
         )
+        qm = (
+            waitlist_queue_metadata(db, row) if out.get("reservation_seating_status") == "waitlist" else None
+        )
+        _merge_waitlist_queue_into_profile(out, queue_meta=qm)
         return out
     finally:
         db.close()

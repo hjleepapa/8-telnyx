@@ -225,10 +225,12 @@ async def update_reservation_details(
     guest_name: str | None = None,
     guest_phone: str | None = None,
     preferred_locale: str | None = None,
+    guest_priority: str | None = None,
 ) -> str:
     """
-    Change food pre-order, party size, time, notes, or guest contact.
+    Change food pre-order, party size, time, notes, guest contact, or waitlist tier.
     PATCHes /api/reservations/{id}/amend. Omit fields you do not change.
+    guest_priority: normal or vip (VIP affects waitlist ordering when table allocation is on).
     preorder_lines_json: JSON array; preorder_items: e.g. bulgogi:2,kimchi_jjigae:1 (JSON wins if both set).
     """
     body: dict[str, Any] = {}
@@ -256,11 +258,14 @@ async def update_reservation_details(
         from telnyx_restaurant.locale_prefs import normalize_preferred_locale
 
         body["preferred_locale"] = normalize_preferred_locale(preferred_locale)
+    if guest_priority is not None and str(guest_priority).strip():
+        gp = str(guest_priority).strip().lower()
+        body["guest_priority"] = "vip" if gp in ("vip", "v") else "normal"
     if not body:
         return json.dumps(
             {
                 "error": "no_fields",
-                "detail": "Provide at least one of party_size, starts_at, preorder_lines_json, preorder_items, special_requests, guest_name, guest_phone, preferred_locale",
+                "detail": "Provide at least one of party_size, starts_at, preorder_lines_json, preorder_items, special_requests, guest_name, guest_phone, preferred_locale, guest_priority",
             },
             indent=2,
         )

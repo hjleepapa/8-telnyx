@@ -48,12 +48,30 @@ This project is structured around the four required pillars below. Each maps dir
 |-------------|-------------------------------|
 | **Implement dynamic webhook variables** | **`POST /webhooks/telnyx/variables`** returns JSON keyed for instruction templates (map keys in Telnyx to these fields). |
 | **Personalize / fetch context** | Caller ANI is matched to **`guest_phone`** (normalized variants). Response includes guest name, **upcoming reservation** metadata, pre-order summary and **food totals**, **seating / waitlist** fields when table allocation is on, and **concierge** hints for high-value pre-orders. |
-| **Show how data improves the flow** | Example: if `guest_is_high_value_preorder` is **yes**, instructions can use `concierge_service_hint` and `cancel_retention_offer` on cancel intent; if `reservation_seating_status` is **waitlist**, the assistant should **not** say a table is confirmed until **allocated**. |
+| **Show how data improves the flow** | Example: if `{{guest_is_high_value_preorder}}` is **yes**, instructions can use `{{concierge_service_hint}}` and `{{cancel_retention_offer}}` on cancel intent; if `{{reservation_seating_status}}` is **waitlist**, the assistant should **not** say a table is confirmed until **allocated**. |
 | **Deployed API** | Variables resolve against **PostgreSQL**; set **`DB_URI`** on Render. Without a DB, behavior is limited (demo ANI suffixes still return synthetic profiles in code). |
 
 **Webhook URL:** `POST https://<your-render-host>/webhooks/telnyx/variables`
 
-**Useful keys (non-exhaustive):** `guest_display_name`, `next_reservation_code`, `next_reservation_at`, `reservation_preorder_summary`, `reservation_food_total_cents`, `guest_is_high_value_preorder`, `concierge_service_hint`, `cancel_retention_offer`, `reservation_seating_status`, `guest_waitlist_priority`, `waitlist_fairness_hint` (plus `preferred_locale` / `locale_hint` — see **Future improvements** below).
+**Useful keys (non-exhaustive):** map JSON fields to Telnyx instruction variables and reference them as `{{guest_display_name}}`, `{{next_reservation_code}}`, `{{next_reservation_at}}`, `{{reservation_preorder_summary}}`, `{{reservation_food_total_cents}}`, `{{guest_is_high_value_preorder}}`, `{{concierge_service_hint}}`, `{{cancel_retention_offer}}`, `{{reservation_seating_status}}`, `{{guest_waitlist_priority}}`, `{{waitlist_fairness_hint}}`, `{{guest_waitlist_position}}`, `{{guest_waitlist_queue_size}}`, `{{guest_waitlist_estimated_wait_minutes}}`, `{{guest_waitlist_position_ordinal_en}}`, `{{guest_waitlist_wait_time_hint}}` (plus `{{preferred_locale}}` / `{{locale_hint}}` — see **Future improvements** below). ETA uses **`HANOK_WAITLIST_MINUTES_PER_POSITION`** (default 15) × queue position.
+
+**Telnyx assistant — waitlist (paste into instructions; variables use `{{Name}}` to match your dynamic variable mapping):**
+
+```text
+Waitlist position and wait time (from dynamic variables)
+- After the webhook runs, use the waitlist fields only when they make sense:
+  - If {{reservation_seating_status}} is exactly "waitlist", and {{guest_waitlist_position}} is a positive integer string (not "0", not "n/a"):
+    • Tell the caller they are {{guest_waitlist_position_ordinal_en}} in line when that ordinal is non-empty; otherwise say they are "number" {{guest_waitlist_position}} in line.
+    • Mention that {{guest_waitlist_queue_size}} parties are on the waitlist for that seating window.
+    • Say the estimated wait is about {{guest_waitlist_estimated_wait_minutes}} minutes (not exact—tables depend on other guests finishing).
+    • You may use {{guest_waitlist_wait_time_hint}} verbatim or paraphrase it naturally.
+  - If {{reservation_seating_status}} is "allocated", say they have a table assigned; do not give a waitlist position or waitlist ETA from these fields.
+  - If {{guest_waitlist_position}} is "0" or {{reservation_seating_status}} is "not_applicable", do not describe a waitlist position or wait time from these variables.
+  - If {{guest_waitlist_position}} is "n/a", table waitlists are not in use on this deployment; do not invent queue numbers or ETAs.
+- If {{guest_waitlist_priority}} is "vip" or {{waitlist_fairness_hint}} explains VIP / large pre-order priority, use that when they ask why someone might be ahead in line.
+
+General: never contradict {{reservation_seating_status}}. If they are waitlisted, do not say a table is confirmed until status becomes allocated.
+```
 
 **Related:** **`POST /webhooks/telnyx/call-control`** handles **Call Control** for **outbound reminder** TTS (`client_state` + optional DB fallback).
 

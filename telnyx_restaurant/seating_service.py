@@ -17,6 +17,7 @@ from telnyx_restaurant.config import (
     hanok_table_allocation_enabled,
     hanok_table_inventory_template,
     hanok_vip_preorder_threshold_cents,
+    hanok_waitlist_minutes_per_position,
 )
 from telnyx_restaurant.models import Reservation, ReservationStatus, TableSlotInventory
 from telnyx_restaurant.reminders import schedule_reminder_on_table_allocated
@@ -253,6 +254,13 @@ def reseat_reservation_after_amend(
         else hanok_default_reservation_duration_minutes()
     )
     if old_t0 == new_t0 and d_old == d_new and old_party_size == row.party_size:
+        # Same slot/party: skip inventory churn, but waitlist order/capacity may have changed
+        # (e.g. preorder crossed VIP spend threshold, or explicit priority patch) — retry promotion.
+        if (
+            row.seating_status == "waitlist"
+            and row.status != ReservationStatus.cancelled.value
+        ):
+            promote_waitlist(db, row.starts_at, d_new)
         return
 
     if old_seating_status == "allocated" and old_tables_allocated_json:
@@ -336,6 +344,52 @@ def release_and_promote_after_cancel(db: Session, row: Reservation) -> None:
     row.tables_allocated_json = None
     row.seating_status = "not_applicable"
     promote_waitlist(db, row.starts_at, row.duration_minutes)
+
+
+def waitlist_queue_metadata(db: Session, row: Reservation) -> dict[str, int] | None:
+    """1-based position in the same promotion queue as ``promote_waitlist`` (slot + duration bucket), plus queue size.
+
+    Estimated wait minutes = position × ``HANOK_WAITLIST_MINUTES_PER_POSITION`` (default 15).
+    """
+    if not hanok_table_allocation_enabled():
+        return None
+    if (row.seating_status or "").strip() != "waitlist":
+        return None
+    if row.status == ReservationStatus.cancelled.value:
+        return None
+    # Same transaction may have updated seating_status without autoflush; visibility for SELECT.
+    db.flush()
+    step = hanok_slot_step_minutes()
+    t0 = floor_slot_start(_norm_dt(row.starts_at), step)
+    d = int(row.duration_minutes) if row.duration_minutes else hanok_default_reservation_duration_minutes()
+    threshold = hanok_vip_preorder_threshold_cents()
+    is_priority = or_(
+        Reservation.guest_priority == "vip",
+        Reservation.food_total_cents >= threshold,
+    )
+    prio = case((is_priority, 0), else_=1)
+    candidates = (
+        db.execute(
+            select(Reservation)
+            .where(
+                Reservation.seating_status == "waitlist",
+                Reservation.status != ReservationStatus.cancelled.value,
+                Reservation.duration_minutes == d,
+            )
+            .order_by(prio, Reservation.created_at)
+        )
+        .scalars()
+        .all()
+    )
+    ordered = [w for w in candidates if floor_slot_start(_norm_dt(w.starts_at), step) == t0]
+    ids = [w.id for w in ordered]
+    if row.id not in ids:
+        return None
+    pos = ids.index(row.id) + 1
+    n = len(ordered)
+    per = hanok_waitlist_minutes_per_position()
+    est = pos * per
+    return {"position": pos, "queue_size": n, "estimated_wait_minutes": est}
 
 
 def promote_waitlist(db: Session, starts_at: datetime, duration_minutes: int) -> int:

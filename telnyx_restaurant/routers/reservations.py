@@ -94,6 +94,7 @@ def _booking_mutable_snapshot(row: Reservation) -> tuple:
         row.preorder_discount_cents,
         row.food_total_cents,
         row.preferred_locale,
+        getattr(row, "guest_priority", None) or "normal",
     )
 
 
@@ -130,6 +131,8 @@ def _has_truthy_non_preorder_patch(body: ReservationUpdate) -> bool:
         return True
     if "preferred_locale" in fs and body.preferred_locale is not None:
         return True
+    if "guest_priority" in fs and body.guest_priority is not None:
+        return True
     return False
 
 
@@ -149,6 +152,7 @@ def _telnyx_null_placeholder_bundle(body: ReservationUpdate) -> bool:
             "special_requests",
             "preorder",
             "preferred_locale",
+            "guest_priority",
         )
     )
     present = bundle & fs
@@ -235,6 +239,10 @@ def _apply_reservation_update(db: Session, row: Reservation, body: ReservationUp
         row.special_requests = body.special_requests
     if "preferred_locale" in body.model_fields_set and body.preferred_locale is not None:
         row.preferred_locale = body.preferred_locale  # type: ignore[assignment]
+    priority_patch = False
+    if "guest_priority" in body.model_fields_set and body.guest_priority is not None:
+        row.guest_priority = body.guest_priority  # type: ignore[assignment]
+        priority_patch = True
     if "status" in body.model_fields_set and body.status is not None:
         row.status = body.status
     preorder_changed_food = False
@@ -261,7 +269,7 @@ def _apply_reservation_update(db: Session, row: Reservation, body: ReservationUp
             row.preorder_discount_cents = discount
             row.food_total_cents = total
             preorder_changed_food = True
-    if preorder_changed_food:
+    if preorder_changed_food or priority_patch:
         sync_guest_priority_from_spend(row)
     after = _booking_mutable_snapshot(row)
     if after == before:

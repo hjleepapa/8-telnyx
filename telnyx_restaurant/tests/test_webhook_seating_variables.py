@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from telnyx_restaurant.routers.webhook import _seating_waitlist_profile
+from telnyx_restaurant.routers.webhook import (
+    _seating_waitlist_profile,
+    _waitlist_queue_speech_variables,
+)
 
 
 def test_allocation_disabled_short_circuits(monkeypatch) -> None:
@@ -49,6 +52,26 @@ def test_waitlist_explicit_vip_flag(monkeypatch) -> None:
         seating_status_raw="waitlist",
     )
     assert v["guest_waitlist_priority"] == "vip"
+
+
+def test_waitlist_queue_speech_variables_eta(monkeypatch) -> None:
+    monkeypatch.setenv("HANOK_TABLE_ALLOCATION_ENABLED", "1")
+    v = _waitlist_queue_speech_variables(
+        queue_meta={"position": 2, "queue_size": 5, "estimated_wait_minutes": 30},
+        seating_status_resolved="waitlist",
+    )
+    assert v["guest_waitlist_position"] == "2"
+    assert v["guest_waitlist_queue_size"] == "5"
+    assert v["guest_waitlist_estimated_wait_minutes"] == "30"
+    assert v["guest_waitlist_position_ordinal_en"] == "second"
+    assert "30" in v["guest_waitlist_wait_time_hint"]
+
+
+def test_waitlist_queue_speech_not_on_list(monkeypatch) -> None:
+    monkeypatch.setenv("HANOK_TABLE_ALLOCATION_ENABLED", "1")
+    v = _waitlist_queue_speech_variables(queue_meta=None, seating_status_resolved="allocated")
+    assert v["guest_waitlist_position"] == "0"
+    assert v["guest_waitlist_estimated_wait_minutes"] == "0"
 
 
 def test_allocated_table_hint(monkeypatch) -> None:

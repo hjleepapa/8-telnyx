@@ -262,6 +262,15 @@ def hanok_vip_preorder_threshold_cents() -> int:
         return 50000
 
 
+def hanok_waitlist_minutes_per_position() -> int:
+    """For dynamic variables: estimated wait ≈ position × this many minutes (default 15)."""
+    try:
+        v = int((os.environ.get("HANOK_WAITLIST_MINUTES_PER_POSITION") or "15").strip())
+        return max(5, min(v, 120))
+    except ValueError:
+        return 15
+
+
 def hanok_reservation_lab_enabled() -> bool:
     """If true, serve GET /reservation-lab (browser helper for API scenarios). Use with ADMIN_DASHBOARD_TOKEN on public hosts."""
     return (os.environ.get("HANOK_RESERVATION_LAB") or "").strip().lower() in (

@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 
-from telnyx_restaurant.config import admin_dashboard_token, database_url
+from telnyx_restaurant.config import admin_dashboard_token, database_url, hanok_vip_preorder_threshold_cents
 from telnyx_restaurant.db import get_engine
 from telnyx_restaurant.models import Reservation, ReservationStatus
 from telnyx_restaurant.preorder_calc import preorder_summary_text
@@ -66,6 +66,8 @@ def _reservation_calendar_dict(r: Reservation) -> dict:
         "seating_status": getattr(r, "seating_status", None) or "not_applicable",
         "guest_priority": getattr(r, "guest_priority", None) or "normal",
         "tables_allocated": tabs if tabs else [],
+        "duration_minutes": int(getattr(r, "duration_minutes", None) or 120),
+        "created_at": r.created_at.isoformat() if getattr(r, "created_at", None) else "",
     }
 
 _TEMPLATES = Jinja2Templates(
@@ -122,6 +124,7 @@ def admin_reservations(
                 "cancelled_hidden": cancelled_n,
                 "calendar_display_tz": display_tz,
                 "calendar_tz_label": "Pacific (PT)",
+                "vip_preorder_threshold_cents": hanok_vip_preorder_threshold_cents(),
             },
         )
     finally:
