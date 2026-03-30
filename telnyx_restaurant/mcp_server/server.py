@@ -15,7 +15,11 @@ from telnyx_restaurant.config import hanok_mcp_api_base_url, hanok_mcp_streamabl
 _INSTRUCTIONS = (
     "Hanok Table reservation API tools. The Telnyx dynamic-variables webhook may provide "
     "locale_hint (en-US or ko-KR) from the guest's stored preferred_locale — follow that language "
-    "for the conversation when set. Always call get_reservation (lookup) before "
+    "for the conversation when set. When the webhook exposes caller_phone_normalized, pass it as "
+    "guest_phone on get_reservation (lookup). If caller_line_single_booking is yes, use guest_lookup_name_for_tools "
+    "as guest_name and do not ask for their name again; if caller_line_has_multiple_bookings is yes, ask only for "
+    "the name on the booking. "
+    "Always call get_reservation (lookup) before "
     "update_reservation_details or set_reservation_status so you have the numeric "
     "reservation id. Use list_menu_items before building preorder lines. "
     "When the guest orders food, pass preorder on create/update: either preorder_items "
@@ -140,7 +144,8 @@ async def list_menu_items() -> str:
 
 @mcp.tool()
 async def get_reservation(guest_name: str, guest_phone: str) -> str:
-    """Look up the active reservation for this caller. guest_name is required; use E.164 phone (+1…)."""
+    """Look up the active reservation for this caller. guest_name is required. guest_phone should be the webhook's
+    caller_phone_normalized (or E.164 from ANI)—do not ask the user to repeat their number when that variable is set."""
     params = {"guest_name": guest_name.strip(), "guest_phone": guest_phone.strip()}
     return await _http_json("GET", "/api/reservations/lookup", params=params)
 
@@ -323,7 +328,9 @@ def reservation_voice_flow() -> str:
     """Suggested turn flow for Telnyx voice booking."""
     return (
         "For phone booking: (1) Greet using webhook variables if available. "
-        "(2) For lookup/modify/cancel, call get_reservation with name + E.164 phone. "
+        "(2) For lookup/modify/cancel, call get_reservation with caller_phone_normalized as guest_phone; "
+        "if caller_line_single_booking is yes use guest_lookup_name_for_tools as guest_name without asking. "
+        "If multiple bookings on the line, ask name first. "
         "(3) Use list_menu_items before preorder. "
         "(4) create_reservation for new bookings (source_channel voice). "
         "(5) update_reservation_details for food/time/party/notes; set_reservation_status or cancel_reservation for lifecycle. "

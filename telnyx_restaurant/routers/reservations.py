@@ -858,6 +858,14 @@ def _candidate_pool_for_phone(
     return sorted(rows, key=lambda r: r.starts_at, reverse=True)
 
 
+def reservation_candidates_for_caller_line(db: Session, raw_phone: str) -> list[Reservation]:
+    """Same ordering as ``GET /api/reservations/lookup`` / ``lookup-by-phone`` (upcoming first, nearest first)."""
+    variants = phone_lookup_variants((raw_phone or "").strip())
+    if not variants:
+        return []
+    return _candidate_pool_for_phone(db, variants, datetime.now(UTC))
+
+
 def _is_menu_order_line_dict(d: dict[str, Any]) -> bool:
     """Skip nested preorder lines when scavenging reservation id / code from tool JSON."""
     return bool(d.get("menu_item_id") or d.get("menuItemId"))

@@ -22,6 +22,13 @@ With ``HANOK_TABLE_ALLOCATION_ENABLED``, reservations expose ``reservation_seati
 ``preferred_locale`` on the guest's reservation (``en`` / ``ko``) sets ``locale_hint`` (``en-US`` / ``ko-KR``)
 for Telnyx instructions, e.g. “Conduct the conversation in Korean when ``locale_hint`` is ``ko-KR``.”
 Online booking in Korean sends ``preferred_locale: ko``; the PSTN call does not read browser localStorage alone.
+
+**Caller ID (shared demo line):** responses may include ``caller_phone_telnyx``, ``caller_phone_normalized``,
+``caller_line_reservation_count``, ``caller_line_single_booking`` (yes/no), ``caller_line_has_multiple_bookings``
+(yes/no), ``guest_personalized_greeting_suggestion`` (when a single booking matches the line),
+``caller_line_booking_guest_names_hint``, and ``guest_lookup_identification_hint``. The assistant should greet
+by name **without re-asking** when ``caller_line_single_booking`` is yes, and ask for name only when multiple
+upcoming bookings share the number.
 """
 
 from __future__ import annotations
@@ -46,12 +53,13 @@ from telnyx_restaurant.config import (
 )
 from telnyx_restaurant.db import get_engine
 from telnyx_restaurant.models import Reservation, ReservationStatus
-from telnyx_restaurant.phone_normalize import phone_lookup_variants
+from telnyx_restaurant.phone_normalize import phone_lookup_variants, to_e164_us
 from telnyx_restaurant.preorder_calc import preorder_summary_text
 from telnyx_restaurant.reminders import build_reminder_speak_text, telnyx_hangup, telnyx_speak
 from telnyx_restaurant.seating_service import waitlist_queue_metadata
 from telnyx_restaurant.locale_prefs import assistant_locale_hint
 from telnyx_restaurant.webhook_payload import extract_caller_number
+from telnyx_restaurant.routers.reservations import reservation_candidates_for_caller_line
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -702,6 +710,92 @@ async def telnyx_call_control(request: Request) -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _enrich_caller_identification_for_profile(profile: dict[str, Any], caller: str | None) -> None:
+    """Expose normalized ANI and multi-booking hints so the assistant binds tools without re-asking phone."""
+    raw = (caller or "").strip()
+    profile["caller_phone_telnyx"] = raw
+    profile["caller_phone_normalized"] = to_e164_us(raw) if raw else ""
+    profile["caller_line_reservation_count"] = "0"
+    profile["caller_line_single_booking"] = "no"
+    profile["caller_line_has_multiple_bookings"] = "no"
+    profile["caller_line_booking_guest_names_hint"] = ""
+    profile["guest_personalized_greeting_suggestion"] = ""
+    profile["guest_lookup_name_for_tools"] = ""
+    profile["guest_lookup_identification_hint"] = (
+        "Caller phone was not in the webhook payload (bind Telnyx `telnyx_end_user_target` / "
+        "`caller_number` to tools). Ask for both name and phone for GET /api/reservations/lookup."
+    )
+
+    if not raw:
+        return
+
+    if not database_url():
+        profile["guest_lookup_identification_hint"] = (
+            f"Use caller_phone_normalized ({profile['caller_phone_normalized'] or raw}) as guest_phone on lookup tools. "
+            "Do not ask the caller to repeat their number unless this value is empty. "
+            "This deployment has no database URL for listing other bookings on the same line."
+        )
+        return
+
+    get_engine()
+    from telnyx_restaurant.db import SessionLocal
+
+    if SessionLocal is None:
+        return
+
+    db = SessionLocal()
+    try:
+        pool = reservation_candidates_for_caller_line(db, raw)
+    finally:
+        db.close()
+
+    if not pool:
+        profile["guest_lookup_identification_hint"] = (
+            "Phone is known from the network (caller_phone_normalized) but no reservation row matches yet. "
+            "Use this phone on create/lookup; only ask the guest for their name once you need to disambiguate."
+        )
+        return
+
+    profile["caller_line_reservation_count"] = str(len(pool))
+    multi = len(pool) > 1
+    profile["caller_line_has_multiple_bookings"] = "yes" if multi else "no"
+    profile["caller_line_single_booking"] = "no" if multi else "yes"
+    parts: list[str] = []
+    for r in pool[:12]:
+        g = (r.guest_name or "").strip() or "Guest"
+        parts.append(f"{g} ({r.confirmation_code})")
+    profile["caller_line_booking_guest_names_hint"] = "; ".join(parts)
+
+    if multi:
+        profile["guest_personalized_greeting_suggestion"] = ""
+        profile["guest_lookup_name_for_tools"] = ""
+        profile["guest_lookup_identification_hint"] = (
+            "The caller's phone is already known from the carrier (caller_phone_normalized / caller_phone_telnyx). "
+            "Do not ask them to repeat their phone number for lookup or amendments. "
+            "On GET /api/reservations/lookup or GET /api/reservations/lookup-by-phone, set query parameter "
+            "`phone` or `guest_phone` to caller_phone_normalized. Ask only for the first or full guest name "
+            "on the booking (multiple reservations share this line). Names on file include: "
+            f"{profile['caller_line_booking_guest_names_hint']}. "
+            "After they give a name, pass it as `guest_name` on the same lookup call."
+        )
+    else:
+        disp = str(profile.get("guest_display_name") or "").strip()
+        if not disp:
+            disp = (pool[0].guest_name or "").split()[0] if pool[0].guest_name else "Guest"
+        profile["guest_personalized_greeting_suggestion"] = (
+            f"Hi {disp}, thanks for calling Hanok Table. How can I help with your reservation today?"
+        )
+        profile["guest_lookup_name_for_tools"] = (pool[0].guest_name or "").strip() or disp
+        profile["guest_lookup_identification_hint"] = (
+            "Exactly one reservation matches this phone number (caller_line_single_booking is yes). "
+            "Open the call with guest_personalized_greeting_suggestion or the same idea using guest_display_name—"
+            "do NOT ask the caller to state their name again unless they want to correct you or you need spelling "
+            "for a rare tool edge case. "
+            "For get_reservation/lookup, pass caller_phone_normalized as guest_phone and guest_lookup_name_for_tools "
+            "as guest_name (full name on file) without re-prompting."
+        )
+
+
 @router.post("/variables")
 async def dynamic_webhook_variables(
     payload: dict[str, Any] | None = Body(default=None),
@@ -724,4 +818,5 @@ async def dynamic_webhook_variables(
             "Demo: after a reservation, Hanok schedules an outbound reminder (HANOK_REMINDER_DELAY_SECONDS). "
             "Use the Call Control webhook POST …/webhooks/telnyx/call-control so answered calls speak the reminder."
         )
+    _enrich_caller_identification_for_profile(profile, caller)
     return profile
