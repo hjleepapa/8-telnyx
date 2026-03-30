@@ -15,9 +15,37 @@
 
 ## Architecture
 
-System overview: **caller → Telnyx AI Assistant → webhooks + mounted MCP → FastAPI on Render → PostgreSQL**, with optional **admin** UI on the same origin. The diagram matches this repo: **`POST /webhooks/telnyx/variables`** and **`POST /webhooks/telnyx/call-control`**, **`/mcp/`** as an in-process tool surface over **`/api/reservations`**, and preorder **inline** on **`reservations`** (not a separate preorder table).
+**Compared to the first README diagram:** the version you iterated on (correct **`/webhooks/telnyx/...`** paths, **MCP co-located** with FastAPI, **preorder inline** on `reservations`) is **more accurate** for this repository. The figure below is that architecture redrawn as **Mermaid** so it stays sharp in GitHub and you can edit it in markdown instead of maintaining a raster screenshot.
 
-![Architecture diagram: Telnyx voice → webhooks → FastAPI (REST + MCP mount + seating_service) → PostgreSQL](docs/architecture-diagram.png)
+```mermaid
+flowchart TB
+  U[User / Caller] --> TA[Telnyx AI Assistant — STT, LLM, MCP tool calling]
+
+  subgraph APP["Hanok Table on Render — single FastAPI / uvicorn process"]
+    direction TB
+    WH1["POST /webhooks/telnyx/variables"]
+    WH2["POST /webhooks/telnyx/call-control"]
+    MCP["MCP /mcp/ — tools call REST via httpx, not a separate service"]
+    REST["/api/reservations — create, amend, cancel, lookup; menu + preorder on row"]
+    SEAT["seating_service.py — tables, waitlist, promotion, VIP"]
+    DB[("PostgreSQL")]
+    ADM["Optional GET /admin/reservations"]
+
+    WH1 --> REST
+    WH2 --> REST
+    MCP --> REST
+    REST --> SEAT
+    REST --> DB
+    SEAT --> DB
+    REST -.-> ADM
+  end
+
+  TA --> WH1
+  TA --> WH2
+  TA --> MCP
+```
+
+System overview: **caller → Telnyx AI Assistant → webhooks + mounted MCP → FastAPI → PostgreSQL**, with optional **admin** on the same origin. Preorder data lives on **`reservations`** (`preorder_json` and pricing fields), not a separate preorder table.
 
 | Layer | Role |
 |-------|------|
