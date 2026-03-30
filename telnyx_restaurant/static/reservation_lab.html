@@ -189,6 +189,27 @@
     </section>
 
     <section>
+      <h2>Cancel / delete reservation</h2>
+      <p class="hint">
+        <strong>Cancel</strong> sets <code>status</code> to <code>cancelled</code> (row stays in DB; triggers waitlist
+        promotion if a table was held). <strong>Delete</strong> removes the row permanently — only when
+        <code>HANOK_RESERVATION_LAB=1</code> (same as this page); otherwise <code>DELETE</code> returns 404.
+      </p>
+      <label for="cd-id">Reservation row id (optional)</label>
+      <input type="text" id="cd-id" placeholder="e.g. 12 — or use session checkbox below" />
+      <label style="margin-top: 0.5rem">
+        <input type="checkbox" id="cd-use-session-id" checked />
+        Use <code>id</code> from session (after Create or Lookup)
+      </label>
+      <div style="display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.65rem">
+        <button type="button" class="primary" id="btn-cancel-res">PATCH …/status (cancel)</button>
+        <button type="button" class="primary" id="btn-delete-res" style="background: #6b2d2d">
+          DELETE /api/reservations/{id}
+        </button>
+      </div>
+    </section>
+
+    <section>
       <h2>Lookup</h2>
       <div class="row2">
         <div>
@@ -356,6 +377,51 @@
           };
           var r = await doFetch("POST", "/api/reservations", payload);
           if (r.ok && r.data && typeof r.data === "object") storeFromReservation(r.data);
+        });
+
+        function resolveCdId() {
+          var raw = document.getElementById("cd-id").value.trim();
+          if (raw && /^\d+$/.test(raw)) return raw;
+          if (document.getElementById("cd-use-session-id").checked) {
+            var sid = sessionStorage.getItem(sessionKeyId()) || "";
+            return /^\d+$/.test(sid) ? sid : "";
+          }
+          return "";
+        }
+
+        document.getElementById("btn-cancel-res").addEventListener("click", async function () {
+          var id = resolveCdId();
+          if (!id) {
+            logLine("Cancel: need numeric reservation id (field or session from create/lookup).");
+            return;
+          }
+          var r = await doFetch("PATCH", "/api/reservations/" + encodeURIComponent(id) + "/status", {
+            status: "cancelled",
+          });
+          if (r.ok) logLine("Reservation cancelled (row still in DB with status cancelled).");
+        });
+
+        document.getElementById("btn-delete-res").addEventListener("click", async function () {
+          var id = resolveCdId();
+          if (!id) {
+            logLine("Delete: need numeric reservation id (field or session).");
+            return;
+          }
+          if (!confirm("Permanently DELETE reservation id " + id + "? This cannot be undone.")) return;
+          var url = base + "/api/reservations/" + encodeURIComponent(id);
+          logLine("DELETE " + "/api/reservations/" + id);
+          var res = await fetch(url, { method: "DELETE" });
+          var text = await res.text();
+          logLine("← " + res.status + " " + res.statusText + (text ? "\n" + text : ""));
+          if (res.status === 204) {
+            var stored = sessionStorage.getItem(sessionKeyId());
+            if (stored === id) {
+              sessionStorage.removeItem(sessionKeyCode());
+              sessionStorage.removeItem(sessionKeyId());
+              loadSessionTags();
+              logLine("Cleared session code/id (deleted row).");
+            }
+          }
         });
 
         document.getElementById("btn-lookup").addEventListener("click", async function () {

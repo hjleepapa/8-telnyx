@@ -19,6 +19,7 @@ from starlette.requests import ClientDisconnect, Request
 
 from telnyx_restaurant.config import (
     hanok_default_reservation_duration_minutes,
+    hanok_reservation_lab_enabled,
     hanok_reservation_verbose_logging,
     hanok_reservation_wall_clock_timezone,
     hanok_slot_step_minutes,
@@ -37,6 +38,7 @@ from telnyx_restaurant.seating_service import (
     book_on_create,
     effective_priority_for_row,
     iter_day_slot_starts,
+    release_and_promote_after_cancel,
     reseat_reservation_after_amend,
     snapshot_effective_availability,
     sync_guest_priority_from_spend,
@@ -1746,6 +1748,28 @@ async def amend_reservation_id_amend(
         query_reservation_id=None,
         query_amend_row_id=None,
     )
+
+
+@router.delete("/{reservation_id}", status_code=204)
+def delete_reservation_lab(
+    reservation_id: str,
+    db: Session = Depends(get_db),
+) -> Response:
+    """Permanently remove a row (lab / demos only). Frees table inventory when allocated.
+
+    Disabled unless ``HANOK_RESERVATION_LAB=1`` so production guests never hit this by mistake.
+    """
+    if not hanok_reservation_lab_enabled():
+        raise HTTPException(status_code=404, detail="Not found")
+    reservation_id_int = _parse_reservation_id_path(reservation_id)
+    row = db.get(Reservation, reservation_id_int)
+    if not row:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+    if hanok_table_allocation_enabled():
+        release_and_promote_after_cancel(db, row)
+    db.delete(row)
+    db.commit()
+    return Response(status_code=204)
 
 
 @router.get("/{reservation_id}", response_model=ReservationRead)

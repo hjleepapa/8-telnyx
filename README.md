@@ -13,6 +13,27 @@
 
 ---
 
+## Architecture
+
+System overview: **caller → Telnyx AI Assistant → webhooks + mounted MCP → FastAPI on Render → PostgreSQL**, with optional **admin** UI on the same origin. The diagram matches this repo: **`POST /webhooks/telnyx/variables`** and **`POST /webhooks/telnyx/call-control`**, **`/mcp/`** as an in-process tool surface over **`/api/reservations`**, and preorder **inline** on **`reservations`** (not a separate preorder table).
+
+![Architecture diagram: Telnyx voice → webhooks → FastAPI (REST + MCP mount + seating_service) → PostgreSQL](docs/architecture-diagram.png)
+
+| Layer | Role |
+|-------|------|
+| **User (caller)** | Voice session into **Telnyx**; STT and LLM drive dialogue and **tool calling**. |
+| **Telnyx AI Assistant** | Mission Control assistant: uses **MCP** for structured reservation/menu tools and merges **dynamic variables** into instructions each turn. |
+| **Dynamic variables** | **`POST /webhooks/telnyx/variables`** — personalization and reservation context (normalized **caller ID**, upcoming booking, pre-order totals, **waitlist / seating** hints, concierge fields). |
+| **MCP server (HTTP)** | **`/mcp/`** (when `HANOK_MCP_HTTP_MOUNT=1`) — tools are a thin async layer over **`/api/reservations/…`** (create, lookup, amend, cancel, menu, seating availability). See [`telnyx_restaurant/mcp_server/README.md`](telnyx_restaurant/mcp_server/README.md). |
+| **Call Control** | **`POST /webhooks/telnyx/call-control`** — outbound **reminder** and TTS flows (`client_state` + optional DB lookups). |
+| **FastAPI backend** | **`/api/reservations`** — REST for create / lookup / amend / **cancel**, menu + pre-order payloads. **[`seating_service.py`](telnyx_restaurant/seating_service.py)** — **table allocation**, **waitlist** caps (weighted by tables needed), **VIP / spend-based** queue ordering, and **promotion** when inventory opens. |
+| **PostgreSQL** | **`reservations`**, **pre-order** fields, **`table_slot_inventory`** when allocation is enabled (capacity and waitlist-related behavior). |
+| **Admin dashboard (optional)** | **`GET /admin/reservations`** — server-rendered list/detail when `DB_URI` and optional `ADMIN_DASHBOARD_TOKEN` are set. |
+
+Other same-origin pages (not shown on the diagram) include **online booking**, **`/reservation-lab`**, and OpenAPI **`/docs`**.
+
+---
+
 ## Telnyx challenge — core requirements
 
 This project is structured around the four required pillars below. Each maps directly to what you configure in **Telnyx Mission Control** and what runs on **Render**.
@@ -249,7 +270,7 @@ Full route table and PATCH semantics are in code comments and earlier sections; 
 | `/reserve-online.html` | Web booking + pre-order. |
 | `/reservation/status` | Guest lookup by confirmation code. |
 | `/admin/reservations` | Staff calendar (**`?token=`** if `ADMIN_DASHBOARD_TOKEN`). |
-| `/reservation-lab` | Optional API lab (`HANOK_RESERVATION_LAB=1`). |
+| `/reservation-lab` | Optional API lab (`HANOK_RESERVATION_LAB=1`): create, lookup, amend, cancel (PATCH status), and hard delete (`DELETE /api/reservations/{id}` — lab-only, returns 404 when the flag is off). |
 | `/health` | Liveness. |
 
 ---
