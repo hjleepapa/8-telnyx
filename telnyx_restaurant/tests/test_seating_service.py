@@ -128,6 +128,45 @@ def test_waitlist_rejects_when_queue_at_cap(seating_env: None, db_session: Sessi
         book_on_create(db_session, sixth, waitlist_ok=True)
 
 
+def test_waitlist_queue_metadata_infeasible_party_needs_two_tables(
+    monkeypatch: pytest.MonkeyPatch, db_session: Session
+) -> None:
+    """One-table waitlister ahead can leave too few 4-tops for a party of 8 (needs two tables)."""
+    monkeypatch.setenv("HANOK_TABLE_ALLOCATION_ENABLED", "true")
+    monkeypatch.setenv("HANOK_TABLE_INVENTORY_JSON", '{"4":4}')
+    monkeypatch.setenv("HANOK_TABLE_SLOT_MINUTES", "60")
+    monkeypatch.setenv("HANOK_RESERVATION_DURATION_MINUTES", "60")
+    monkeypatch.setenv("HANOK_MAX_TABLES_PER_PARTY", "2")
+
+    start = datetime(2026, 8, 10, 18, 0, tzinfo=UTC)
+    for i in range(4):
+        a = _row(code=f"HNK-4A{i}", party=4, starts=start, phone=f"+155500040{i}")
+        db_session.add(a)
+        db_session.flush()
+        book_on_create(db_session, a, waitlist_ok=True)
+        assert a.seating_status == "allocated"
+
+    w4 = _row(code="HNK-W4", party=4, starts=start, phone="+1555000410")
+    db_session.add(w4)
+    db_session.flush()
+    book_on_create(db_session, w4, waitlist_ok=True)
+    assert w4.seating_status == "waitlist"
+
+    w8 = _row(code="HNK-W8", party=8, starts=start, phone="+1555000411")
+    db_session.add(w8)
+    db_session.flush()
+    book_on_create(db_session, w8, waitlist_ok=True)
+    assert w8.seating_status == "waitlist"
+
+    meta = waitlist_queue_metadata(db_session, w8)
+    assert meta is not None
+    assert meta["position"] == 2
+    assert meta["tables_required"] == 2
+    assert meta["feasible_after_ahead"] is False
+    # Ahead party also has no free table in the current snapshot (inventory fully booked).
+    assert meta["ahead_chain_ok"] is False
+
+
 def test_promote_vip_before_normal(seating_env: None, db_session: Session) -> None:
     start = datetime(2026, 7, 4, 20, 0, tzinfo=UTC)
     hold = _row(code="HNK-HOLD", party=6, starts=start)

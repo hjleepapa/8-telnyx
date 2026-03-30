@@ -65,6 +65,27 @@ def test_waitlist_queue_speech_variables_eta(monkeypatch) -> None:
     assert v["guest_waitlist_estimated_wait_minutes"] == "30"
     assert v["guest_waitlist_position_ordinal_en"] == "second"
     assert "30" in v["guest_waitlist_wait_time_hint"]
+    assert v["guest_waitlist_can_seat_after_ahead"] == "yes"
+    assert v["guest_waitlist_tables_required"] == "0"
+
+
+def test_waitlist_queue_speech_infeasible_multi_table(monkeypatch) -> None:
+    monkeypatch.setenv("HANOK_TABLE_ALLOCATION_ENABLED", "1")
+    v = _waitlist_queue_speech_variables(
+        queue_meta={
+            "position": 4,
+            "queue_size": 5,
+            "estimated_wait_minutes": 60,
+            "tables_required": 2,
+            "feasible_after_ahead": False,
+            "ahead_chain_ok": True,
+        },
+        seating_status_resolved="waitlist",
+    )
+    assert v["guest_waitlist_can_seat_after_ahead"] == "no"
+    assert v["guest_waitlist_tables_required"] == "2"
+    assert "two hours" in v["guest_waitlist_seating_capacity_hint"].lower()
+    assert "two hours" in v["guest_waitlist_wait_time_hint"].lower()
 
 
 def test_waitlist_queue_speech_not_on_list(monkeypatch) -> None:

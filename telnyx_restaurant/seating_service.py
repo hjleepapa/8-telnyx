@@ -254,6 +254,122 @@ def _waitlist_ordered_for_slot(
     return [w for w in candidates if floor_slot_start(_norm_dt(w.starts_at), step) == t0]
 
 
+def _clone_slot_maps(maps: list[dict[int, int]]) -> list[dict[int, int]]:
+    return [{int(k): int(v) for k, v in m.items()} for m in maps]
+
+
+def _subtract_multiset_from_slot_maps(maps: list[dict[int, int]], allocation: list[int]) -> bool:
+    """Consume the same multiset of tables from every slot map (stay spans multiple buckets). Returns False if underflow."""
+    need = Counter(allocation)
+    for m in maps:
+        for sz, n in need.items():
+            if m.get(int(sz), 0) < n:
+                return False
+    for m in maps:
+        for sz, n in need.items():
+            sz_i = int(sz)
+            m[sz_i] = m.get(sz_i, 0) - n
+    return True
+
+
+def _readonly_slot_maps_for_stay(
+    db: Session,
+    starts_at: datetime,
+    duration_minutes: int,
+) -> list[dict[int, int]]:
+    """Best-effort inventory maps for allocation simulation (no locks, no inventory creation)."""
+    step = hanok_slot_step_minutes()
+    slots = iter_occupied_slots(starts_at, duration_minutes, step)
+    tmpl = hanok_table_inventory_template()
+    slots_n = [_inv_slot(s) for s in slots]
+    rows = (
+        db.execute(
+            select(TableSlotInventory).where(TableSlotInventory.slot_start.in_(slots_n))
+        )
+        .scalars()
+        .all()
+    )
+    by_key: dict[datetime, dict[int, int]] = {s: {} for s in slots_n}
+    for r in rows:
+        rk = _inv_slot(r.slot_start)
+        if rk in by_key:
+            by_key[rk][int(r.table_size)] = int(r.available_count)
+    maps: list[dict[int, int]] = []
+    for s in slots_n:
+        if tmpl:
+            maps.append({sz: int(by_key[s].get(sz, 0)) for sz in sorted(tmpl.keys())})
+        else:
+            maps.append({int(k): int(v) for k, v in by_key[s].items()})
+    return maps
+
+
+def _pristine_slot_maps_for_stay(starts_at: datetime, duration_minutes: int) -> list[dict[int, int]]:
+    """Template fullness per slot (simulates max capacity for this stay), no DB reads."""
+    step = hanok_slot_step_minutes()
+    tmpl = hanok_table_inventory_template()
+    slots = iter_occupied_slots(starts_at, duration_minutes, step)
+    if not tmpl:
+        return []
+    one = {sz: int(tmpl[sz]) for sz in sorted(tmpl.keys())}
+    return [dict(one) for _ in slots]
+
+
+def waitlist_table_feasibility_for_row(
+    db: Session,
+    row: Reservation,
+    ordered: list[Reservation],
+) -> dict[str, bool | int]:
+    """Simulate seating parties ahead in queue order, then check if this party still fits.
+
+    Multi-table parties (e.g. 8 guests on 4-tops → two tables) can be infeasible at their position even
+    when fewer *parties* are ahead, if remaining 4-top counts cannot satisfy the multiset.
+    """
+    max_t = hanok_max_tables_per_party()
+    d = int(row.duration_minutes) if row.duration_minutes else hanok_default_reservation_duration_minutes()
+    maps0 = _readonly_slot_maps_for_stay(db, row.starts_at, d)
+    pristine = _pristine_slot_maps_for_stay(row.starts_at, d)
+    if pristine:
+        eff_full = effective_counts_across_slots(pristine)
+        alloc_theoretical = allocate_tables(int(row.party_size), eff_full, max_tables=max_t)
+        tables_required = len(alloc_theoretical) if alloc_theoretical else 0
+    else:
+        tables_required = 0
+
+    if not maps0:
+        return {
+            "tables_required": tables_required,
+            "feasible_after_ahead": True,
+            "ahead_chain_ok": True,
+        }
+
+    idx = next((i for i, w in enumerate(ordered) if w.id == row.id), -1)
+    if idx < 0:
+        return {
+            "tables_required": tables_required,
+            "feasible_after_ahead": False,
+            "ahead_chain_ok": False,
+        }
+
+    sim = _clone_slot_maps(maps0)
+    ahead_chain_ok = True
+    for w in ordered[:idx]:
+        eff = effective_counts_across_slots(sim)
+        aw = allocate_tables(int(w.party_size), eff, max_tables=max_t)
+        if not aw or not _subtract_multiset_from_slot_maps(sim, aw):
+            ahead_chain_ok = False
+            break
+
+    eff_me = effective_counts_across_slots(sim)
+    alloc_me = allocate_tables(int(row.party_size), eff_me, max_tables=max_t)
+    feasible_after_ahead = alloc_me is not None
+
+    return {
+        "tables_required": tables_required,
+        "feasible_after_ahead": feasible_after_ahead,
+        "ahead_chain_ok": ahead_chain_ok,
+    }
+
+
 def book_on_create(db: Session, row: Reservation, *, waitlist_ok: bool) -> BookOnCreateResult:
     if not hanok_table_allocation_enabled():
         row.seating_status = "not_applicable"
@@ -448,7 +564,15 @@ def waitlist_queue_metadata(db: Session, row: Reservation) -> dict[str, int] | N
     n = len(ordered)
     per = hanok_waitlist_minutes_per_position()
     est = pos * per
-    return {"position": pos, "queue_size": n, "estimated_wait_minutes": est}
+    feas = waitlist_table_feasibility_for_row(db, row, ordered)
+    return {
+        "position": pos,
+        "queue_size": n,
+        "estimated_wait_minutes": est,
+        "tables_required": int(feas["tables_required"]),
+        "feasible_after_ahead": bool(feas["feasible_after_ahead"]),
+        "ahead_chain_ok": bool(feas["ahead_chain_ok"]),
+    }
 
 
 def promote_waitlist(db: Session, starts_at: datetime, duration_minutes: int) -> int:

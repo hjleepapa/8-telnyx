@@ -175,7 +175,7 @@ def _waitlist_position_ordinal_en(n: int) -> str:
 
 def _waitlist_queue_speech_variables(
     *,
-    queue_meta: dict[str, int] | None,
+    queue_meta: dict[str, Any] | None,
     seating_status_resolved: str | None,
 ) -> dict[str, str]:
     """Telnyx templates: queue slot, ETA minutes (position × per-slot minutes), and a speakable hint."""
@@ -185,39 +185,84 @@ def _waitlist_queue_speech_variables(
             "guest_waitlist_queue_size": "n/a",
             "guest_waitlist_estimated_wait_minutes": "n/a",
             "guest_waitlist_position_ordinal_en": "n/a",
+            "guest_waitlist_tables_required": "n/a",
+            "guest_waitlist_can_seat_after_ahead": "n/a",
+            "guest_waitlist_ahead_queue_feasible": "n/a",
+            "guest_waitlist_seating_capacity_hint": "Table allocation is disabled; waitlist position does not apply.",
             "guest_waitlist_wait_time_hint": "Table allocation is disabled; waitlist position does not apply.",
         }
     status = (seating_status_resolved or "not_applicable").strip() or "not_applicable"
     if status != "waitlist" or queue_meta is None:
-        return {
+        empty = {
             "guest_waitlist_position": "0",
             "guest_waitlist_queue_size": "0",
             "guest_waitlist_estimated_wait_minutes": "0",
             "guest_waitlist_position_ordinal_en": "",
+            "guest_waitlist_tables_required": "0",
+            "guest_waitlist_can_seat_after_ahead": "yes",
+            "guest_waitlist_ahead_queue_feasible": "yes",
+            "guest_waitlist_seating_capacity_hint": (
+                "The guest is not on a table waitlist for this reservation (seating is allocated or not applicable)."
+            ),
             "guest_waitlist_wait_time_hint": (
                 "The guest is not on a table waitlist for this reservation (seating is allocated or not applicable)."
             ),
         }
+        return empty
     pos = int(queue_meta["position"])
     n = int(queue_meta["queue_size"])
     est = int(queue_meta["estimated_wait_minutes"])
     ordinal = _waitlist_position_ordinal_en(pos)
+    tables_req = int(queue_meta.get("tables_required", 0))
+    feas = bool(queue_meta.get("feasible_after_ahead", True))
+    ahead_ok = bool(queue_meta.get("ahead_chain_ok", True))
+
+    if not feas:
+        cap_tail = (
+            "Given table inventory and the parties ahead of you in line, we may not have enough tables together "
+            "at this seating time for your party size—especially if your group needs more than one table. "
+            "Do not promise a table at this time. Suggest checking availability about two hours earlier or "
+            "about two hours later, or another time the guest prefers."
+        )
+        seating_cap = cap_tail
+    elif tables_req >= 2:
+        cap_tail = (
+            f"Your party is planned across about {tables_req} tables for seating purposes. "
+            "Tables are still waitlist-only until one is assigned."
+        )
+        seating_cap = cap_tail
+    else:
+        cap_tail = ""
+        seating_cap = (
+            "Standard waitlist: position and ETA apply; this party should fit after earlier waitlist parties "
+            "given current table counts."
+        )
+
+    wait_parts = [
+        f"You are {ordinal} in line for this seating time ({pos} of {n} on the waitlist).",
+        f"Estimated wait is about {est} minutes.",
+    ]
+    if cap_tail:
+        wait_parts.append(cap_tail)
+    wait_hint = " ".join(wait_parts)
+
     return {
         "guest_waitlist_position": str(pos),
         "guest_waitlist_queue_size": str(n),
         "guest_waitlist_estimated_wait_minutes": str(est),
         "guest_waitlist_position_ordinal_en": ordinal,
-        "guest_waitlist_wait_time_hint": (
-            f"You are {ordinal} in line for this seating time ({pos} of {n} on the waitlist). "
-            f"Estimated wait is about {est} minutes."
-        ),
+        "guest_waitlist_tables_required": str(tables_req),
+        "guest_waitlist_can_seat_after_ahead": "yes" if feas else "no",
+        "guest_waitlist_ahead_queue_feasible": "yes" if ahead_ok else "no",
+        "guest_waitlist_seating_capacity_hint": seating_cap,
+        "guest_waitlist_wait_time_hint": wait_hint,
     }
 
 
 def _merge_waitlist_queue_into_profile(
     profile: dict[str, Any],
     *,
-    queue_meta: dict[str, int] | None,
+    queue_meta: dict[str, Any] | None,
 ) -> None:
     st = str(profile.get("reservation_seating_status") or "not_applicable")
     profile.update(
@@ -286,7 +331,14 @@ def _demo_profile_for_caller(caller_number: str | None) -> dict[str, Any]:
         )
         per = hanok_waitlist_minutes_per_position()
         demo_meta = (
-            {"position": 1, "queue_size": 1, "estimated_wait_minutes": per}
+            {
+                "position": 1,
+                "queue_size": 1,
+                "estimated_wait_minutes": per,
+                "tables_required": 1,
+                "feasible_after_ahead": True,
+                "ahead_chain_ok": True,
+            }
             if hanok_table_allocation_enabled()
             else None
         )
