@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from telnyx_restaurant.config import (
     hanok_default_reservation_duration_minutes,
     hanok_max_tables_per_party,
+    hanok_reservation_verbose_logging,
     hanok_slot_step_minutes,
     hanok_table_allocation_enabled,
     hanok_table_inventory_template,
@@ -27,6 +28,7 @@ from telnyx_restaurant.table_allocation import (
     floor_slot_start,
     iter_occupied_slots,
     multiset_subtract,
+    summarize_inventory_for_log,
 )
 
 logger = logging.getLogger(__name__)
@@ -111,6 +113,8 @@ def ensure_inventory_for_slots(
                         available_count=int(count),
                     )
                 )
+            elif existing.available_count < 0:
+                existing.available_count = 0
     db.flush()
 
 
@@ -171,9 +175,21 @@ def try_allocate_and_consume(
 ) -> list[int] | None:
     step = hanok_slot_step_minutes()
     slots = iter_occupied_slots(starts_at, duration_minutes, step)
-    ensure_inventory_for_slots(db, slots)
-    rows = lock_inventory_rows(db, slots)
-    maps = _rows_to_maps(slots, rows)
+    tmpl = hanok_table_inventory_template()
+    need_rows = len(slots) * len(tmpl) if tmpl else 0
+    maps: list[dict[int, int]] = []
+    rows: list[TableSlotInventory] = []
+    for _attempt in range(2):
+        ensure_inventory_for_slots(db, slots, tmpl)
+        db.flush()
+        rows = lock_inventory_rows(db, slots)
+        maps = _rows_to_maps(slots, rows)
+        incomplete = bool(tmpl) and (
+            any(len(m) == 0 for m in maps) or len(rows) < need_rows
+        )
+        if not incomplete:
+            break
+
     eff = effective_counts_across_slots(maps)
     alloc = allocate_tables(
         party_size,
@@ -181,6 +197,14 @@ def try_allocate_and_consume(
         max_tables=hanok_max_tables_per_party(),
     )
     if not alloc or not multiset_subtract(maps, alloc):
+        if hanok_reservation_verbose_logging():
+            logger.info(
+                "try_allocate_and_consume: no allocation party=%s slots=%s eff=%s maps=%s",
+                party_size,
+                [_inv_slot(s).isoformat() for s in slots],
+                dict(sorted(eff.items())),
+                summarize_inventory_for_log(maps),
+            )
         return None
     _apply_delta_to_locked(slots, alloc, rows, -1)
     return alloc

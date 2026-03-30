@@ -75,6 +75,11 @@ General: never contradict {{reservation_seating_status}}. If they are waitlisted
 
 **Related:** **`POST /webhooks/telnyx/call-control`** handles **Call Control** for **outbound reminder** TTS (`client_state` + optional DB fallback).
 
+**Troubleshooting table allocation:** Capacity is stored per `(slot_start, table_size)` in the `table_slot_inventory` table. If you change **`HANOK_TABLE_INVENTORY_JSON`** or see **only the first reservation get a table** while the rest waitlist, older rows may still hold **`available_count = 0`** for one of the time buckets touched by your stay length (the allocator uses the **minimum** count across all buckets). Clear inventory and let the app recreate rows on the next bookings:
+
+- **Render shell / Postgres:** `DELETE FROM table_slot_inventory;` or run **`python scripts/reset_table_inventory.py`** (requires **`DB_URI`** / **`DATABASE_URL`**).
+- Turn on **`HANOK_RESERVATION_VERBOSE_LOG=1`** temporarily; failed allocations log **`eff`** / **`maps`** from `try_allocate_and_consume`.
+
 ---
 
 ### 4. Public deployment (required)
