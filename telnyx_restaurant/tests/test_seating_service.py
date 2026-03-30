@@ -102,6 +102,32 @@ def test_book_rejects_when_full(seating_env: None, db_session: Session) -> None:
         book_on_create(db_session, b, waitlist_ok=False)
 
 
+def test_waitlist_rejects_when_queue_at_cap(seating_env: None, db_session: Session, monkeypatch) -> None:
+    """HANOK_WAITLIST_MAX_PER_SLOT (default 5): 6th party for the same slot cannot join the waitlist."""
+    from telnyx_restaurant.seating_service import SeatingUnavailableError
+
+    monkeypatch.setenv("HANOK_WAITLIST_MAX_PER_SLOT", "5")
+    start = datetime(2026, 7, 8, 18, 0, tzinfo=UTC)
+    hold = _row(code="HNK-HOLD", party=6, starts=start)
+    db_session.add(hold)
+    db_session.flush()
+    book_on_create(db_session, hold, waitlist_ok=True)
+    assert hold.seating_status == "allocated"
+
+    for i in range(5):
+        w = _row(code=f"HNK-WL{i}", party=6, starts=start, phone=f"+15550001{i:03d}")
+        db_session.add(w)
+        db_session.flush()
+        book_on_create(db_session, w, waitlist_ok=True)
+        assert w.seating_status == "waitlist"
+
+    sixth = _row(code="HNK-WLF", party=6, starts=start, phone="+15550002000")
+    db_session.add(sixth)
+    db_session.flush()
+    with pytest.raises(SeatingUnavailableError, match="Waitlist is full"):
+        book_on_create(db_session, sixth, waitlist_ok=True)
+
+
 def test_promote_vip_before_normal(seating_env: None, db_session: Session) -> None:
     start = datetime(2026, 7, 4, 20, 0, tzinfo=UTC)
     hold = _row(code="HNK-HOLD", party=6, starts=start)

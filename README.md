@@ -53,7 +53,7 @@ This project is structured around the four required pillars below. Each maps dir
 
 **Webhook URL:** `POST https://<your-render-host>/webhooks/telnyx/variables`
 
-**Useful keys (non-exhaustive):** map JSON fields to Telnyx instruction variables and reference them as `{{guest_display_name}}`, `{{next_reservation_code}}`, `{{next_reservation_at}}`, `{{reservation_preorder_summary}}`, `{{reservation_food_total_cents}}`, `{{guest_is_high_value_preorder}}`, `{{concierge_service_hint}}`, `{{cancel_retention_offer}}`, `{{reservation_seating_status}}`, `{{guest_waitlist_priority}}`, `{{waitlist_fairness_hint}}`, `{{guest_waitlist_position}}`, `{{guest_waitlist_queue_size}}`, `{{guest_waitlist_estimated_wait_minutes}}`, `{{guest_waitlist_position_ordinal_en}}`, `{{guest_waitlist_wait_time_hint}}` (plus `{{preferred_locale}}` / `{{locale_hint}}` — see **Future improvements** below). ETA uses **`HANOK_WAITLIST_MINUTES_PER_POSITION`** (default 15) × queue position.
+**Useful keys (non-exhaustive):** map JSON fields to Telnyx instruction variables and reference them as `{{guest_display_name}}`, `{{next_reservation_code}}`, `{{next_reservation_at}}`, `{{reservation_preorder_summary}}`, `{{reservation_food_total_cents}}`, `{{guest_is_high_value_preorder}}`, `{{concierge_service_hint}}`, `{{cancel_retention_offer}}`, `{{reservation_seating_status}}`, `{{guest_waitlist_priority}}`, `{{waitlist_fairness_hint}}`, `{{guest_waitlist_position}}`, `{{guest_waitlist_queue_size}}`, `{{guest_waitlist_estimated_wait_minutes}}`, `{{guest_waitlist_position_ordinal_en}}`, `{{guest_waitlist_wait_time_hint}}`, `{{guest_waitlist_max_parties_per_slot}}`, `{{guest_waitlist_alternate_time_hint}}` (plus `{{preferred_locale}}` / `{{locale_hint}}` — see **Future improvements** below). Estimated wait is **position × `HANOK_WAITLIST_MINUTES_PER_POSITION`** (default **15** minutes): first in line ≈ 15, second ≈ 30, third ≈ 45, etc. At most **`HANOK_WAITLIST_MAX_PER_SLOT`** parties (default **5**) can wait for the same slot; further bookings return **409** with guidance to offer a time about **two hours earlier or later**.
 
 **Telnyx assistant — waitlist (paste into instructions; variables use `{{Name}}` to match your dynamic variable mapping):**
 
@@ -63,8 +63,9 @@ Waitlist position and wait time (from dynamic variables)
   - If {{reservation_seating_status}} is exactly "waitlist", and {{guest_waitlist_position}} is a positive integer string (not "0", not "n/a"):
     • Tell the caller they are {{guest_waitlist_position_ordinal_en}} in line when that ordinal is non-empty; otherwise say they are "number" {{guest_waitlist_position}} in line.
     • Mention that {{guest_waitlist_queue_size}} parties are on the waitlist for that seating window.
-    • Say the estimated wait is about {{guest_waitlist_estimated_wait_minutes}} minutes (not exact—tables depend on other guests finishing).
+    • Say the estimated wait is about {{guest_waitlist_estimated_wait_minutes}} minutes (not exact—tables depend on other guests finishing). It should rise by about 15 minutes per position (first ≈ 15, second ≈ 30, …) when the default is in effect.
     • You may use {{guest_waitlist_wait_time_hint}} verbatim or paraphrase it naturally.
+    • {{guest_waitlist_max_parties_per_slot}} is the cap per seating window; if create fails with a full-waitlist message, use {{guest_waitlist_alternate_time_hint}} and offer a slot about two hours before or after.
   - If {{reservation_seating_status}} is "allocated", say they have a table assigned; do not give a waitlist position or waitlist ETA from these fields.
   - If {{guest_waitlist_position}} is "0" or {{reservation_seating_status}} is "not_applicable", do not describe a waitlist position or wait time from these variables.
   - If {{guest_waitlist_position}} is "n/a", table waitlists are not in use on this deployment; do not invent queue numbers or ETAs.

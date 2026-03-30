@@ -293,6 +293,23 @@ def telnyx_speak(call_control_id: str, text: str) -> tuple[bool, str]:
     return False, last_err
 
 
+def _telnyx_hangup_call_already_ended(detail: str) -> bool:
+    """Telnyx returns 422 / code 90018 when the leg is already gone (race with speak.ended)."""
+    low = detail.lower()
+    if "90018" in detail or "already ended" in low or "no longer active" in low:
+        return True
+    try:
+        obj = json.loads(detail)
+        errs = obj.get("errors")
+        if isinstance(errs, list):
+            for err in errs:
+                if isinstance(err, dict) and str(err.get("code")) == "90018":
+                    return True
+    except Exception:
+        pass
+    return False
+
+
 def telnyx_hangup(call_control_id: str) -> bool:
     key = telnyx_api_key()
     if not key or not call_control_id:
@@ -313,6 +330,12 @@ def telnyx_hangup(call_control_id: str) -> bool:
         return True
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", errors="replace")[:800]
+        if e.code == 422 and _telnyx_hangup_call_already_ended(detail):
+            logger.info(
+                "Hanok hangup: call already ended (ok) call_control_id=%s…",
+                (call_control_id or "")[:12],
+            )
+            return True
         logger.warning(
             "Hanok hangup: HTTP %s call_control_id=%s… %s",
             e.code,

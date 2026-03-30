@@ -7,7 +7,7 @@ import logging
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from sqlalchemy import Select, case, or_, select
+from sqlalchemy import Select, case, func, literal, or_, select
 from sqlalchemy.orm import Session
 
 from telnyx_restaurant.config import (
@@ -18,6 +18,7 @@ from telnyx_restaurant.config import (
     hanok_table_allocation_enabled,
     hanok_table_inventory_template,
     hanok_vip_preorder_threshold_cents,
+    hanok_waitlist_max_per_slot,
     hanok_waitlist_minutes_per_position,
 )
 from telnyx_restaurant.models import Reservation, ReservationStatus, TableSlotInventory
@@ -216,6 +217,43 @@ class BookOnCreateResult:
     tables_allocated: list[int] | None
 
 
+def _waitlist_ordered_for_slot(
+    db: Session,
+    *,
+    starts_at: datetime,
+    duration_minutes: int,
+) -> list[Reservation]:
+    """Waitlisted rows for the same floored slot and duration bucket as ``promote_waitlist`` (VIP / spend tier, then created_at).
+
+    Uses ``_norm_dt`` for all ``starts_at`` values so queue membership matches across environments (naive vs aware DB values).
+    Duration matching uses ``coalesce(duration_minutes, default)`` so legacy rows align with the configured default stay length.
+    """
+    step = hanok_slot_step_minutes()
+    t0 = floor_slot_start(_norm_dt(starts_at), step)
+    d = int(duration_minutes) if duration_minutes else hanok_default_reservation_duration_minutes()
+    default_d = hanok_default_reservation_duration_minutes()
+    threshold = hanok_vip_preorder_threshold_cents()
+    is_priority = or_(
+        Reservation.guest_priority == "vip",
+        Reservation.food_total_cents >= threshold,
+    )
+    prio = case((is_priority, 0), else_=1)
+    candidates = (
+        db.execute(
+            select(Reservation)
+            .where(
+                Reservation.seating_status == "waitlist",
+                Reservation.status != ReservationStatus.cancelled.value,
+                func.coalesce(Reservation.duration_minutes, literal(default_d)) == d,
+            )
+            .order_by(prio, Reservation.created_at)
+        )
+        .scalars()
+        .all()
+    )
+    return [w for w in candidates if floor_slot_start(_norm_dt(w.starts_at), step) == t0]
+
+
 def book_on_create(db: Session, row: Reservation, *, waitlist_ok: bool) -> BookOnCreateResult:
     if not hanok_table_allocation_enabled():
         row.seating_status = "not_applicable"
@@ -239,6 +277,16 @@ def book_on_create(db: Session, row: Reservation, *, waitlist_ok: bool) -> BookO
         return BookOnCreateResult("allocated", alloc)
 
     if waitlist_ok:
+        cap = hanok_waitlist_max_per_slot()
+        n_existing = len(
+            _waitlist_ordered_for_slot(db, starts_at=row.starts_at, duration_minutes=int(row.duration_minutes))
+        )
+        if n_existing >= cap:
+            raise SeatingUnavailableError(
+                "Waitlist is full for this seating window "
+                f"({cap} parties maximum). Suggest the same party size about two hours earlier "
+                "or about two hours later, if available."
+            )
         row.tables_allocated_json = None
         row.seating_status = "waitlist"
         logger.info(
@@ -330,6 +378,14 @@ def reseat_reservation_after_amend(
                 )
         return
 
+    cap = hanok_waitlist_max_per_slot()
+    n_existing = len(_waitlist_ordered_for_slot(db, starts_at=row.starts_at, duration_minutes=d_new))
+    if n_existing >= cap:
+        raise SeatingUnavailableError(
+            "Waitlist is full for this seating window "
+            f"({cap} parties maximum). Suggest the same party size about two hours earlier "
+            "or about two hours later, if available."
+        )
     row.tables_allocated_json = None
     row.seating_status = "waitlist"
     row.updated_at = datetime.now(UTC)
@@ -373,7 +429,7 @@ def release_and_promote_after_cancel(db: Session, row: Reservation) -> None:
 def waitlist_queue_metadata(db: Session, row: Reservation) -> dict[str, int] | None:
     """1-based position in the same promotion queue as ``promote_waitlist`` (slot + duration bucket), plus queue size.
 
-    Estimated wait minutes = position × ``HANOK_WAITLIST_MINUTES_PER_POSITION`` (default 15).
+    Estimated wait minutes = position × ``HANOK_WAITLIST_MINUTES_PER_POSITION`` (default 15), e.g. 1st → 15, 2nd → 30, …
     """
     if not hanok_table_allocation_enabled():
         return None
@@ -383,29 +439,8 @@ def waitlist_queue_metadata(db: Session, row: Reservation) -> dict[str, int] | N
         return None
     # Same transaction may have updated seating_status without autoflush; visibility for SELECT.
     db.flush()
-    step = hanok_slot_step_minutes()
-    t0 = floor_slot_start(_norm_dt(row.starts_at), step)
     d = int(row.duration_minutes) if row.duration_minutes else hanok_default_reservation_duration_minutes()
-    threshold = hanok_vip_preorder_threshold_cents()
-    is_priority = or_(
-        Reservation.guest_priority == "vip",
-        Reservation.food_total_cents >= threshold,
-    )
-    prio = case((is_priority, 0), else_=1)
-    candidates = (
-        db.execute(
-            select(Reservation)
-            .where(
-                Reservation.seating_status == "waitlist",
-                Reservation.status != ReservationStatus.cancelled.value,
-                Reservation.duration_minutes == d,
-            )
-            .order_by(prio, Reservation.created_at)
-        )
-        .scalars()
-        .all()
-    )
-    ordered = [w for w in candidates if floor_slot_start(_norm_dt(w.starts_at), step) == t0]
+    ordered = _waitlist_ordered_for_slot(db, starts_at=row.starts_at, duration_minutes=d)
     ids = [w.id for w in ordered]
     if row.id not in ids:
         return None
@@ -420,29 +455,8 @@ def promote_waitlist(db: Session, starts_at: datetime, duration_minutes: int) ->
     """Confirm waitlisted rows for the same floor-aligned start and duration (MVP)."""
     if not hanok_table_allocation_enabled():
         return 0
-    step = hanok_slot_step_minutes()
-    t0 = floor_slot_start(_norm_dt(starts_at), step)
     d = int(duration_minutes) if duration_minutes else hanok_default_reservation_duration_minutes()
-    threshold = hanok_vip_preorder_threshold_cents()
-    is_priority = or_(
-        Reservation.guest_priority == "vip",
-        Reservation.food_total_cents >= threshold,
-    )
-    prio = case((is_priority, 0), else_=1)
-    candidates = (
-        db.execute(
-            select(Reservation)
-            .where(
-                Reservation.seating_status == "waitlist",
-                Reservation.status != ReservationStatus.cancelled.value,
-                Reservation.duration_minutes == d,
-            )
-            .order_by(prio, Reservation.created_at)
-        )
-        .scalars()
-        .all()
-    )
-    candidates = [w for w in candidates if floor_slot_start(w.starts_at, step) == t0]
+    candidates = _waitlist_ordered_for_slot(db, starts_at=starts_at, duration_minutes=d)
     promoted = 0
     for w in candidates:
         alloc = try_allocate_and_consume(db, w.party_size, w.starts_at, w.duration_minutes)

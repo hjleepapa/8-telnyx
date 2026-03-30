@@ -14,8 +14,10 @@ and ``cancel_retention_offer`` (complimentary-meal / credit language for cancel 
 With ``HANOK_TABLE_ALLOCATION_ENABLED``, reservations expose ``reservation_seating_status``,
 ``guest_waitlist_priority``, ``waitlist_fairness_hint``, and wait-time fields
 (``guest_waitlist_position``, ``guest_waitlist_queue_size``, ``guest_waitlist_estimated_wait_minutes``,
-``guest_waitlist_position_ordinal_en``, ``guest_waitlist_wait_time_hint``) aligned with promotion order
-(position × ``HANOK_WAITLIST_MINUTES_PER_POSITION``, default 15 minutes).
+``guest_waitlist_position_ordinal_en``, ``guest_waitlist_wait_time_hint``, ``guest_waitlist_max_parties_per_slot``,
+``guest_waitlist_alternate_time_hint``) aligned with promotion order
+(position × ``HANOK_WAITLIST_MINUTES_PER_POSITION``, default 15 minutes). Waitlist depth is capped by
+``HANOK_WAITLIST_MAX_PER_SLOT`` (default 5); additional bookings receive HTTP 409 from the API.
 
 ``preferred_locale`` on the guest's reservation (``en`` / ``ko``) sets ``locale_hint`` (``en-US`` / ``ko-KR``)
 for Telnyx instructions, e.g. “Conduct the conversation in Korean when ``locale_hint`` is ``ko-KR``.”
@@ -39,6 +41,7 @@ from telnyx_restaurant.config import (
     hanok_premium_preorder_cents_threshold,
     hanok_table_allocation_enabled,
     hanok_vip_preorder_threshold_cents,
+    hanok_waitlist_max_per_slot,
     hanok_waitlist_minutes_per_position,
 )
 from telnyx_restaurant.db import get_engine
@@ -135,11 +138,18 @@ def _seating_waitlist_profile(
     else:
         hint = f"Seating status: {status}."
 
-    return {
+    out_sw: dict[str, Any] = {
         "reservation_seating_status": status,
         "guest_waitlist_priority": "vip" if is_vip else "normal",
         "waitlist_fairness_hint": hint,
     }
+    if hanok_table_allocation_enabled():
+        out_sw["guest_waitlist_max_parties_per_slot"] = str(hanok_waitlist_max_per_slot())
+        out_sw["guest_waitlist_alternate_time_hint"] = (
+            "If this seating time cannot be booked or the waitlist is full, offer the same party size "
+            "about two hours earlier or about two hours later."
+        )
+    return out_sw
 
 
 _WAITLIST_ORDINALS_EN = (
@@ -619,6 +629,12 @@ async def telnyx_call_control(request: Request) -> dict[str, str]:
         else:
             logger.warning("Hanok call-control: speak failed tag=%s", tag)
         return {"status": "spoke" if ok else "speak_failed"}
+
+    # Telnyx may deliver hangup before speak.ended; drop the leg so we do not POST hangup on a dead call.
+    if event_type == "call.hangup" or (isinstance(event_type, str) and event_type.endswith(".hangup")):
+        with _hanok_cc_lock:
+            _hanok_cc_ids.discard(call_control_id)
+        return {"status": "ok"}
 
     if event_type in ("call.speak.ended", "call.speak.completed", "call.speak.stopped"):
         do_hangup = False

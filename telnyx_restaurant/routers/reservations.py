@@ -297,6 +297,15 @@ def _apply_reservation_update(db: Session, row: Reservation, body: ReservationUp
     return True
 
 
+def _apply_reservation_update_for_api(db: Session, row: Reservation, body: ReservationUpdate) -> bool:
+    """Like ``_apply_reservation_update`` but turns seating-cap errors into HTTP 409 for PATCH/create-merge paths."""
+    try:
+        return _apply_reservation_update(db, row, body)
+    except SeatingUnavailableError as e:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(e)) from e
+
+
 def _merge_status_from_cancel_query(
     status: str | None,
     cancel: str | None,
@@ -429,7 +438,7 @@ def _patch_at_status_core(db: Session, row: Reservation, flat: dict[str, Any]) -
     if patch is not None and eff:
         if _truthy_non_status_reservation_fields(patch):
             _reject_modifying_cancelled(row)
-        changed = _apply_reservation_update(db, row, patch)
+        changed = _apply_reservation_update_for_api(db, row, patch)
         if changed:
             db.commit()
         else:
@@ -1093,7 +1102,7 @@ async def create_reservation(
             response.headers["X-Hanok-Deduplicated"] = "1"
             if body.preorder and not dup.preorder_items:
                 patch = ReservationUpdate(preorder=body.preorder)
-                changed = _apply_reservation_update(db, dup, patch)
+                changed = _apply_reservation_update_for_api(db, dup, patch)
                 if changed:
                     db.commit()
                 else:
@@ -1152,11 +1161,7 @@ async def create_reservation(
         food_total_cents=total,
         source_channel=body.source_channel,
         preferred_locale=body.preferred_locale,
-        reminder_call_status=(
-            "no_outbound_reminder_source_api"
-            if body.source_channel == "api"
-            else "reminder_queued"
-        ),
+        reminder_call_status=None,
     )
     db.add(row)
     try:
@@ -1164,13 +1169,19 @@ async def create_reservation(
         if hanok_table_allocation_enabled():
             book_on_create(db, row, waitlist_ok=body.waitlist_if_full)
         sync_guest_priority_from_spend(row)
+        if body.source_channel == "api":
+            row.reminder_call_status = "no_outbound_reminder_source_api"
+        elif hanok_table_allocation_enabled() and (row.seating_status or "") == "waitlist":
+            row.reminder_call_status = "reminder_deferred_waitlist"
+        else:
+            row.reminder_call_status = "reminder_queued"
         db.commit()
     except SeatingUnavailableError as e:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(e)) from e
     db.refresh(row)
 
-    if body.source_channel != "api":
+    if row.reminder_call_status == "reminder_queued":
         schedule_demo_reminder_call(
             reservation_id=row.id,
             guest_phone=row.guest_phone,
@@ -1387,7 +1398,7 @@ def patch_reservation_by_code(
     _require_reservation_update_fields(body)
     if _truthy_non_status_reservation_fields(body):
         _reject_modifying_cancelled(row)
-    changed = _apply_reservation_update(db, row, body)
+    changed = _apply_reservation_update_for_api(db, row, body)
     if changed:
         db.commit()
     else:
@@ -1613,7 +1624,7 @@ async def _patch_amend_from_request(
         raise
     if _truthy_non_status_reservation_fields(body):
         _reject_modifying_cancelled(row)
-    changed = _apply_reservation_update(db, row, body)
+    changed = _apply_reservation_update_for_api(db, row, body)
     if changed:
         db.commit()
     else:
@@ -1753,7 +1764,7 @@ def patch_reservation(
     _require_reservation_update_fields(body)
     if _truthy_non_status_reservation_fields(body):
         _reject_modifying_cancelled(row)
-    changed = _apply_reservation_update(db, row, body)
+    changed = _apply_reservation_update_for_api(db, row, body)
     if changed:
         db.commit()
     else:

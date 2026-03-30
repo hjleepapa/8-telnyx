@@ -271,6 +271,15 @@ def hanok_waitlist_minutes_per_position() -> int:
         return 15
 
 
+def hanok_waitlist_max_per_slot() -> int:
+    """Max parties that may share one waitlist queue (same floored slot + duration); beyond this, suggest other times."""
+    try:
+        v = int((os.environ.get("HANOK_WAITLIST_MAX_PER_SLOT") or "5").strip())
+        return max(1, min(v, 50))
+    except ValueError:
+        return 5
+
+
 def hanok_reservation_lab_enabled() -> bool:
     """If true, serve GET /reservation-lab (browser helper for API scenarios). Use with ADMIN_DASHBOARD_TOKEN on public hosts."""
     return (os.environ.get("HANOK_RESERVATION_LAB") or "").strip().lower() in (

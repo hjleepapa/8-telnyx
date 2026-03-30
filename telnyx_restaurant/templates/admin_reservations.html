@@ -773,6 +773,7 @@
         }
 
         var CAL_VIEW_STORAGE_KEY = "hanok_admin_calendar_view";
+        var CAL_CURSOR_STORAGE_KEY = "hanok_admin_calendar_cursor";
 
         function loadSavedViewMode() {
           try {
@@ -788,8 +789,29 @@
           } catch (e) {}
         }
 
+        function loadSavedCursor() {
+          try {
+            var raw = localStorage.getItem(CAL_CURSOR_STORAGE_KEY);
+            if (!raw) return null;
+            var o = JSON.parse(raw);
+            if (typeof o.y !== "number" || typeof o.m !== "number" || typeof o.d !== "number") return null;
+            if (o.m < 0 || o.m > 11 || o.d < 1 || o.d > 31) return null;
+            var dt = new Date(Date.UTC(o.y, o.m, o.d));
+            if (dt.getUTCFullYear() !== o.y || dt.getUTCMonth() !== o.m || dt.getUTCDate() !== o.d) return null;
+            return { y: o.y, m: o.m, d: o.d };
+          } catch (e) {
+            return null;
+          }
+        }
+
+        function saveCursor(c) {
+          try {
+            localStorage.setItem(CAL_CURSOR_STORAGE_KEY, JSON.stringify({ y: c.y, m: c.m, d: c.d }));
+          } catch (e) {}
+        }
+
         var viewMode = loadSavedViewMode();
-        var cursor = todayCursor();
+        var cursor = loadSavedCursor() || todayCursor();
 
         var grid = document.getElementById("cal-grid");
         var dayView = document.getElementById("day-view");
@@ -1100,6 +1122,7 @@
             if (viewMode === "week") renderWeek();
             else renderMonth();
           }
+          saveCursor(cursor);
         }
 
         function row(label, html) {
