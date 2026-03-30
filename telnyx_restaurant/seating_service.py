@@ -314,6 +314,65 @@ def _pristine_slot_maps_for_stay(starts_at: datetime, duration_minutes: int) -> 
     return [dict(one) for _ in slots]
 
 
+def _waitlist_cap_unit_weight_for_party(
+    party_size: int,
+    *,
+    starts_at: datetime,
+    duration_minutes: int,
+) -> int:
+    """Tables required at a pristine-full template (same basis as webhook ``tables_required``).
+
+    Weighted waitlist cap: single-table parties count 1; parties needing two tables count 2.
+    If the table template is unset, each party counts as 1 (legacy behavior).
+    """
+    max_t = hanok_max_tables_per_party()
+    pristine = _pristine_slot_maps_for_stay(_norm_dt(starts_at), int(duration_minutes))
+    if not pristine:
+        return 1
+    eff_full = effective_counts_across_slots(pristine)
+    alloc = allocate_tables(int(party_size), eff_full, max_tables=max_t)
+    if not alloc:
+        return max(1, max_t)
+    return max(1, len(alloc))
+
+
+def _waitlist_weighted_occupancy(
+    db: Session,
+    *,
+    starts_at: datetime,
+    duration_minutes: int,
+) -> int:
+    """Sum of cap-unit weights for parties already on the waitlist for this slot + duration."""
+    waiters = _waitlist_ordered_for_slot(db, starts_at=starts_at, duration_minutes=duration_minutes)
+    default_d = hanok_default_reservation_duration_minutes()
+    total = 0
+    for w in waiters:
+        d = int(w.duration_minutes) if w.duration_minutes else default_d
+        total += _waitlist_cap_unit_weight_for_party(
+            int(w.party_size),
+            starts_at=w.starts_at,
+            duration_minutes=d,
+        )
+    return total
+
+
+def _waitlist_weighted_cap_exceeded(
+    db: Session,
+    *,
+    starts_at: datetime,
+    duration_minutes: int,
+    incoming_party_size: int,
+) -> bool:
+    cap = hanok_waitlist_max_per_slot()
+    existing = _waitlist_weighted_occupancy(db, starts_at=starts_at, duration_minutes=duration_minutes)
+    incoming = _waitlist_cap_unit_weight_for_party(
+        incoming_party_size,
+        starts_at=_norm_dt(starts_at),
+        duration_minutes=int(duration_minutes),
+    )
+    return existing + incoming > cap
+
+
 def waitlist_table_feasibility_for_row(
     db: Session,
     row: Reservation,
@@ -393,14 +452,17 @@ def book_on_create(db: Session, row: Reservation, *, waitlist_ok: bool) -> BookO
         return BookOnCreateResult("allocated", alloc)
 
     if waitlist_ok:
-        cap = hanok_waitlist_max_per_slot()
-        n_existing = len(
-            _waitlist_ordered_for_slot(db, starts_at=row.starts_at, duration_minutes=int(row.duration_minutes))
-        )
-        if n_existing >= cap:
+        if _waitlist_weighted_cap_exceeded(
+            db,
+            starts_at=row.starts_at,
+            duration_minutes=int(row.duration_minutes),
+            incoming_party_size=int(row.party_size),
+        ):
+            cap = hanok_waitlist_max_per_slot()
             raise SeatingUnavailableError(
                 "Waitlist is full for this seating window "
-                f"({cap} parties maximum). Suggest the same party size about two hours earlier "
+                f"({cap} capacity units maximum; parties needing more than one table count as multiple units). "
+                "Suggest the same party size about two hours earlier "
                 "or about two hours later, if available."
             )
         row.tables_allocated_json = None
@@ -494,12 +556,18 @@ def reseat_reservation_after_amend(
                 )
         return
 
-    cap = hanok_waitlist_max_per_slot()
-    n_existing = len(_waitlist_ordered_for_slot(db, starts_at=row.starts_at, duration_minutes=d_new))
-    if n_existing >= cap:
+    db.flush()
+    if _waitlist_weighted_cap_exceeded(
+        db,
+        starts_at=row.starts_at,
+        duration_minutes=d_new,
+        incoming_party_size=int(row.party_size),
+    ):
+        cap = hanok_waitlist_max_per_slot()
         raise SeatingUnavailableError(
             "Waitlist is full for this seating window "
-            f"({cap} parties maximum). Suggest the same party size about two hours earlier "
+            f"({cap} capacity units maximum; parties needing more than one table count as multiple units). "
+            "Suggest the same party size about two hours earlier "
             "or about two hours later, if available."
         )
     row.tables_allocated_json = None

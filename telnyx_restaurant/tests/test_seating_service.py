@@ -103,7 +103,7 @@ def test_book_rejects_when_full(seating_env: None, db_session: Session) -> None:
 
 
 def test_waitlist_rejects_when_queue_at_cap(seating_env: None, db_session: Session, monkeypatch) -> None:
-    """HANOK_WAITLIST_MAX_PER_SLOT (default 5): 6th party for the same slot cannot join the waitlist."""
+    """HANOK_WAITLIST_MAX_PER_SLOT: 6th party cannot join when each party counts as 1 cap unit (single-table template)."""
     from telnyx_restaurant.seating_service import SeatingUnavailableError
 
     monkeypatch.setenv("HANOK_WAITLIST_MAX_PER_SLOT", "5")
@@ -126,6 +126,46 @@ def test_waitlist_rejects_when_queue_at_cap(seating_env: None, db_session: Sessi
     db_session.flush()
     with pytest.raises(SeatingUnavailableError, match="Waitlist is full"):
         book_on_create(db_session, sixth, waitlist_ok=True)
+
+
+def test_waitlist_rejects_when_weighted_cap_exceeded(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Large party needing two tables counts as 2 units; 5th single-table waitlister exceeds cap 5."""
+    from telnyx_restaurant.seating_service import SeatingUnavailableError
+
+    monkeypatch.setenv("HANOK_TABLE_ALLOCATION_ENABLED", "true")
+    monkeypatch.setenv("HANOK_TABLE_INVENTORY_JSON", '{"4":2}')
+    monkeypatch.setenv("HANOK_TABLE_SLOT_MINUTES", "60")
+    monkeypatch.setenv("HANOK_RESERVATION_DURATION_MINUTES", "60")
+    monkeypatch.setenv("HANOK_MAX_TABLES_PER_PARTY", "2")
+    monkeypatch.setenv("HANOK_WAITLIST_MAX_PER_SLOT", "5")
+
+    start = datetime(2026, 9, 1, 18, 0, tzinfo=UTC)
+    hold_a = _row(code="HNK-HA", party=4, starts=start, phone="+1555001000")
+    hold_b = _row(code="HNK-HB", party=4, starts=start, phone="+1555001001")
+    db_session.add_all([hold_a, hold_b])
+    db_session.flush()
+    assert book_on_create(db_session, hold_a, waitlist_ok=True).seating_status == "allocated"
+    assert book_on_create(db_session, hold_b, waitlist_ok=True).seating_status == "allocated"
+
+    for i in range(4):
+        w = _row(
+            code=f"HNK-W{i}",
+            party=4 if i < 3 else 8,
+            starts=start,
+            phone=f"+15550011{i:02d}",
+        )
+        db_session.add(w)
+        db_session.flush()
+        book_on_create(db_session, w, waitlist_ok=True)
+        assert w.seating_status == "waitlist"
+
+    fifth = _row(code="HNK-WX", party=4, starts=start, phone="+1555000200")
+    db_session.add(fifth)
+    db_session.flush()
+    with pytest.raises(SeatingUnavailableError, match="Waitlist is full"):
+        book_on_create(db_session, fifth, waitlist_ok=True)
 
 
 def test_waitlist_queue_metadata_infeasible_party_needs_two_tables(

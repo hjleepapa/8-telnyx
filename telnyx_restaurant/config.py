@@ -272,7 +272,12 @@ def hanok_waitlist_minutes_per_position() -> int:
 
 
 def hanok_waitlist_max_per_slot() -> int:
-    """Max parties that may share one waitlist queue (same floored slot + duration); beyond this, suggest other times."""
+    """Max **weighted** waitlist occupancy per seating window (floored slot + duration).
+
+    Each waitlisted party contributes ``N`` units, where ``N`` is how many tables it needs against
+    a full template (usually 1; large parties can be 2). The sum of units in the window must stay
+    **at or below** this value; otherwise new waitlist joins return HTTP 409 / ``SeatingUnavailableError``.
+    """
     try:
         v = int((os.environ.get("HANOK_WAITLIST_MAX_PER_SLOT") or "5").strip())
         return max(1, min(v, 50))

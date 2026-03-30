@@ -16,8 +16,9 @@ With ``HANOK_TABLE_ALLOCATION_ENABLED``, reservations expose ``reservation_seati
 (``guest_waitlist_position``, ``guest_waitlist_queue_size``, ``guest_waitlist_estimated_wait_minutes``,
 ``guest_waitlist_position_ordinal_en``, ``guest_waitlist_wait_time_hint``, ``guest_waitlist_max_parties_per_slot``,
 ``guest_waitlist_alternate_time_hint``) aligned with promotion order
-(position × ``HANOK_WAITLIST_MINUTES_PER_POSITION``, default 15 minutes). Waitlist depth is capped by
-``HANOK_WAITLIST_MAX_PER_SLOT`` (default 5); additional bookings receive HTTP 409 from the API.
+(position × ``HANOK_WAITLIST_MINUTES_PER_POSITION``, default 15 minutes). Waitlist volume is capped by
+a **weighted** sum: ``HANOK_WAITLIST_MAX_PER_SLOT`` (default 5) limits total units where multi-table parties
+count extra; additional waitlist joins receive HTTP 409. ``guest_waitlist_max_parties_per_slot`` echoes that cap.
 
 ``preferred_locale`` on the guest's reservation (``en`` / ``ko``) sets ``locale_hint`` (``en-US`` / ``ko-KR``)
 for Telnyx instructions, e.g. “Conduct the conversation in Korean when ``locale_hint`` is ``ko-KR``.”
@@ -788,11 +789,11 @@ def _enrich_caller_identification_for_profile(profile: dict[str, Any], caller: s
         profile["guest_lookup_name_for_tools"] = (pool[0].guest_name or "").strip() or disp
         profile["guest_lookup_identification_hint"] = (
             "Exactly one reservation matches this phone number (caller_line_single_booking is yes). "
-            "Open the call with guest_personalized_greeting_suggestion or the same idea using guest_display_name—"
-            "do NOT ask the caller to state their name again unless they want to correct you or you need spelling "
-            "for a rare tool edge case. "
-            "For get_reservation/lookup, pass caller_phone_normalized as guest_phone and guest_lookup_name_for_tools "
-            "as guest_name (full name on file) without re-prompting."
+            "Open immediately with guest_personalized_greeting_suggestion or guest_display_name—do NOT ask for their "
+            "name before the first lookup tool call. "
+            "MCP: call get_reservation with ONLY guest_phone set to caller_phone_normalized (omit guest_name entirely) "
+            "so the API uses phone-only lookup. HTTP GET /api/reservations/lookup-by-phone?guest_phone=… also works. "
+            "guest_lookup_name_for_tools is for reference or rare flows; you should not need to prompt the caller for it."
         )
 
 

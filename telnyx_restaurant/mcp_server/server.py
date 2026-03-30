@@ -15,10 +15,11 @@ from telnyx_restaurant.config import hanok_mcp_api_base_url, hanok_mcp_streamabl
 _INSTRUCTIONS = (
     "Hanok Table reservation API tools. The Telnyx dynamic-variables webhook may provide "
     "locale_hint (en-US or ko-KR) from the guest's stored preferred_locale — follow that language "
-    "for the conversation when set. When the webhook exposes caller_phone_normalized, pass it as "
-    "guest_phone on get_reservation (lookup). If caller_line_single_booking is yes, use guest_lookup_name_for_tools "
-    "as guest_name and do not ask for their name again; if caller_line_has_multiple_bookings is yes, ask only for "
-    "the name on the booking. "
+    "for the conversation when set. When the webhook exposes caller_phone_normalized, pass it as guest_phone on "
+    "get_reservation. If caller_line_single_booking is yes, call get_reservation with ONLY guest_phone "
+    "(omit guest_name / leave it empty)—this uses phone-only API lookup; greet first using "
+    "guest_personalized_greeting_suggestion and do NOT ask for their name before that tool call. "
+    "If caller_line_has_multiple_bookings is yes, ask which name the booking is under and pass guest_name. "
     "Always call get_reservation (lookup) before "
     "update_reservation_details or set_reservation_status so you have the numeric "
     "reservation id. Use list_menu_items before building preorder lines. "
@@ -143,11 +144,34 @@ async def list_menu_items() -> str:
 
 
 @mcp.tool()
-async def get_reservation(guest_name: str, guest_phone: str) -> str:
-    """Look up the active reservation for this caller. guest_name is required. guest_phone should be the webhook's
-    caller_phone_normalized (or E.164 from ANI)—do not ask the user to repeat their number when that variable is set."""
-    params = {"guest_name": guest_name.strip(), "guest_phone": guest_phone.strip()}
-    return await _http_json("GET", "/api/reservations/lookup", params=params)
+async def get_reservation(guest_phone: str, guest_name: str | None = None) -> str:
+    """Look up the active reservation. Pass guest_phone from webhook caller_phone_normalized (or ANI).
+
+    When caller_line_single_booking is yes, pass **only guest_phone**—omit guest_name—so lookup runs without
+    asking the caller for their name first (uses GET /lookup-by-phone). When multiple bookings share the line,
+    pass guest_name after disambiguation (uses GET /lookup).
+    """
+    gp = (guest_phone or "").strip()
+    gn = (guest_name or "").strip()
+    if not gp:
+        return json.dumps(
+            {
+                "http_status": 422,
+                "data": {"detail": "guest_phone is required (use caller_phone_normalized from webhook)."},
+            },
+            indent=2,
+        )
+    if gn:
+        return await _http_json(
+            "GET",
+            "/api/reservations/lookup",
+            params={"guest_name": gn, "guest_phone": gp},
+        )
+    return await _http_json(
+        "GET",
+        "/api/reservations/lookup-by-phone",
+        params={"guest_phone": gp},
+    )
 
 
 @mcp.tool()
@@ -328,9 +352,9 @@ def reservation_voice_flow() -> str:
     """Suggested turn flow for Telnyx voice booking."""
     return (
         "For phone booking: (1) Greet using webhook variables if available. "
-        "(2) For lookup/modify/cancel, call get_reservation with caller_phone_normalized as guest_phone; "
-        "if caller_line_single_booking is yes use guest_lookup_name_for_tools as guest_name without asking. "
-        "If multiple bookings on the line, ask name first. "
+        "(2) For lookup/modify/cancel: if caller_line_single_booking is yes, call get_reservation with ONLY "
+        "guest_phone (= caller_phone_normalized), no guest_name—greet first, do not ask name. "
+        "If multiple bookings on the line, ask name then pass guest_name. "
         "(3) Use list_menu_items before preorder. "
         "(4) create_reservation for new bookings (source_channel voice). "
         "(5) update_reservation_details for food/time/party/notes; set_reservation_status or cancel_reservation for lifecycle. "

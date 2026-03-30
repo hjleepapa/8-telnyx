@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from telnyx_restaurant.routers.webhook import _enrich_caller_identification_for_profile
 
 
@@ -17,7 +19,9 @@ def test_enrich_no_caller_skips_db_hint() -> None:
     assert "telnyx_end_user_target" in p["guest_lookup_identification_hint"].lower()
 
 
-def test_enrich_normalizes_us_ani() -> None:
+def test_enrich_normalizes_us_ani(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DB_URI", raising=False)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     p: dict = {}
     _enrich_caller_identification_for_profile(p, "+1 (415) 555-0100")
     assert p["caller_phone_telnyx"] == "+1 (415) 555-0100"
