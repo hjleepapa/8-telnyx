@@ -303,6 +303,74 @@ Full route table and PATCH semantics are in code comments and earlier sections; 
 
 ---
 
+## Voice & integration test scenarios
+
+End-to-end checks you can run against a deployed stack (Telnyx + this API + Postgres + optional table allocation). **Implementation pointers** explain how the repo behaves.
+
+### 1. Create reservation → outbound reminder
+
+**Flow:** Caller (or **`POST /api/reservations`** / MCP **`create_reservation`**) creates a booking; after the row is stored, an **outbound reminder** is scheduled when policy allows.
+
+**Mechanism:** On create, if table allocation is **off** or the row is **allocated** (not waitlisted), `reminder_call_status` is set to **`reminder_queued`** and [`telnyx_restaurant/reminders.py`](telnyx_restaurant/reminders.py) enqueues a delayed job that dials via Telnyx **Call Control** (`TELNYX_*` env). The answered call hits **`POST /webhooks/telnyx/call-control`**, which runs **speak** then hangup. If the guest lands on the **waitlist** at create time, reminders are typically **deferred** until they are promoted and **allocated**.
+
+**Configure:** `HANOK_PUBLIC_BASE_URL`, `TELNYX_API_KEY`, `TELNYX_CONNECTION_ID`, `TELNYX_FROM_NUMBER`, reminder delay (`HANOK_REMINDER_DELAY_SECONDS` — see `.env.example`).
+
+---
+
+### 2. Update reservation (party, time, pre-order)
+
+**Flow:** Caller changes **party size**, **start time**, and/or **pre-order** lines.
+
+**Mechanism:** **`PATCH /api/reservations/amend`** (or `/{id}/amend`, Telnyx-shaped bodies) applies partial updates in [`telnyx_restaurant/routers/reservations.py`](telnyx_restaurant/routers/reservations.py). Menu lines must reference valid item ids (MCP **`list_menu_items`** first). When **`HANOK_TABLE_ALLOCATION_ENABLED=1`**, [`reseat_reservation_after_amend`](telnyx_restaurant/seating_service.py) **releases** the old slot’s table consumption (if any), **promotes** the waitlist for that window, then **re-allocates** or **re-waitlists** at the new time/party. Pre-order totals can update **`guest_priority`** via **`sync_guest_priority_from_spend`** when spend crosses **`HANOK_VIP_PREORDER_CENTS`**.
+
+---
+
+### 3. Cancel reservation + dynamic webhook variables (retention vs straight cancel)
+
+**Goal:** Exercise **`POST /webhooks/telnyx/variables`** so the assistant sees different instruction hints for **high spend** vs **standard** guests when they ask to cancel.
+
+**Env (example):**
+
+```bash
+HANOK_VIP_PREORDER_CENTS=50000          # $500 — VIP waitlist / stored priority (see below)
+HANOK_PREMIUM_PREORDER_CENTS=50000      # $500 — concierge + retention *in dynamic variables*
+```
+
+**Mechanism:** [`_premium_concierge_variables`](telnyx_restaurant/routers/webhook.py) compares `food_total_cents` to **`HANOK_PREMIUM_PREORDER_CENTS`**: at or above threshold it sets **`guest_is_high_value_preorder=yes`**, **`cancel_retention_offer`**, **`concierge_service_hint`**, etc., so instructions can **offer a goodwill / retention line** before canceling. **Below** threshold, the same keys steer the model toward **standard** cancellation language.
+
+**Important:** **`HANOK_VIP_PREORDER_CENTS`** controls **VIP / waitlist treatment** and persisted **`guest_priority`** (see [`effective_priority_for_row`](telnyx_restaurant/seating_service.py)), not the concierge JSON block. For **“pre-order ≥ $500 → persuade not to cancel”** in variables, set **`HANOK_PREMIUM_PREORDER_CENTS`** (or keep both at **50000** so one dollar threshold aligns both behaviors).
+
+**Test:** Create/amend a reservation with pre-order total **≥** premium threshold; call **`POST /webhooks/telnyx/variables`** with that caller’s ANI; confirm JSON includes retention-style **`cancel_retention_offer`**. Repeat with a low cart; confirm standard branch.
+
+---
+
+### 4. Waitlist, table assignment, VIP ordering, reminders, weighted cap
+
+**Env (illustrative):**
+
+```bash
+HANOK_TABLE_ALLOCATION_ENABLED=1
+HANOK_TABLE_INVENTORY_JSON={"4":5}       # five 4-tops in the template (per slot bucket math as implemented)
+HANOK_WAITLIST_MAX_PER_SLOT=5           # weighted capacity *units* (not raw party count only)
+HANOK_WAITLIST_MINUTES_PER_POSITION=15 # EWT ≈ position × 15 for dynamic variables
+HANOK_VIP_PREORDER_CENTS=50000          # spend- or flag-based VIP ordering
+HANOK_MAX_TABLES_PER_PARTY=2            # large parties may need 2+ table “places”
+```
+
+**Allocation:** On create, [`try_allocate_and_consume`](telnyx_restaurant/seating_service.py) greedily assigns tables across the stay’s time buckets. If nothing fits and **`waitlist_if_full`**, the row becomes **`seating_status=waitlist`**.
+
+**Waitlist queue order:** [`_waitlist_ordered_for_slot`](telnyx_restaurant/seating_service.py) orders by **VIP first** (explicit `guest_priority=vip` **or** `food_total_cents ≥ HANOK_VIP_PREORDER_CENTS`), then **`created_at`** — so a **VIP** can sort **ahead** of an earlier **normal** waitlister at the **same** floored slot + duration.
+
+**Weighted cap:** `HANOK_WAITLIST_MAX_PER_SLOT` limits the **sum of cap units** where each party contributes units equal to **tables needed** at full template size (e.g. an 8-top on 4-tops often counts as **2**). When **existing + incoming > cap**, create returns **409** / `SeatingUnavailableError` — offer another time (see **`guest_waitlist_alternate_time_hint`** in variables).
+
+**Dynamic variables:** For **`seating_status=waitlist`**, webhook merges **`guest_waitlist_position`**, **`guest_waitlist_queue_size`**, **`guest_waitlist_estimated_wait_minutes`** (≈ position × `HANOK_WAITLIST_MINUTES_PER_POSITION`), **feasibility** hints for multi-table parties, etc., from [`waitlist_queue_metadata`](telnyx_restaurant/seating_service.py).
+
+**Promotion + reminder:** When a table is **released** (cancel/change) or capacity appears, [`promote_waitlist`](telnyx_restaurant/seating_service.py) walks the ordered queue and allocates. On promotion from waitlist to **allocated**, [`schedule_reminder_on_table_allocated`](telnyx_restaurant/reminders.py) can queue the **same** Call Control reminder path as a freshly allocated booking.
+
+**Tests in repo:** [`telnyx_restaurant/tests/test_seating_service.py`](telnyx_restaurant/tests/test_seating_service.py) (cap, VIP ordering, promotion, weighted cap), [`telnyx_restaurant/tests/test_webhook_seating_variables.py`](telnyx_restaurant/tests/test_webhook_seating_variables.py).
+
+---
+
 ## Environment variables
 
 See **[`telnyx_restaurant/.env.example`](telnyx_restaurant/.env.example)** for the full list. Highlights:
@@ -313,7 +381,7 @@ See **[`telnyx_restaurant/.env.example`](telnyx_restaurant/.env.example)** for t
 | **`HANOK_PUBLIC_BASE_URL`** | Public origin (reminder `webhook_url`, MCP). |
 | **`HANOK_MCP_HTTP_MOUNT`**, path / DNS rebinding | MCP on same process. |
 | **`TELNYX_*`** | Outbound reminders + Call Control. |
-| **`HANOK_TABLE_ALLOCATION_ENABLED`**, **`HANOK_TABLE_INVENTORY_JSON`**, **`HANOK_VIP_PREORDER_CENTS`**, **`HANOK_PREMIUM_PREORDER_CENTS`** | Seating + waitlist + premium / VIP tiers. |
+| **`HANOK_TABLE_ALLOCATION_ENABLED`**, **`HANOK_TABLE_INVENTORY_JSON`**, **`HANOK_WAITLIST_*`**, **`HANOK_VIP_PREORDER_CENTS`**, **`HANOK_PREMIUM_PREORDER_CENTS`** | Seating + waitlist + VIP queue vs **premium** concierge / cancel-retention copy in variables (see **Voice & integration test scenarios**). |
 
 ---
 
