@@ -2,8 +2,11 @@
 
 Map keys to variables configured in Telnyx Portal.
 
-Caller resolution (in order): flat `caller_number` / `from`, then
-`data.payload.telnyx_end_user_target` (official assistant.initialization shape).
+Caller resolution gathers `telnyx_end_user_target`, `caller_number`, and `from` (flat and
+`data.payload`, nested first) and returns the first value that looks like a PSTN / E.164
+token. Opaque SIP identities such as ``user@sip.telnyx.com`` (without a ``sip:+1555…`` user
+part) are skipped so a real number field still wins—otherwise premium pre-order variables
+would fall back to the zero-food demo profile.
 
 Lookup matches `guest_phone` using normalized variants (+1 / 11-digit / 10-digit US).
 
