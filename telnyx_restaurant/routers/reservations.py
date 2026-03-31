@@ -82,6 +82,18 @@ def _normalize_starts_at_cmp(dt: datetime | None) -> datetime | None:
     return dt.astimezone(UTC)
 
 
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _reject_if_starts_at_in_past(starts_at_utc: datetime) -> None:
+    if starts_at_utc < _utc_now():
+        raise HTTPException(
+            status_code=400,
+            detail="starts_at cannot be in the past.",
+        )
+
+
 def _booking_mutable_snapshot(row: Reservation) -> tuple:
     """Comparable snapshot for detecting real PATCH mutations (avoids pointless commits / LLM confusion)."""
     return (
@@ -233,10 +245,12 @@ def _apply_reservation_update(db: Session, row: Reservation, body: ReservationUp
     if "starts_at" in body.model_fields_set:
         st = body.starts_at
         if st is not None:
-            row.starts_at = interpret_starts_at_as_utc_storage(
+            new_starts = interpret_starts_at_as_utc_storage(
                 st,
                 hanok_reservation_wall_clock_timezone(),
             )
+            _reject_if_starts_at_in_past(new_starts)
+            row.starts_at = new_starts
     if "special_requests" in body.model_fields_set:
         row.special_requests = body.special_requests
     if "preferred_locale" in body.model_fields_set and body.preferred_locale is not None:
@@ -1098,6 +1112,7 @@ async def create_reservation(
     )
     if hanok_table_allocation_enabled():
         starts_at_norm = floor_slot_start(starts_at_norm, hanok_slot_step_minutes())
+    _reject_if_starts_at_in_past(starts_at_norm)
 
     window = hanok_voice_create_dedup_seconds()
     if window > 0 and body.source_channel == "voice":
