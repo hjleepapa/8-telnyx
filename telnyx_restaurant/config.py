@@ -190,12 +190,12 @@ def hanok_voice_create_dedup_seconds() -> int:
 
 
 def hanok_premium_preorder_cents_threshold() -> int:
-    """``food_total_cents`` at or above this marks high-value pre-orders (dynamic webhook variables). Default 50000 ($500)."""
-    raw = (os.environ.get("HANOK_PREMIUM_PREORDER_CENTS") or "50000").strip()
+    """``food_total_cents`` at or above this marks high-value pre-orders (dynamic webhook variables). Default 30000 ($300)."""
+    raw = (os.environ.get("HANOK_PREMIUM_PREORDER_CENTS") or "30000").strip()
     try:
         return max(0, int(raw))
     except ValueError:
-        return 50000
+        return 30000
 
 
 def hanok_reservation_verbose_logging() -> bool:

@@ -7,7 +7,7 @@ Caller resolution (in order): flat `caller_number` / `from`, then
 
 Lookup matches `guest_phone` using normalized variants (+1 / 11-digit / 10-digit US).
 
-High-value pre-orders (``food_total_cents`` ≥ ``HANOK_PREMIUM_PREORDER_CENTS``, default 50000 = $500)
+High-value pre-orders (``food_total_cents`` ≥ ``HANOK_PREMIUM_PREORDER_CENTS``, default 30000 = $300)
 add ``guest_is_high_value_preorder``, ``guest_preorder_value_tier``, ``concierge_service_hint``,
 and ``cancel_retention_offer`` (complimentary-meal / credit language for cancel intent).
 
