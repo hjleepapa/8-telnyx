@@ -172,6 +172,11 @@ def _telnyx_template_alias_variants(profile: dict[str, Any]) -> None:
         "concierge_service_hint": ("conciergeServiceHint",),
         "reservation_food_total_cents": ("reservationFoodTotalCents", "food_total_cents"),
         "reservation_food_total_display": ("reservationFoodTotalDisplay", "food_total_display"),
+        "reservation_opening_speech_hint": ("reservationOpeningSpeechHint", "opening_speech_hint"),
+        "reservation_status_means_table_secured": (
+            "reservationStatusMeansTableSecured",
+            "table_secured_from_status",
+        ),
     }
     for src, names in extra_aliases.items():
         if src not in profile:
@@ -276,6 +281,27 @@ def _waitlist_queue_speech_variables(
             "guest_waitlist_wait_time_hint": "Table allocation is disabled; waitlist position does not apply.",
         }
     status = (seating_status_resolved or "not_applicable").strip() or "not_applicable"
+    if status == "waitlist" and queue_meta is None:
+        per = hanok_waitlist_minutes_per_position()
+        return {
+            "guest_waitlist_position": "unknown",
+            "guest_waitlist_queue_size": "unknown",
+            "guest_waitlist_estimated_wait_minutes": "unknown",
+            "guest_waitlist_position_ordinal_en": "",
+            "guest_waitlist_tables_required": "unknown",
+            "guest_waitlist_can_seat_after_ahead": "unknown",
+            "guest_waitlist_ahead_queue_feasible": "unknown",
+            "guest_waitlist_seating_capacity_hint": (
+                "Waitlist for this time—queue depth could not be resolved in this variables response; "
+                "do not invent rank or minutes."
+            ),
+            "guest_waitlist_wait_time_hint": (
+                "You are on the waitlist for this seating window; a table is not assigned yet. "
+                "Say waitlist status up front. If you do not have a numeric position from this response, "
+                "do not guess—when the restaurant quotes a place in line, a common rule of thumb is about "
+                f"{per} minutes per spot ahead of you (approximate, not a guarantee)."
+            ),
+        }
     if status != "waitlist" or queue_meta is None:
         empty = {
             "guest_waitlist_position": "0",
@@ -352,6 +378,37 @@ def _merge_waitlist_queue_into_profile(
     profile.update(
         _waitlist_queue_speech_variables(queue_meta=queue_meta, seating_status_resolved=st)
     )
+
+
+def _lifecycle_seating_voice_hints(*, lifecycle_status: str, seating_status: str | None) -> dict[str, str]:
+    """Disambiguate ``status`` (booking lifecycle) vs ``seating_status`` (table/waitlist) for voice prompts."""
+    life = (lifecycle_status or "").strip().lower()
+    seat = (seating_status or "not_applicable").strip().lower() or "not_applicable"
+    out: dict[str, str] = {
+        "reservation_lifecycle_status_spoken": life or "unknown",
+        "reservation_seating_kind_spoken": seat,
+    }
+    if life == "confirmed" and seat == "waitlist":
+        out["reservation_opening_speech_hint"] = (
+            "OPENING: Say first that the booking is saved for that date and time, but they are on the WAITLIST—"
+            "no table is assigned yet. Do not say the table is confirmed or reserved; "
+            "\"confirmed\" here means the booking is in the system, not a guaranteed table."
+        )
+        out["reservation_status_means_table_secured"] = "no"
+    elif seat == "waitlist":
+        out["reservation_opening_speech_hint"] = (
+            "OPENING: This booking is on the waitlist—no table yet. Say that before time or party details."
+        )
+        out["reservation_status_means_table_secured"] = "no"
+    elif seat == "allocated" and life == "confirmed":
+        out["reservation_opening_speech_hint"] = (
+            "OPENING: Confirm the saved booking; a table is assigned for that seating window."
+        )
+        out["reservation_status_means_table_secured"] = "yes"
+    else:
+        out["reservation_opening_speech_hint"] = ""
+        out["reservation_status_means_table_secured"] = "no" if seat == "waitlist" else "unknown"
+    return out
 
 
 def _demo_profile_for_caller(caller_number: str | None) -> dict[str, Any]:
@@ -518,6 +575,12 @@ def _profile_from_db(caller: str | None) -> dict[str, Any] | None:
                 waitlist_queue_metadata(db, row) if out.get("reservation_seating_status") == "waitlist" else None
             )
             _merge_waitlist_queue_into_profile(out, queue_meta=qm)
+            out.update(
+                _lifecycle_seating_voice_hints(
+                    lifecycle_status=str(row.status),
+                    seating_status=row.seating_status,
+                )
+            )
             return out
 
         any_row = db.execute(
@@ -563,6 +626,12 @@ def _profile_from_db(caller: str | None) -> dict[str, Any] | None:
                 else None
             )
             _merge_waitlist_queue_into_profile(out, queue_meta=qm)
+            out.update(
+                _lifecycle_seating_voice_hints(
+                    lifecycle_status=str(any_row.status),
+                    seating_status=any_row.seating_status,
+                )
+            )
             return out
         return None
     finally:

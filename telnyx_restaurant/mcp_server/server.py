@@ -32,7 +32,11 @@ _INSTRUCTIONS = (
     "cancel_reservation or set_reservation_status again with retention_offer_acknowledged=true (or PATCH JSON "
     "{\"status\":\"cancelled\",\"retention_offer_acknowledged\":true}). "
     "After cancel_reservation or set_reservation_status succeeds, say a brief spoken "
-    "confirmation (e.g. reservation cancelled, code HNK-…) — do not stay silent until the user speaks."
+    "confirmation (e.g. reservation cancelled, code HNK-…) — do not stay silent until the user speaks. "
+    "Reservation JSON has both status (lifecycle, often confirmed) and seating_status. "
+    "If seating_status is waitlist, the guest has no table yet—say waitlist first; never treat status=confirmed alone "
+    "as meaning a table is secured. Use guest_waitlist_* / wait_time_hint from webhook variables when present; "
+    "read assistant_seating_opening_hint on API responses."
 )
 
 mcp = FastMCP(
@@ -220,6 +224,9 @@ async def create_reservation(
     - preorder_lines_json: alternatively a JSON array, e.g. [{"menu_item_id":"bulgogi","quantity":2}]
     If both are set, preorder_lines_json wins.
     preferred_locale: optional ``en`` or ``ko`` (stored for dynamic webhook / future calls).
+
+    Response may have seating_status waitlist when no table fits—read assistant_seating_opening_hint and
+    seating_status; do not tell the guest their table is confirmed when seating_status is waitlist.
     """
     body: dict[str, Any] = {
         "guest_name": _clean_str(guest_name),

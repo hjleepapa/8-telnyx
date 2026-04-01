@@ -617,6 +617,10 @@ def waitlist_queue_metadata(db: Session, row: Reservation) -> dict[str, int] | N
     """
     if not hanok_table_allocation_enabled():
         return None
+    if row.id:
+        fresh = db.get(Reservation, row.id)
+        if fresh is not None:
+            row = fresh
     if (row.seating_status or "").strip() != "waitlist":
         return None
     if row.status == ReservationStatus.cancelled.value:

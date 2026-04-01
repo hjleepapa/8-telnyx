@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from telnyx_restaurant.routers.webhook import (
+    _lifecycle_seating_voice_hints,
     _seating_waitlist_profile,
     _waitlist_queue_speech_variables,
 )
+from telnyx_restaurant.schemas_res import ReservationRead
 
 
 def test_allocation_disabled_short_circuits(monkeypatch) -> None:
@@ -93,6 +97,48 @@ def test_waitlist_queue_speech_not_on_list(monkeypatch) -> None:
     v = _waitlist_queue_speech_variables(queue_meta=None, seating_status_resolved="allocated")
     assert v["guest_waitlist_position"] == "0"
     assert v["guest_waitlist_estimated_wait_minutes"] == "0"
+
+
+def test_waitlist_queue_speech_unknown_when_waitlist_but_meta_missing(monkeypatch) -> None:
+    monkeypatch.setenv("HANOK_TABLE_ALLOCATION_ENABLED", "1")
+    monkeypatch.setenv("HANOK_WAITLIST_MINUTES_PER_POSITION", "15")
+    v = _waitlist_queue_speech_variables(queue_meta=None, seating_status_resolved="waitlist")
+    assert v["guest_waitlist_position"] == "unknown"
+    assert v["guest_waitlist_estimated_wait_minutes"] == "unknown"
+    assert "waitlist" in v["guest_waitlist_wait_time_hint"].lower()
+    assert "15" in v["guest_waitlist_wait_time_hint"]
+    assert "do not guess" in v["guest_waitlist_wait_time_hint"].lower()
+
+
+def test_lifecycle_hint_confirmed_waitlist_opens_with_waitlist() -> None:
+    h = _lifecycle_seating_voice_hints(lifecycle_status="confirmed", seating_status="waitlist")
+    assert h["reservation_status_means_table_secured"] == "no"
+    assert "WAITLIST" in h["reservation_opening_speech_hint"]
+
+
+def test_lifecycle_hint_confirmed_allocated_table_secured() -> None:
+    h = _lifecycle_seating_voice_hints(lifecycle_status="confirmed", seating_status="allocated")
+    assert h["reservation_status_means_table_secured"] == "yes"
+
+
+def test_reservation_read_assistant_hint_confirmed_waitlist() -> None:
+    now = datetime.now(UTC)
+    r = ReservationRead(
+        id=60,
+        confirmation_code="HNK-2G2A",
+        guest_name="James",
+        guest_phone="+19259897841",
+        party_size=4,
+        starts_at=now,
+        status="confirmed",
+        special_requests=None,
+        seating_status="waitlist",
+        created_at=now,
+        updated_at=now,
+    )
+    d = r.model_dump(mode="python")
+    assert "assistant_seating_opening_hint" in d
+    assert "WAITLIST" in d["assistant_seating_opening_hint"]
 
 
 def test_allocated_table_hint(monkeypatch) -> None:

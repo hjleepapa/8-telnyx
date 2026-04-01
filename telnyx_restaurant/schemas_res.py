@@ -8,7 +8,15 @@ from typing import Any
 
 from datetime import datetime
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    field_validator,
+    model_validator,
+)
 
 from telnyx_restaurant.models import ReservationStatus
 
@@ -922,6 +930,23 @@ class ReservationRead(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def assistant_seating_opening_hint(self) -> str:
+        """Voice/MCP: lead with waitlist vs table so ``status=confirmed`` is not misread as a secured table."""
+        life = (self.status or "").strip().lower()
+        seat = (self.seating_status or "not_applicable").strip().lower()
+        if seat == "waitlist":
+            if life == "confirmed":
+                return (
+                    "Say first: the booking is saved for that time, but seating is WAITLIST—no table assigned yet. "
+                    "Do not say the table is confirmed or reserved."
+                )
+            return "Say first: this booking is on the waitlist—no table yet."
+        if seat == "allocated" and life == "confirmed":
+            return "Confirm the booking; a table is allocated for that seating window."
+        return ""
 
 
 class ReservationStatusUpdate(BaseModel):
