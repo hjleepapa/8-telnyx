@@ -10,9 +10,35 @@ would fall back to the zero-food demo profile.
 
 Lookup matches `guest_phone` using normalized variants (+1 / 11-digit / 10-digit US).
 
-High-value pre-orders (``food_total_cents`` ≥ ``HANOK_PREMIUM_PREORDER_CENTS``, default 30000 = $300)
-add ``guest_is_high_value_preorder``, ``guest_preorder_value_tier``, ``concierge_service_hint``,
-and ``cancel_retention_offer`` (complimentary-meal / credit language for cancel intent).
+High-value pre-orders (``food_total_cents`` ≥ ``HANOK_PREMIUM_PREORDER_CENTS``, default 30000 = $300;
+same threshold as the API premium cancel gate when enabled) add these dynamic variables:
+
+- ``guest_is_high_value_preorder`` (aliases: ``guestIsHighValuePreorder``, ``is_premium_preorder``) — ``yes`` / ``no``
+- ``guest_preorder_total_crossed_premium_threshold`` (aliases: ``guestPreorderTotalCrossedPremiumThreshold``, ``crossed_premium_preorder``)
+- ``guest_preorder_value_tier`` (aliases: ``guestPreorderValueTier``, ``preorder_value_tier``)
+- ``concierge_service_hint`` (alias: ``conciergeServiceHint``)
+- ``cancel_retention_offer`` (aliases: ``cancelRetentionOffer``, ``retention_offer_text``)
+- ``reservation_food_total_cents`` (aliases: ``reservationFoodTotalCents``, ``food_total_cents``) and ``reservation_food_total_display``
+
+Every response also sets **camelCase** mirrors for these snake_case keys. In the Telnyx Portal you must **define**
+template variables whose names match the JSON keys you paste from a test call (snake_case or camelCase); the platform
+does not auto-discover keys that were never added to the assistant variable list.
+
+If ``caller_line_other_active_bookings_preorder_hint`` is present, more than one active booking shares the line;
+premium flags reflect the **largest** food total on that line—confirm which reservation the caller means.
+
+**Telnyx AI assistant instructions (paste/adapt in Portal):**
+
+1. Bind the assistant’s dynamic-variables request to ``POST …/webhooks/telnyx/variables`` and map every key above
+   (plus caller lookup fields) into template variables. Use ``telnyx_end_user_target`` for tools so PSTN maps to DB rows.
+2. **Premium behavior:** When ``guest_is_high_value_preorder`` is ``yes``, follow ``concierge_service_hint`` for tone
+   and offers. On cancel intent, **read or paraphrase** ``cancel_retention_offer`` once before calling cancel tools;
+   the API may return **409** until retention is acknowledged—then retry with ``retention_offer_acknowledged`` as
+   documented for your MCP/HTTP client.
+3. **Validate wiring:** Place a test booking with preorder food total ≥ $300 (after discount: ``food_total_cents`` in
+   admin/API). Call in (or trigger variables); expect ``guest_is_high_value_preorder`` = ``yes`` and non-empty
+   premium ``cancel_retention_offer``. If you see ``standard`` and ``_source`` = ``demo`` in the JSON, caller ID did
+   not match the DB row—fix ``telnyx_end_user_target`` / phone mapping first.
 
 With ``HANOK_TABLE_ALLOCATION_ENABLED``, reservations expose ``reservation_seating_status``,
 ``guest_waitlist_priority``, ``waitlist_fairness_hint``, and wait-time fields
@@ -116,6 +142,44 @@ def _premium_concierge_variables(*, food_total_cents: int, threshold: int | None
         "concierge_service_hint": hint,
         "cancel_retention_offer": retention,
     }
+
+
+def _snake_to_camel(s: str) -> str:
+    parts = s.split("_")
+    if not parts:
+        return s
+    return parts[0] + "".join(p.title() for p in parts[1:] if p)
+
+
+def _ensure_premium_concierge_on_profile(profile: dict[str, Any]) -> None:
+    """If premium keys are missing, derive from ``reservation_food_total_cents`` (defensive)."""
+    if "cancel_retention_offer" in profile and "guest_preorder_value_tier" in profile:
+        return
+    food = int(profile.get("reservation_food_total_cents") or 0)
+    profile.update(_premium_concierge_variables(food_total_cents=food))
+
+
+def _telnyx_template_alias_variants(profile: dict[str, Any]) -> None:
+    """Telnyx assistants often bind camelCase or shorter names; mirror values without removing snake_case."""
+    extra_aliases: dict[str, tuple[str, ...]] = {
+        "guest_is_high_value_preorder": ("guestIsHighValuePreorder", "is_premium_preorder"),
+        "guest_preorder_total_crossed_premium_threshold": (
+            "guestPreorderTotalCrossedPremiumThreshold",
+            "crossed_premium_preorder",
+        ),
+        "guest_preorder_value_tier": ("guestPreorderValueTier", "preorder_value_tier"),
+        "cancel_retention_offer": ("cancelRetentionOffer", "retention_offer_text"),
+        "concierge_service_hint": ("conciergeServiceHint",),
+        "reservation_food_total_cents": ("reservationFoodTotalCents", "food_total_cents"),
+        "reservation_food_total_display": ("reservationFoodTotalDisplay", "food_total_display"),
+    }
+    for src, names in extra_aliases.items():
+        if src not in profile:
+            continue
+        val = profile[src]
+        profile[_snake_to_camel(src)] = val
+        for a in names:
+            profile[a] = val
 
 
 def _seating_waitlist_profile(
@@ -831,5 +895,7 @@ async def dynamic_webhook_variables(
             "Demo: after a reservation, Hanok schedules an outbound reminder (HANOK_REMINDER_DELAY_SECONDS). "
             "Use the Call Control webhook POST …/webhooks/telnyx/call-control so answered calls speak the reminder."
         )
+    _ensure_premium_concierge_on_profile(profile)
     _enrich_caller_identification_for_profile(profile, caller)
+    _telnyx_template_alias_variants(profile)
     return profile

@@ -198,6 +198,19 @@ def hanok_premium_preorder_cents_threshold() -> int:
         return 30000
 
 
+def hanok_premium_cancel_retention_gate_enabled() -> bool:
+    """If true, PATCH to ``cancelled`` for bookings at/above the premium preorder threshold returns 409 until acknowledged.
+
+    Set ``HANOK_PREMIUM_CANCEL_RETENTION_GATE=0`` to disable (e.g. automated tests or admin-only APIs).
+    """
+    return (os.environ.get("HANOK_PREMIUM_CANCEL_RETENTION_GATE") or "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
 def hanok_reservation_verbose_logging() -> bool:
     """If true, log PATCH /amend and …/status bodies (truncated) at INFO for debugging Telnyx tools."""
     return (os.environ.get("HANOK_RESERVATION_VERBOSE_LOG") or "").strip().lower() in (

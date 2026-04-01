@@ -19,6 +19,8 @@ from starlette.requests import ClientDisconnect, Request
 
 from telnyx_restaurant.config import (
     hanok_default_reservation_duration_minutes,
+    hanok_premium_cancel_retention_gate_enabled,
+    hanok_premium_preorder_cents_threshold,
     hanok_reservation_lab_enabled,
     hanok_reservation_verbose_logging,
     hanok_reservation_wall_clock_timezone,
@@ -204,6 +206,7 @@ def _truthy_non_status_reservation_fields(body: ReservationUpdate) -> bool:
 def _effective_reservation_patch_fields(body: ReservationUpdate) -> set[str]:
     """Telnyx sends preorder: [] alongside other fields; [] means omit, not clear (see _apply_reservation_update)."""
     fs = set(body.model_fields_set)
+    fs.discard("retention_offer_acknowledged")
     if "preorder" in fs and body.preorder is not None and len(body.preorder) == 0:
         fs.discard("preorder")
     if "preorder" in fs and body.preorder is None and not _preorder_null_clears_cart(body):
@@ -223,6 +226,63 @@ def _reject_modifying_cancelled(row: Reservation) -> None:
             status_code=409,
             detail="Reservation is cancelled; create a new booking or change status first.",
         )
+
+
+_RETENTION_CANCEL_ACK_FLAT_KEYS = frozenset(
+    (
+        "retention_offer_acknowledged",
+        "retention_acknowledged",
+        "retention_ack",
+        "cancel_after_retention_offer",
+        "guest_confirmed_cancel_after_retention",
+    )
+)
+
+
+def _truthy_retention_cancel_ack(flat: dict[str, Any]) -> bool:
+    for k in _RETENTION_CANCEL_ACK_FLAT_KEYS:
+        v = flat.get(k)
+        if v is True:
+            return True
+        if isinstance(v, str) and v.strip().lower() in ("1", "true", "yes", "y"):
+            return True
+        if isinstance(v, (int, float)) and v == 1:
+            return True
+    return False
+
+
+def _strip_retention_cancel_ack_from_flat(flat: dict[str, Any]) -> None:
+    for k in _RETENTION_CANCEL_ACK_FLAT_KEYS:
+        flat.pop(k, None)
+
+
+def _raise_if_premium_cancel_blocked(row: Reservation, flat: dict[str, Any]) -> None:
+    """First cancel attempt for premium pre-orders returns 409 until retention is acknowledged in body or query."""
+    if not hanok_premium_cancel_retention_gate_enabled():
+        return
+    if row.status == ReservationStatus.cancelled.value:
+        return
+    th = hanok_premium_preorder_cents_threshold()
+    if th <= 0:
+        return
+    if int(row.food_total_cents or 0) < th:
+        return
+    if _truthy_retention_cancel_ack(flat):
+        return
+    raise HTTPException(
+        status_code=409,
+        detail={
+            "code": "premium_cancel_requires_retention_step",
+            "message": (
+                "High-value pre-order (food total at or above the premium threshold). Offer the guest the "
+                "retention described in webhook variable cancel_retention_offer (banchan/dessert/credit), then "
+                "repeat the cancel request with retention_offer_acknowledged=true in the JSON body, "
+                "or ?retention_ack=1 (or retention_offer_acknowledged=true) on the URL."
+            ),
+            "food_total_cents": int(row.food_total_cents or 0),
+            "premium_threshold_cents": th,
+        },
+    )
 
 
 def _apply_reservation_update(db: Session, row: Reservation, body: ReservationUpdate) -> bool:
@@ -454,6 +514,9 @@ def _patch_at_status_core(db: Session, row: Reservation, flat: dict[str, Any]) -
     if patch is not None and eff:
         if _truthy_non_status_reservation_fields(patch):
             _reject_modifying_cancelled(row)
+        if "status" in eff and patch.status == ReservationStatus.cancelled.value:
+            _raise_if_premium_cancel_blocked(row, flat)
+            _strip_retention_cancel_ack_from_flat(flat)
         changed = _apply_reservation_update_for_api(db, row, patch)
         if changed:
             db.commit()
@@ -513,6 +576,9 @@ def _patch_at_status_core(db: Session, row: Reservation, flat: dict[str, Any]) -
         )
         return row, False
     prev_status = row.status
+    if parsed.status == ReservationStatus.cancelled.value:
+        _raise_if_premium_cancel_blocked(row, flat)
+        _strip_retention_cancel_ack_from_flat(flat)
     row.status = parsed.status
     row.updated_at = datetime.now(UTC)
     if (
@@ -558,6 +624,7 @@ async def _patch_at_status_url(
     row_id: int,
     query_status: str | None,
     cancel: str | None,
+    retention_ack: str | None = None,
 ) -> tuple[ReservationRead, bool]:
     """Telnyx often binds `…/status` for all updates — accept full ReservationUpdate here too.
 
@@ -565,6 +632,10 @@ async def _patch_at_status_url(
     """
     body = await read_json_or_form_body(request)
     flat = _unwrap_nested_reservation_payload(dict(body))
+    if retention_ack is not None and str(retention_ack).strip():
+        flat["retention_offer_acknowledged"] = str(retention_ack).strip()
+    else:
+        _merge_retention_ack_query_into_flat(request, flat)
     for k in (
         "confirmation_code",
         "code",
@@ -589,6 +660,13 @@ async def _patch_at_status_url(
         )
 
     return await run_in_threadpool(_patch_at_status_in_thread, row_id, flat)
+
+
+def _merge_retention_ack_query_into_flat(request: Request, flat: dict[str, Any]) -> None:
+    qp = request.query_params
+    ra = (qp.get("retention_ack") or qp.get("retention_offer_acknowledged") or "").strip()
+    if ra:
+        flat["retention_offer_acknowledged"] = ra
 
 
 async def read_status_request_payload(request: Request) -> dict[str, Any]:
@@ -1391,6 +1469,10 @@ async def update_status_by_code(
         None,
         description="If 1/true/yes/cancel, sets status to cancelled (no JSON body needed).",
     ),
+    retention_ack: str | None = Query(
+        None,
+        description="Premium pre-order cancels: set 1/true after retention offer (or use JSON retention_offer_acknowledged).",
+    ),
 ):
     """Status and/or party time / pre-order / guest fields (miswired Telnyx tools often hit …/status)."""
     code = _normalize_confirmation_code(_reject_unsubstituted_path_value(code))
@@ -1400,7 +1482,11 @@ async def update_status_by_code(
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
     out, changed = await _patch_at_status_url(
-        request, row_id=row.id, query_status=status, cancel=cancel
+        request,
+        row_id=row.id,
+        query_status=status,
+        cancel=cancel,
+        retention_ack=retention_ack,
     )
     _set_changed_header(response, changed)
     return out
@@ -1412,6 +1498,10 @@ def patch_reservation_by_code(
     body: ReservationUpdate,
     response: Response,
     db: Session = Depends(get_db),
+    retention_ack: str | None = Query(
+        None,
+        description="Premium cancel: pass 1/true after retention offer if JSON cannot include retention_offer_acknowledged.",
+    ),
 ):
     """Update party size, time, pre-order, or guest fields using confirmation code (voice-friendly)."""
     code = _normalize_confirmation_code(_reject_unsubstituted_path_value(code))
@@ -1423,6 +1513,14 @@ def patch_reservation_by_code(
     _require_reservation_update_fields(body)
     if _truthy_non_status_reservation_fields(body):
         _reject_modifying_cancelled(row)
+    ack_flat: dict[str, Any] = dict(body.model_dump(exclude_unset=True))
+    if retention_ack is not None and str(retention_ack).strip():
+        ack_flat["retention_offer_acknowledged"] = retention_ack.strip()
+    if (
+        "status" in _effective_reservation_patch_fields(body)
+        and body.status == ReservationStatus.cancelled.value
+    ):
+        _raise_if_premium_cancel_blocked(row, ack_flat)
     changed = _apply_reservation_update_for_api(db, row, body)
     if changed:
         db.commit()
@@ -1472,6 +1570,7 @@ async def _patch_amend_from_request(
 
     flat = _unwrap_nested_reservation_payload(dict(raw))
     qp = request.query_params
+    _merge_retention_ack_query_into_flat(request, flat)
     _flat_apply_cancel_and_query_status(
         flat,
         query_status=qp.get("status"),
@@ -1649,6 +1748,12 @@ async def _patch_amend_from_request(
         raise
     if _truthy_non_status_reservation_fields(body):
         _reject_modifying_cancelled(row)
+    if (
+        "status" in _effective_reservation_patch_fields(body)
+        and body.status == ReservationStatus.cancelled.value
+    ):
+        _raise_if_premium_cancel_blocked(row, flat)
+        _strip_retention_cancel_ack_from_flat(flat)
     changed = _apply_reservation_update_for_api(db, row, body)
     if changed:
         db.commit()
@@ -1733,6 +1838,10 @@ async def update_status(
         None,
         description="If 1/true/yes/cancel, sets status to cancelled (no JSON body needed).",
     ),
+    retention_ack: str | None = Query(
+        None,
+        description="Premium pre-order cancels: set 1/true after retention offer (or use JSON retention_offer_acknowledged).",
+    ),
 ):
     """Register before /{reservation_id}. Same as PATCH /{id} when body includes party/time/pre-order."""
     reservation_id_int = _parse_reservation_id_path(reservation_id)
@@ -1740,7 +1849,11 @@ async def update_status(
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
     out, changed = await _patch_at_status_url(
-        request, row_id=row.id, query_status=status, cancel=cancel
+        request,
+        row_id=row.id,
+        query_status=status,
+        cancel=cancel,
+        retention_ack=retention_ack,
     )
     _set_changed_header(response, changed)
     return out
@@ -1802,6 +1915,10 @@ def patch_reservation(
     body: ReservationUpdate,
     response: Response,
     db: Session = Depends(get_db),
+    retention_ack: str | None = Query(
+        None,
+        description="Premium cancel: pass 1/true after retention offer if JSON cannot include retention_offer_acknowledged.",
+    ),
 ):
     """Update party size, time, pre-order, or guest details (partial PATCH)."""
     reservation_id_int = _parse_reservation_id_path(reservation_id)
@@ -1811,6 +1928,14 @@ def patch_reservation(
     _require_reservation_update_fields(body)
     if _truthy_non_status_reservation_fields(body):
         _reject_modifying_cancelled(row)
+    ack_flat: dict[str, Any] = dict(body.model_dump(exclude_unset=True))
+    if retention_ack is not None and str(retention_ack).strip():
+        ack_flat["retention_offer_acknowledged"] = retention_ack.strip()
+    if (
+        "status" in _effective_reservation_patch_fields(body)
+        and body.status == ReservationStatus.cancelled.value
+    ):
+        _raise_if_premium_cancel_blocked(row, ack_flat)
     changed = _apply_reservation_update_for_api(db, row, body)
     if changed:
         db.commit()

@@ -397,6 +397,7 @@
           }
           var r = await doFetch("PATCH", "/api/reservations/" + encodeURIComponent(id) + "/status", {
             status: "cancelled",
+            retention_offer_acknowledged: true,
           });
           if (r.ok) logLine("Reservation cancelled (row still in DB with status cancelled).");
         });

@@ -780,6 +780,14 @@ class ReservationUpdate(BaseModel):
             "reservationStatus",
         ),
     )
+    retention_offer_acknowledged: bool | None = Field(
+        None,
+        description="Premium pre-order cancel: set true after offering retention (server gate; not stored on row).",
+        validation_alias=AliasChoices(
+            "retention_offer_acknowledged",
+            "retention_acknowledged",
+        ),
+    )
     preorder: list[PreorderLineIn] | None = Field(None, validation_alias=PREORDER_ALIASES)
     preferred_locale: str | None = Field(
         None,

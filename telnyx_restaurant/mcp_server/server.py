@@ -27,9 +27,10 @@ _INSTRUCTIONS = (
     "(e.g. bulgogi:2,kimchi_jjigae:1) or preorder_lines_json — do not submit create_reservation "
     "with no preorder if they chose dishes. "
     "Details patch: PATCH /{id}/amend; lifecycle/cancel: PATCH /{id}/status. "
-    "Before cancel_reservation, if dynamic variables have guest_is_high_value_preorder=yes or "
-    "cancel_retention_offer mentions a complimentary perk, briefly offer that retention once in natural "
-    "language—the guest may still insist on cancelling. "
+    "Cancelling: the API may return HTTP 409 premium_cancel_requires_retention_step for large pre-orders ($300+ "
+    "food total by default). Read the error message, speak the offer from cancel_retention_offer, then call "
+    "cancel_reservation or set_reservation_status again with retention_offer_acknowledged=true (or PATCH JSON "
+    "{\"status\":\"cancelled\",\"retention_offer_acknowledged\":true}). "
     "After cancel_reservation or set_reservation_status succeeds, say a brief spoken "
     "confirmation (e.g. reservation cancelled, code HNK-…) — do not stay silent until the user speaks."
 )
@@ -309,11 +310,18 @@ async def update_reservation_details(
     )
 
 
-async def _patch_reservation_status(reservation_id: int, status: str) -> str:
+async def _patch_reservation_status(
+    reservation_id: int,
+    status: str,
+    *,
+    retention_offer_acknowledged: bool = False,
+) -> str:
     st = status.strip().lower()
     if st in ("cancel", "canceled", "cancellation"):
         st = "cancelled"
-    body = {"status": st}
+    body: dict[str, Any] = {"status": st}
+    if st == "cancelled" and retention_offer_acknowledged:
+        body["retention_offer_acknowledged"] = True
     return await _http_json(
         "PATCH",
         f"/api/reservations/{int(reservation_id)}/status",
@@ -323,18 +331,37 @@ async def _patch_reservation_status(reservation_id: int, status: str) -> str:
 
 
 @mcp.tool()
-async def set_reservation_status(reservation_id: int, status: str) -> str:
+async def set_reservation_status(
+    reservation_id: int,
+    status: str,
+    retention_offer_acknowledged: bool = False,
+) -> str:
     """
     Update lifecycle only: pending, confirmed, seated, completed, cancelled.
     For cancel you may pass cancelled, cancel, or canceled.
+    If the API returned 409 premium_cancel_requires_retention_step, set retention_offer_acknowledged=true on retry.
     """
-    return await _patch_reservation_status(reservation_id, status)
+    return await _patch_reservation_status(
+        reservation_id,
+        status,
+        retention_offer_acknowledged=retention_offer_acknowledged,
+    )
 
 
 @mcp.tool()
-async def cancel_reservation(reservation_id: int) -> str:
-    """Cancel a reservation (sets status to cancelled)."""
-    return await _patch_reservation_status(reservation_id, "cancelled")
+async def cancel_reservation(
+    reservation_id: int,
+    retention_offer_acknowledged: bool = False,
+) -> str:
+    """Cancel a reservation (sets status to cancelled).
+
+    After a 409 premium retention response, call again with retention_offer_acknowledged=true.
+    """
+    return await _patch_reservation_status(
+        reservation_id,
+        "cancelled",
+        retention_offer_acknowledged=retention_offer_acknowledged,
+    )
 
 
 def _clean_str(s: str) -> str:
