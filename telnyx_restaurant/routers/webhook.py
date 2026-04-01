@@ -63,7 +63,10 @@ from telnyx_restaurant.reminders import build_reminder_speak_text, telnyx_hangup
 from telnyx_restaurant.seating_service import waitlist_queue_metadata
 from telnyx_restaurant.locale_prefs import assistant_locale_hint
 from telnyx_restaurant.webhook_payload import extract_caller_number
-from telnyx_restaurant.routers.reservations import reservation_candidates_for_caller_line
+from telnyx_restaurant.routers.reservations import (
+    _candidate_pool_for_phone,
+    reservation_candidates_for_caller_line,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -75,6 +78,11 @@ _hanok_cc_ids: set[str] = set()
 def _locale_profile_fields(row: Reservation) -> dict[str, Any]:
     pref = (getattr(row, "preferred_locale", None) or "en").strip() or "en"
     return {"preferred_locale": pref, "locale_hint": assistant_locale_hint(pref)}
+
+
+def _line_preorder_total_max_for_premium(pool: list[Reservation]) -> int:
+    """Max ``food_total_cents`` across active bookings on this line for premium / cancel-retention tiering."""
+    return max(int(r.food_total_cents) for r in pool)
 
 
 def _food_display(cents: int) -> str:
@@ -398,100 +406,101 @@ def _profile_from_db(caller: str | None) -> dict[str, Any] | None:
     db = SessionLocal()
     try:
         now = datetime.now(UTC)
-        row = db.execute(
-            select(Reservation)
-            .where(
-                Reservation.guest_phone.in_(variants),
-                Reservation.starts_at >= now,
-                Reservation.status != ReservationStatus.cancelled.value,
+        pool = _candidate_pool_for_phone(db, variants, now)
+        if pool:
+            row = pool[0]
+            line_max_food = _line_preorder_total_max_for_premium(pool)
+            first = row.guest_name.split()[0] if row.guest_name else "Guest"
+            lines = row.preorder_items
+            summary = preorder_summary_text(lines)
+            out = {
+                "guest_display_name": first,
+                "vip_tier": "confirmed_guest",
+                "preferred_venue_slug": "hanok-table",
+                "default_party_size": row.party_size,
+                **(_locale_profile_fields(row)),
+                "has_upcoming_reservation": True,
+                "next_reservation_code": row.confirmation_code,
+                "next_reservation_at": row.starts_at.isoformat(),
+                "reservation_preorder_summary": summary or "none",
+                "reservation_food_subtotal_cents": row.food_subtotal_cents,
+                "reservation_preorder_discount_cents": row.preorder_discount_cents,
+                "reservation_food_total_cents": row.food_total_cents,
+                "reservation_food_total_display": _food_display(row.food_total_cents),
+                "reservation_has_preorder": bool(lines),
+                "reservation_source_channel": row.source_channel,
+                "demo_reminder_note": (
+                    "Demo: new bookings schedule an outbound reminder (delay via HANOK_REMINDER_DELAY_SECONDS). "
+                    "Set TELNYX_API_KEY, TELNYX_CONNECTION_ID, TELNYX_FROM_NUMBER, and point the Call Control app "
+                    "webhook to POST …/webhooks/telnyx/call-control so the call plays TTS when answered."
+                ),
+            }
+            if len(pool) > 1:
+                out["caller_line_other_active_bookings_preorder_hint"] = (
+                    "This phone has more than one upcoming reservation; pre-order totals may differ by booking. "
+                    "guest_is_high_value_preorder / cancel_retention_offer reflect the largest pre-order dollar amount "
+                    "among active bookings on this line—still confirm which reservation to change or cancel."
+                )
+            # Premium / retention use the max total on the line so a smaller earlier booking does not hide a $300+ cart.
+            out.update(_premium_concierge_variables(food_total_cents=line_max_food))
+            out.update(
+                _seating_waitlist_profile(
+                    food_total_cents=int(row.food_total_cents),
+                    guest_priority_raw=row.guest_priority,
+                    seating_status_raw=row.seating_status,
+                )
             )
-            .order_by(Reservation.starts_at.asc())
+            qm = (
+                waitlist_queue_metadata(db, row) if out.get("reservation_seating_status") == "waitlist" else None
+            )
+            _merge_waitlist_queue_into_profile(out, queue_meta=qm)
+            return out
+
+        any_row = db.execute(
+            select(Reservation)
+            .where(Reservation.guest_phone.in_(variants))
+            .order_by(Reservation.starts_at.desc())
             .limit(1)
         ).scalar_one_or_none()
-        if not row:
-            any_row = db.execute(
-                select(Reservation)
-                .where(Reservation.guest_phone.in_(variants))
-                .order_by(Reservation.starts_at.desc())
-                .limit(1)
-            ).scalar_one_or_none()
-            if any_row:
-                first = any_row.guest_name.split()[0] if any_row.guest_name else "Guest"
-                lines_past = any_row.preorder_items
-                summary_past = preorder_summary_text(lines_past)
-                out = {
-                    "guest_display_name": first,
-                    "vip_tier": "returning",
-                    "preferred_venue_slug": "hanok-table",
-                    "default_party_size": any_row.party_size,
-                    **(_locale_profile_fields(any_row)),
-                    "has_upcoming_reservation": False,
-                    # Same key as the upcoming branch so HTTP tools can bind confirmation_code even
-                    # when the only row in range is in the past (e.g. modify pre-order after the meal).
-                    "next_reservation_code": any_row.confirmation_code,
-                    "next_reservation_at": any_row.starts_at.isoformat(),
-                    "reservation_preorder_summary": summary_past or "none",
-                    "reservation_food_subtotal_cents": any_row.food_subtotal_cents,
-                    "reservation_preorder_discount_cents": any_row.preorder_discount_cents,
-                    "reservation_food_total_cents": any_row.food_total_cents,
-                    "reservation_food_total_display": _food_display(any_row.food_total_cents),
-                    "reservation_has_preorder": bool(lines_past),
-                    "reservation_source_channel": any_row.source_channel,
-                }
-                out.update(_premium_concierge_variables(food_total_cents=int(any_row.food_total_cents)))
-                out.update(
-                    _seating_waitlist_profile(
-                        food_total_cents=int(any_row.food_total_cents),
-                        guest_priority_raw=any_row.guest_priority,
-                        seating_status_raw=any_row.seating_status,
-                    )
+        if any_row:
+            first = any_row.guest_name.split()[0] if any_row.guest_name else "Guest"
+            lines_past = any_row.preorder_items
+            summary_past = preorder_summary_text(lines_past)
+            out = {
+                "guest_display_name": first,
+                "vip_tier": "returning",
+                "preferred_venue_slug": "hanok-table",
+                "default_party_size": any_row.party_size,
+                **(_locale_profile_fields(any_row)),
+                "has_upcoming_reservation": False,
+                # Same key as the upcoming branch so HTTP tools can bind confirmation_code even
+                # when the only row in range is in the past (e.g. modify pre-order after the meal).
+                "next_reservation_code": any_row.confirmation_code,
+                "next_reservation_at": any_row.starts_at.isoformat(),
+                "reservation_preorder_summary": summary_past or "none",
+                "reservation_food_subtotal_cents": any_row.food_subtotal_cents,
+                "reservation_preorder_discount_cents": any_row.preorder_discount_cents,
+                "reservation_food_total_cents": any_row.food_total_cents,
+                "reservation_food_total_display": _food_display(any_row.food_total_cents),
+                "reservation_has_preorder": bool(lines_past),
+                "reservation_source_channel": any_row.source_channel,
+            }
+            out.update(_premium_concierge_variables(food_total_cents=int(any_row.food_total_cents)))
+            out.update(
+                _seating_waitlist_profile(
+                    food_total_cents=int(any_row.food_total_cents),
+                    guest_priority_raw=any_row.guest_priority,
+                    seating_status_raw=any_row.seating_status,
                 )
-                qm = (
-                    waitlist_queue_metadata(db, any_row)
-                    if out.get("reservation_seating_status") == "waitlist"
-                    else None
-                )
-                _merge_waitlist_queue_into_profile(out, queue_meta=qm)
-                return out
-            return None
-        first = row.guest_name.split()[0] if row.guest_name else "Guest"
-        lines = row.preorder_items
-        summary = preorder_summary_text(lines)
-        out = {
-            "guest_display_name": first,
-            "vip_tier": "confirmed_guest",
-            "preferred_venue_slug": "hanok-table",
-            "default_party_size": row.party_size,
-            **(_locale_profile_fields(row)),
-            "has_upcoming_reservation": True,
-            "next_reservation_code": row.confirmation_code,
-            "next_reservation_at": row.starts_at.isoformat(),
-            "reservation_preorder_summary": summary or "none",
-            "reservation_food_subtotal_cents": row.food_subtotal_cents,
-            "reservation_preorder_discount_cents": row.preorder_discount_cents,
-            "reservation_food_total_cents": row.food_total_cents,
-            "reservation_food_total_display": _food_display(row.food_total_cents),
-            "reservation_has_preorder": bool(lines),
-            "reservation_source_channel": row.source_channel,
-            "demo_reminder_note": (
-                "Demo: new bookings schedule an outbound reminder (delay via HANOK_REMINDER_DELAY_SECONDS). "
-                "Set TELNYX_API_KEY, TELNYX_CONNECTION_ID, TELNYX_FROM_NUMBER, and point the Call Control app "
-                "webhook to POST …/webhooks/telnyx/call-control so the call plays TTS when answered."
-            ),
-        }
-        out.update(_premium_concierge_variables(food_total_cents=int(row.food_total_cents)))
-        out.update(
-            _seating_waitlist_profile(
-                food_total_cents=int(row.food_total_cents),
-                guest_priority_raw=row.guest_priority,
-                seating_status_raw=row.seating_status,
             )
-        )
-        qm = (
-            waitlist_queue_metadata(db, row) if out.get("reservation_seating_status") == "waitlist" else None
-        )
-        _merge_waitlist_queue_into_profile(out, queue_meta=qm)
-        return out
+            qm = (
+                waitlist_queue_metadata(db, any_row)
+                if out.get("reservation_seating_status") == "waitlist"
+                else None
+            )
+            _merge_waitlist_queue_into_profile(out, queue_meta=qm)
+            return out
+        return None
     finally:
         db.close()
 

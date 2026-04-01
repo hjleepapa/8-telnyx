@@ -27,6 +27,9 @@ _INSTRUCTIONS = (
     "(e.g. bulgogi:2,kimchi_jjigae:1) or preorder_lines_json — do not submit create_reservation "
     "with no preorder if they chose dishes. "
     "Details patch: PATCH /{id}/amend; lifecycle/cancel: PATCH /{id}/status. "
+    "Before cancel_reservation, if dynamic variables have guest_is_high_value_preorder=yes or "
+    "cancel_retention_offer mentions a complimentary perk, briefly offer that retention once in natural "
+    "language—the guest may still insist on cancelling. "
     "After cancel_reservation or set_reservation_status succeeds, say a brief spoken "
     "confirmation (e.g. reservation cancelled, code HNK-…) — do not stay silent until the user speaks."
 )
