@@ -74,7 +74,7 @@ This project is structured around the four required pillars below. Each maps dir
 | **Callable via phone number** | Point a **Telnyx number** at your assistant; the assistant uses MCP (and/or HTTP tools) against your deployed API. |
 | **Real conversational interactions** | Tools support natural aliases (phones, names, confirmation codes, `HNK-…` codes); voice **dedup** reduces double-booking from repeated tool calls. |
 
-**What you configure in Telnyx:** assistant instructions should tell the model to read **tool JSON** after creates (especially `seating_status`: **allocated** vs **waitlist**) and to use **dynamic variables** (below) when the portal merges them into prompts.
+**What you configure in Telnyx:** assistant instructions should tell the model to read **`data` from MCP tool JSON** after **create** and **lookup** (especially `seating_status`: **allocated** vs **waitlist**). When **`seating_status`** is **`waitlist`**, the API also returns **`guest_waitlist_estimated_wait_minutes`**, **`guest_waitlist_position`**, **`guest_waitlist_queue_size`**, **`guest_waitlist_wait_time_hint`**, and **`assistant_seating_opening_hint`** so the model can quote approximate wait time even before the next variables webhook refresh. Also bind **dynamic variables** (below) when the portal merges them into prompts.
 
 ---
 
@@ -95,7 +95,7 @@ This project is structured around the four required pillars below. Each maps dir
 | Requirement | How this project satisfies it |
 |-------------|-------------------------------|
 | **Implement dynamic webhook variables** | **`POST /webhooks/telnyx/variables`** returns JSON keyed for instruction templates (map keys in Telnyx to these fields). |
-| **Personalize / fetch context** | Caller ANI is matched to **`guest_phone`** (normalized variants). Response includes guest name, **upcoming reservation** metadata, pre-order summary and **food totals**, **seating / waitlist** fields when table allocation is on, and **concierge** hints for high-value pre-orders. |
+| **Personalize / fetch context** | Caller ANI is matched to **`guest_phone`** (normalized variants). Response includes guest name, **upcoming reservation** metadata, pre-order summary and **food totals**, **seating / waitlist** fields when table allocation is on (including **`guest_waitlist_*`**, **`reservation_opening_speech_hint`**, **`reservation_status_means_table_secured`** so “confirmed” is not misread as a secured table), and **concierge** hints for high-value pre-orders. |
 | **Show how data improves the flow** | Example: if `{{guest_is_high_value_preorder}}` is **yes**, instructions can use `{{concierge_service_hint}}` and `{{cancel_retention_offer}}` on cancel intent; if `{{reservation_seating_status}}` is **waitlist**, the assistant should **not** say a table is confirmed until **allocated**. |
 | **Deployed API** | Variables resolve against **PostgreSQL**; set **`DB_URI`** on Render. Without a DB, behavior is limited (demo ANI suffixes still return synthetic profiles in code). |
 
@@ -142,13 +142,18 @@ If the caller wants to cancel or change time and {{guest_is_high_value_preorder}
 — Language —
 If {{locale_hint}} is ko-KR, carry the conversation in Korean (menus, times, confirmations). Otherwise use English (en-US) unless the caller switches language.
 
-— After create_reservation / tool JSON (seating) —
-Read seating_status (ReservationRead):
-• waitlist — No table at that time; they are on the waitlist; they still have a confirmation code. Do NOT say a table is reserved.
+— After create_reservation / get_reservation — tool JSON `data` (ReservationRead) —
+Read `seating_status` and, when present, `assistant_seating_opening_hint` (say waitlist first when waitlisted).
+• waitlist — No table at that time; they are on the waitlist; they may still have a confirmation code. Do NOT say a table is reserved.
 • allocated — Table assigned; you may mention table sizes if present.
 • not_applicable — Table allocation may be off; do not promise table logic unless the product uses allocation.
 
-Reservation status = confirmed only means the booking is stored—not that a table exists when seating_status is waitlist.
+When `seating_status` is waitlist, `data` includes numeric/spoken waitlist helpers: `guest_waitlist_position`, `guest_waitlist_queue_size`, `guest_waitlist_estimated_wait_minutes`, `guest_waitlist_position_ordinal_en`, `guest_waitlist_wait_time_hint` — read `guest_waitlist_wait_time_hint` or the numeric ETA aloud (approximate).
+
+Reservation `status` = confirmed only means the booking is stored—not that a table exists when `seating_status` is waitlist.
+
+— Opening framing (dynamic webhook) —
+When `{{reservation_opening_speech_hint}}` (or camelCase `reservationOpeningSpeechHint`, `opening_speech_hint`) is non-empty, follow it for what to say first. Use `{{reservation_status_means_table_secured}}` (yes/no/unknown) so you do not imply a table is held when it is `no`.
 
 Dynamic webhook: if {{reservation_seating_status}} is waitlist, they do not have a table yet; use {{waitlist_fairness_hint}} for VIP/fairness. When the restaurant is full and you must not offer waitlist, use waitlist_if_full false on create; otherwise the API may still return 200 with seating_status waitlist.
 
@@ -157,6 +162,7 @@ If {{reservation_seating_status}} is exactly "waitlist" AND {{guest_waitlist_pos
 • Say they are {{guest_waitlist_position_ordinal_en}} in line when non-empty; otherwise "number" {{guest_waitlist_position}}.
 • Mention {{guest_waitlist_queue_size}} parties on the waitlist for that window.
 • Estimated wait ≈ {{guest_waitlist_estimated_wait_minutes}} minutes (not exact). With defaults, about 15 minutes per position (1st ≈ 15, 2nd ≈ 30, …).
+• If {{guest_waitlist_position}} or EWT is "unknown", use {{guest_waitlist_wait_time_hint}} and do not invent rank or minutes; prefer the same fields from the last MCP `data` when the booking was just created.
 • You may use {{guest_waitlist_wait_time_hint}} verbatim or paraphrase.
 • Cap: {{guest_waitlist_max_parties_per_slot}} weighted capacity units (larger parties needing multiple tables count as more than one unit). If create returns 409 waitlist full, use {{guest_waitlist_alternate_time_hint}}; offer ~2 hours earlier or later, then retry availability/booking.
 • Multi-table / feasibility: if {{guest_waitlist_can_seat_after_ahead}} is "no", do not promise a table at this time; follow {{guest_waitlist_seating_capacity_hint}}; suggest ~2 hours earlier/later or search_seating_availability if exposed. If {{guest_waitlist_ahead_queue_feasible}} is "no", the queue is especially tight. Reference {{guest_waitlist_tables_required}} when explaining large parties.
@@ -198,7 +204,7 @@ If has_upcoming_reservation is true, briefly acknowledge and ask if they are cal
 Closing: After success, summarize and ask if anything else. If done, say goodbye and hangup if available.
 ```
 
-**Mapping keys:** Expose the JSON field names from `POST …/variables` as Telnyx `{{placeholders}}`. Common keys include `guest_display_name`, `next_reservation_*`, `guest_is_high_value_preorder`, `concierge_service_hint`, `cancel_retention_offer`, `reservation_seating_status`, `guest_waitlist_*`, `caller_phone_normalized`, `caller_line_single_booking`, `locale_hint`. **EWT** ≈ position × **`HANOK_WAITLIST_MINUTES_PER_POSITION`** (default 15). **Waitlist cap** is weighted by tables needed (**`HANOK_WAITLIST_MAX_PER_SLOT`**; multi-table parties count extra → **409** when full).
+**Mapping keys:** Expose the JSON field names from `POST …/variables` as Telnyx `{{placeholders}}`. Common keys include `guest_display_name`, `next_reservation_*`, `guest_is_high_value_preorder`, `concierge_service_hint`, `cancel_retention_offer`, `reservation_seating_status`, `guest_waitlist_*`, `reservation_opening_speech_hint`, `reservation_status_means_table_secured`, `reservation_lifecycle_status_spoken`, `reservation_seating_kind_spoken`, `caller_phone_normalized`, `caller_line_single_booking`, `locale_hint`. **EWT** ≈ position × **`HANOK_WAITLIST_MINUTES_PER_POSITION`** (default 15). **Waitlist cap** is weighted by tables needed (**`HANOK_WAITLIST_MAX_PER_SLOT`**; multi-table parties count extra → **409** when full).
 
 **High-value preorder:** `guest_is_high_value_preorder` follows **`HANOK_PREMIUM_PREORDER_CENTS`** (default **30000** = **$300**). VIP **waitlist / `guest_priority`** follows **`HANOK_VIP_PREORDER_CENTS`** (default **50000** = **$500**) unless `guest_priority` is explicitly **vip**.
 
@@ -249,6 +255,21 @@ Closing: After success, summarize and ask if anything else. If done, say goodbye
 | PATCH | `/amend`, `/{id}/amend`, `/by-code/...` | Partial updates; **`X-Hanok-Reservation-Changed`** header reflects real DB writes. |
 
 Details: **OpenAPI** at `/docs`.
+
+### `ReservationRead` and waitlist (MCP / voice)
+
+All endpoints that return a single reservation enrich the JSON when **`HANOK_TABLE_ALLOCATION_ENABLED`** and **`seating_status`** is **`waitlist`** (same queue math as the Telnyx variables webhook):
+
+| Field | Meaning |
+|-------|---------|
+| `guest_waitlist_position` | 1-based place in line (or `null` if the queue snapshot could not be resolved). |
+| `guest_waitlist_queue_size` | Parties on the waitlist for that slot + duration bucket. |
+| `guest_waitlist_estimated_wait_minutes` | ≈ position × `HANOK_WAITLIST_MINUTES_PER_POSITION` (default 15). |
+| `guest_waitlist_position_ordinal_en` | e.g. `first`, `second`, … for spoken output. |
+| `guest_waitlist_wait_time_hint` | Full sentence combining position and ETA (or a safe message when position is unknown). |
+| `assistant_seating_opening_hint` | Tells the model to lead with waitlist vs table (especially when `status` is `confirmed` but seating is waitlist). |
+
+So **right after `create_reservation`**, the assistant should read these fields from MCP **`data`**—not only the dynamic-variables webhook (which may have run before the booking existed).
 
 ---
 
@@ -323,7 +344,7 @@ HANOK_MAX_TABLES_PER_PARTY=2            # large parties may need 2+ table “pla
 
 **Weighted cap:** `HANOK_WAITLIST_MAX_PER_SLOT` limits the **sum of cap units** where each party contributes units equal to **tables needed** at full template size (e.g. an 8-top on 4-tops often counts as **2**). When **existing + incoming > cap**, create returns **409** / `SeatingUnavailableError` — offer another time (see **`guest_waitlist_alternate_time_hint`** in variables).
 
-**Dynamic variables:** For **`seating_status=waitlist`**, webhook merges **`guest_waitlist_position`**, **`guest_waitlist_queue_size`**, **`guest_waitlist_estimated_wait_minutes`** (≈ position × `HANOK_WAITLIST_MINUTES_PER_POSITION`), **feasibility** hints for multi-table parties, etc., from [`waitlist_queue_metadata`](telnyx_restaurant/seating_service.py).
+**Dynamic variables:** For **`seating_status=waitlist`**, webhook merges **`guest_waitlist_position`**, **`guest_waitlist_queue_size`**, **`guest_waitlist_estimated_wait_minutes`** (≈ position × `HANOK_WAITLIST_MINUTES_PER_POSITION`), **feasibility** hints for multi-table parties, etc., from [`waitlist_queue_metadata`](telnyx_restaurant/seating_service.py). The same metadata is attached to **REST/MCP** responses via [`waitlist_fields_for_reservation_read`](telnyx_restaurant/seating_service.py) (see **`ReservationRead` and waitlist** above). Waitlist SQL uses an **effective stay length**: **`duration_minutes` that is NULL or under 1 minute** is treated as the configured default so queue membership matches the API create path.
 
 **Promotion + reminder:** When a table is **released** (cancel/change) or capacity appears, [`promote_waitlist`](telnyx_restaurant/seating_service.py) walks the ordered queue and allocates. On promotion from waitlist to **allocated**, [`schedule_reminder_on_table_allocated`](telnyx_restaurant/reminders.py) can queue the **same** Call Control reminder path as a freshly allocated booking.
 
