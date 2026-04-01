@@ -44,6 +44,7 @@ from telnyx_restaurant.seating_service import (
     reseat_reservation_after_amend,
     snapshot_effective_availability,
     sync_guest_priority_from_spend,
+    waitlist_fields_for_reservation_read,
 )
 from telnyx_restaurant.table_allocation import floor_slot_start
 from telnyx_restaurant.schemas_res import (
@@ -53,6 +54,15 @@ from telnyx_restaurant.schemas_res import (
     ReservationUpdate,
     _unwrap_nested_reservation_payload,
 )
+
+
+def _reservation_read_response(db: Session, row: Reservation) -> ReservationRead:
+    """Include waitlist queue / EWT in JSON for MCP and voice (not stored on ORM columns)."""
+    base = ReservationRead.model_validate(row)
+    extra = waitlist_fields_for_reservation_read(db, row)
+    if not extra:
+        return base
+    return base.model_copy(update=extra)
 
 router = APIRouter(prefix="/api/reservations", tags=["reservations"])
 logger = logging.getLogger(__name__)
@@ -613,7 +623,7 @@ def _patch_at_status_in_thread(row_id: int, flat: dict[str, Any]) -> tuple[Reser
         if not row:
             raise HTTPException(status_code=404, detail="Reservation not found")
         row, changed = _patch_at_status_core(db, row, flat)
-        return ReservationRead.model_validate(row), changed
+        return _reservation_read_response(db, row), changed
     finally:
         db.close()
 
@@ -1124,7 +1134,8 @@ def list_reservations(
     q = select(Reservation).order_by(Reservation.starts_at.desc())
     if status:
         q = q.where(Reservation.status == status)
-    return list(db.execute(q).scalars().all())
+    rows = list(db.execute(q).scalars().all())
+    return [_reservation_read_response(db, r) for r in rows]
 
 
 def _voice_create_recent_duplicate(
@@ -1220,7 +1231,7 @@ async def create_reservation(
                     "POST /api/reservations voice dedup return existing reservation_id=%s",
                     dup.id,
                 )
-            return dup
+            return _reservation_read_response(db, dup)
 
     code = _gen_confirmation_code()
     for _ in range(10):
@@ -1291,7 +1302,7 @@ async def create_reservation(
             guest_name=row.guest_name,
             confirmation_code=row.confirmation_code,
         )
-    return row
+    return _reservation_read_response(db, row)
 
 
 @router.get("/lookup", response_model=ReservationRead)
@@ -1348,7 +1359,7 @@ def lookup_reservation_by_phone_and_name(
     hint = guest_name.strip()
     matched = [r for r in pool if _guest_name_matches(r.guest_name, hint)]
     if len(matched) == 1:
-        return matched[0]
+        return _reservation_read_response(db, matched[0])
     if not matched:
         raise HTTPException(
             status_code=404,
@@ -1417,7 +1428,7 @@ def lookup_reservation_by_guest_phone(
         )
 
     if len(pool) == 1:
-        return pool[0]
+        return _reservation_read_response(db, pool[0])
 
     # Multiple rows on this line: need a name match unless caller already unique by schedule
     hint = (guest_name or "").strip()
@@ -1432,7 +1443,7 @@ def lookup_reservation_by_guest_phone(
 
     matched = [r for r in pool if _guest_name_matches(r.guest_name, hint)]
     if len(matched) == 1:
-        return matched[0]
+        return _reservation_read_response(db, matched[0])
     if not matched:
         raise HTTPException(
             status_code=404,
@@ -1452,7 +1463,7 @@ def get_reservation_by_code(code: str, db: Session = Depends(get_db)):
     ).scalar_one_or_none()
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
-    return row
+    return _reservation_read_response(db, row)
 
 
 @router.patch("/by-code/{code}/status", response_model=ReservationRead)
@@ -1528,7 +1539,7 @@ def patch_reservation_by_code(
         db.rollback()
     db.refresh(row)
     _set_changed_header(response, changed)
-    return row
+    return _reservation_read_response(db, row)
 
 
 async def _patch_amend_from_request(
@@ -1767,7 +1778,7 @@ async def _patch_amend_from_request(
         changed,
         sorted(body.model_fields_set),
     )
-    return row
+    return _reservation_read_response(db, row)
 
 
 @router.patch("/amend", response_model=ReservationRead)
@@ -1906,7 +1917,7 @@ def get_reservation(reservation_id: str, db: Session = Depends(get_db)):
     row = db.get(Reservation, reservation_id_int)
     if not row:
         raise HTTPException(status_code=404, detail="Reservation not found")
-    return row
+    return _reservation_read_response(db, row)
 
 
 @router.patch("/{reservation_id}", response_model=ReservationRead)
@@ -1943,4 +1954,4 @@ def patch_reservation(
         db.rollback()
     db.refresh(row)
     _set_changed_header(response, changed)
-    return row
+    return _reservation_read_response(db, row)

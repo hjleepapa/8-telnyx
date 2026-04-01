@@ -9,11 +9,13 @@ import pytest
 from sqlalchemy.orm import Session
 
 from telnyx_restaurant.models import Reservation, ReservationStatus
+from telnyx_restaurant.routers.reservations import _reservation_read_response
 from telnyx_restaurant.seating_service import (
     book_on_create,
     release_and_promote_after_cancel,
     reseat_reservation_after_amend,
     try_allocate_and_consume,
+    waitlist_fields_for_reservation_read,
     waitlist_queue_metadata,
 )
 
@@ -84,6 +86,29 @@ def test_book_waitlist_and_promote(seating_env: None, db_session: Session) -> No
     db_session.refresh(b)
     assert b.seating_status == "allocated"
     assert json.loads(b.tables_allocated_json or "[]") == [6]
+
+
+def test_waitlist_api_read_includes_estimated_wait(seating_env: None, db_session: Session) -> None:
+    """MCP/HTTP ReservationRead must expose EWT when seating_status is waitlist."""
+    start = datetime(2026, 7, 2, 20, 0, tzinfo=UTC)
+    a = _row(code="HNK-WL0A", party=6, starts=start)
+    db_session.add(a)
+    db_session.flush()
+    book_on_create(db_session, a, waitlist_ok=True)
+    b = _row(code="HNK-WL0B", party=6, starts=start)
+    db_session.add(b)
+    db_session.flush()
+    book_on_create(db_session, b, waitlist_ok=True)
+    db_session.commit()
+    db_session.refresh(b)
+    assert b.seating_status == "waitlist"
+    extras = waitlist_fields_for_reservation_read(db_session, b)
+    assert extras["guest_waitlist_position"] == 1
+    assert extras["guest_waitlist_estimated_wait_minutes"] == 15
+    assert "15" in (extras.get("guest_waitlist_wait_time_hint") or "")
+    read = _reservation_read_response(db_session, b)
+    assert read.guest_waitlist_estimated_wait_minutes == 15
+    assert read.guest_waitlist_wait_time_hint and "first" in read.guest_waitlist_wait_time_hint
 
 
 def test_book_rejects_when_full(seating_env: None, db_session: Session) -> None:

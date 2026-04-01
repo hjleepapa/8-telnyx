@@ -227,6 +227,8 @@ async def create_reservation(
 
     Response may have seating_status waitlist when no table fits—read assistant_seating_opening_hint and
     seating_status; do not tell the guest their table is confirmed when seating_status is waitlist.
+    When waitlisted, JSON includes guest_waitlist_estimated_wait_minutes, guest_waitlist_position,
+    guest_waitlist_queue_size, and guest_waitlist_wait_time_hint—read those aloud (approximate ETA).
     """
     body: dict[str, Any] = {
         "guest_name": _clean_str(guest_name),

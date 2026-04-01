@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter
+from typing import Any
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from sqlalchemy import Select, case, func, literal, or_, select
@@ -43,6 +44,18 @@ def _norm_dt(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=UTC)
     return dt.astimezone(UTC)
+
+
+def _effective_stay_minutes(duration_minutes: int | None) -> int:
+    """Treat unset, zero, or negative duration as the configured default (matches API create defaults)."""
+    default_d = hanok_default_reservation_duration_minutes()
+    if duration_minutes is None:
+        return default_d
+    try:
+        v = int(duration_minutes)
+    except (TypeError, ValueError):
+        return default_d
+    return v if v > 0 else default_d
 
 
 def _inv_slot(dt: datetime) -> datetime:
@@ -226,12 +239,19 @@ def _waitlist_ordered_for_slot(
     """Waitlisted rows for the same floored slot and duration bucket as ``promote_waitlist`` (VIP / spend tier, then created_at).
 
     Uses ``_norm_dt`` for all ``starts_at`` values so queue membership matches across environments (naive vs aware DB values).
-    Duration matching uses ``coalesce(duration_minutes, default)`` so legacy rows align with the configured default stay length.
+    Duration matching treats NULL or sub‑1 minute as the configured default stay length (same as API create).
     """
     step = hanok_slot_step_minutes()
     t0 = floor_slot_start(_norm_dt(starts_at), step)
-    d = int(duration_minutes) if duration_minutes else hanok_default_reservation_duration_minutes()
     default_d = hanok_default_reservation_duration_minutes()
+    d = _effective_stay_minutes(duration_minutes)
+    eff_duration = case(
+        (
+            or_(Reservation.duration_minutes.is_(None), Reservation.duration_minutes < 1),
+            literal(default_d),
+        ),
+        else_=Reservation.duration_minutes,
+    )
     threshold = hanok_vip_preorder_threshold_cents()
     is_priority = or_(
         Reservation.guest_priority == "vip",
@@ -244,7 +264,7 @@ def _waitlist_ordered_for_slot(
             .where(
                 Reservation.seating_status == "waitlist",
                 Reservation.status != ReservationStatus.cancelled.value,
-                func.coalesce(Reservation.duration_minutes, literal(default_d)) == d,
+                eff_duration == d,
             )
             .order_by(prio, Reservation.created_at)
         )
@@ -627,7 +647,7 @@ def waitlist_queue_metadata(db: Session, row: Reservation) -> dict[str, int] | N
         return None
     # Same transaction may have updated seating_status without autoflush; visibility for SELECT.
     db.flush()
-    d = int(row.duration_minutes) if row.duration_minutes else hanok_default_reservation_duration_minutes()
+    d = _effective_stay_minutes(row.duration_minutes)
     ordered = _waitlist_ordered_for_slot(db, starts_at=row.starts_at, duration_minutes=d)
     ids = [w.id for w in ordered]
     if row.id not in ids:
@@ -647,11 +667,87 @@ def waitlist_queue_metadata(db: Session, row: Reservation) -> dict[str, int] | N
     }
 
 
+_WAITLIST_ORDINALS_EN = (
+    "",
+    "first",
+    "second",
+    "third",
+    "fourth",
+    "fifth",
+    "sixth",
+    "seventh",
+    "eighth",
+    "ninth",
+    "tenth",
+)
+
+
+def _waitlist_ordinal_en(n: int) -> str:
+    if 1 <= n <= 10:
+        return _WAITLIST_ORDINALS_EN[n]
+    return f"number {n}"
+
+
+def waitlist_fields_for_reservation_read(db: Session, row: Reservation) -> dict[str, Any]:
+    """Optional ``ReservationRead`` keys for MCP/HTTP JSON so create/lookup includes speakable waitlist EWT."""
+    out: dict[str, Any] = {}
+    if not hanok_table_allocation_enabled():
+        return out
+    if (row.seating_status or "").strip() != "waitlist":
+        return out
+    meta = waitlist_queue_metadata(db, row)
+    per = hanok_waitlist_minutes_per_position()
+    if not meta:
+        return {
+            "guest_waitlist_position": None,
+            "guest_waitlist_queue_size": None,
+            "guest_waitlist_estimated_wait_minutes": None,
+            "guest_waitlist_position_ordinal_en": None,
+            "guest_waitlist_wait_time_hint": (
+                "You are on the waitlist for this seating time; a table is not assigned yet. "
+                "Estimated wait could not be calculated from the queue—do not invent minutes. "
+                f"If the restaurant quotes a place in line, a common rough guide is about {per} minutes per spot ahead."
+            ),
+        }
+    pos = int(meta["position"])
+    n = int(meta["queue_size"])
+    est = int(meta["estimated_wait_minutes"])
+    ordinal = _waitlist_ordinal_en(pos)
+    tables_req = int(meta.get("tables_required", 0))
+    feas = bool(meta.get("feasible_after_ahead", True))
+    if not feas:
+        cap_tail = (
+            "Given table inventory and the parties ahead of you in line, we may not have enough tables together "
+            "at this seating time for your party size—especially if your group needs more than one table. "
+            "Do not promise a table at this time. Suggest checking availability about two hours earlier or "
+            "about two hours later, or another time the guest prefers."
+        )
+    elif tables_req >= 2:
+        cap_tail = (
+            f"Your party is planned across about {tables_req} tables for seating purposes. "
+            "Tables are still waitlist-only until one is assigned."
+        )
+    else:
+        cap_tail = ""
+    wait_parts = [
+        f"You are {ordinal} in line for this seating time ({pos} of {n} on the waitlist).",
+        f"Estimated wait is about {est} minutes.",
+    ]
+    if cap_tail:
+        wait_parts.append(cap_tail)
+    out["guest_waitlist_position"] = pos
+    out["guest_waitlist_queue_size"] = n
+    out["guest_waitlist_estimated_wait_minutes"] = est
+    out["guest_waitlist_position_ordinal_en"] = ordinal
+    out["guest_waitlist_wait_time_hint"] = " ".join(wait_parts)
+    return out
+
+
 def promote_waitlist(db: Session, starts_at: datetime, duration_minutes: int) -> int:
     """Confirm waitlisted rows for the same floor-aligned start and duration (MVP)."""
     if not hanok_table_allocation_enabled():
         return 0
-    d = int(duration_minutes) if duration_minutes else hanok_default_reservation_duration_minutes()
+    d = _effective_stay_minutes(duration_minutes)
     candidates = _waitlist_ordered_for_slot(db, starts_at=starts_at, duration_minutes=d)
     promoted = 0
     for w in candidates:

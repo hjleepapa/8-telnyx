@@ -928,6 +928,12 @@ class ReservationRead(BaseModel):
     tables_allocated: list[int] | None = None
     created_at: datetime
     updated_at: datetime
+    # Populated on API responses when seating_status is waitlist (MCP/voice reads create/lookup JSON).
+    guest_waitlist_position: int | None = None
+    guest_waitlist_queue_size: int | None = None
+    guest_waitlist_estimated_wait_minutes: int | None = None
+    guest_waitlist_position_ordinal_en: str | None = None
+    guest_waitlist_wait_time_hint: str | None = None
 
     model_config = {"from_attributes": True}
 
